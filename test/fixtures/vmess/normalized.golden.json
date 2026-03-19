@@ -1,0 +1,34 @@
+[
+  {
+    "id": "442fea28adc0",
+    "subscription_id": "",
+    "name": "Websocket TLO",
+    "provider_name": "Example Provider",
+    "protocol": "vmess",
+    "address": "vmess.example.com",
+    "port": 443,
+    "uuid": "22222222-2222-2222-2222-222222222222",
+    "password": "",
+    "encryption": "auto",
+    "security": "tls",
+    "server_name": "ws.example.com",
+    "alpn": [
+      "h2",
+      "http/1.1"
+    ],
+    "fingerprint": "firefox",
+    "public_key": "",
+    "short_id": "",
+    "flow": "",
+    "transport": "ws",
+    "path": "/vmess",
+    "host": "ws.example.com",
+    "remark": "Websocket TLO",
+    "raw_query": "",
+    "extras": {
+      "aid": "0",
+      "type": "none",
+      "v": "2"
+    }
+  }
+]

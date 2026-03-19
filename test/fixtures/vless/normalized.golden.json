@@ -1,0 +1,29 @@
+[
+  {
+    "id": "5f2e2c6ac314",
+    "subscription_id": "",
+    "name": "Edge Reality",
+    "provider_name": "Example Provider",
+    "protocol": "vless",
+    "address": "node1.example.com",
+    "port": 443,
+    "uuid": "11111111-1111-1111-1111-111111111111",
+    "password": "",
+    "encryption": "none",
+    "security": "reality",
+    "server_name": "edge.example.com",
+    "alpn": null,
+    "fingerprint": "chrome",
+    "public_key": "public-key-1",
+    "short_id": "ab12cd34",
+    "flow": "",
+    "transport": "ws",
+    "path": "/proxy",
+    "host": "cdn.example.com",
+    "remark": "Edge Reality",
+    "raw_query": "encryption=none&security=reality&sni=edge.example.com&fp=chrome&pbk=public-key-1&sid=ab12cd34&type=ws&path=%2Fproxy&host=cdn.example.com",
+    "extras": {
+      "type": "ws"
+    }
+  }
+]

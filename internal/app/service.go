@@ -1,0 +1,654 @@
+package app
+
+import (
+	"context"
+	"crypto/sha1"
+	"encoding/hex"
+	"fmt"
+	"io"
+	"log/slog"
+	"net/http"
+	"net/url"
+	"slices"
+	"strings"
+	"time"
+
+	"github.com/Alaxay8/routeflux/internal/backend"
+	"github.com/Alaxay8/routeflux/internal/domain"
+	"github.com/Alaxay8/routeflux/internal/parser"
+	"github.com/Alaxay8/routeflux/internal/probe"
+)
+
+// Store defines the persisted state contract required by the service layer.
+type Store interface {
+	LoadSubscriptions() ([]domain.Subscription, error)
+	SaveSubscriptions([]domain.Subscription) error
+	LoadSettings() (domain.Settings, error)
+	SaveSettings(domain.Settings) error
+	LoadState() (domain.RuntimeState, error)
+	SaveState(domain.RuntimeState) error
+}
+
+// AddSubscriptionRequest defines how a subscription is added.
+type AddSubscriptionRequest struct {
+	URL  string
+	Raw  string
+	Name string
+}
+
+// StatusSnapshot summarizes the current application state.
+type StatusSnapshot struct {
+	State              domain.RuntimeState  `json:"state"`
+	Settings           domain.Settings      `json:"settings"`
+	ActiveSubscription *domain.Subscription `json:"active_subscription,omitempty"`
+	ActiveNode         *domain.Node         `json:"active_node,omitempty"`
+}
+
+// Service orchestrates subscription, health, and backend workflows.
+type Service struct {
+	store      Store
+	backend    backend.Backend
+	httpClient *http.Client
+	checker    probe.Checker
+	logger     *slog.Logger
+}
+
+// Dependencies groups the service construction inputs.
+type Dependencies struct {
+	Store      Store
+	Backend    backend.Backend
+	HTTPClient *http.Client
+	Checker    probe.Checker
+	Logger     *slog.Logger
+}
+
+// NewService creates an application service with sensible defaults.
+func NewService(deps Dependencies) *Service {
+	client := deps.HTTPClient
+	if client == nil {
+		client = &http.Client{Timeout: 20 * time.Second}
+	}
+
+	checker := deps.Checker
+	if checker == nil {
+		checker = probe.TCPChecker{Timeout: 5 * time.Second}
+	}
+
+	logger := deps.Logger
+	if logger == nil {
+		logger = slog.New(slog.NewTextHandler(io.Discard, nil))
+	}
+
+	return &Service{
+		store:      deps.Store,
+		backend:    deps.Backend,
+		httpClient: client,
+		checker:    checker,
+		logger:     logger,
+	}
+}
+
+// AddSubscription adds a new subscription and parses its nodes.
+func (s *Service) AddSubscription(ctx context.Context, req AddSubscriptionRequest) (domain.Subscription, error) {
+	if s.store == nil {
+		return domain.Subscription{}, fmt.Errorf("store is not configured")
+	}
+
+	source, sourceType, err := s.resolveSubscriptionSource(ctx, req)
+	if err != nil {
+		return domain.Subscription{}, err
+	}
+
+	settings, err := s.store.LoadSettings()
+	if err != nil {
+		return domain.Subscription{}, fmt.Errorf("load settings: %w", err)
+	}
+
+	providerName := strings.TrimSpace(req.Name)
+	if providerName == "" {
+		providerName = deriveProviderName(sourceType, req.URL)
+	}
+
+	nodes, err := parser.ParseNodes(source, providerName)
+	if err != nil {
+		return domain.Subscription{}, fmt.Errorf("parse subscription: %w", err)
+	}
+
+	subscriptions, err := s.store.LoadSubscriptions()
+	if err != nil {
+		return domain.Subscription{}, fmt.Errorf("load subscriptions: %w", err)
+	}
+
+	now := time.Now().UTC()
+	storedSource := sourceOrURL(sourceType, req)
+	sub := domain.Subscription{
+		ID:              stableSubscriptionID(sourceType, storedSource),
+		SourceType:      sourceType,
+		Source:          storedSource,
+		ProviderName:    providerName,
+		DisplayName:     providerName,
+		LastUpdatedAt:   now,
+		RefreshInterval: settings.RefreshInterval,
+		ParserStatus:    "ok",
+		Nodes:           nodes,
+	}
+
+	for idx := range sub.Nodes {
+		sub.Nodes[idx].SubscriptionID = sub.ID
+	}
+
+	upserted := upsertSubscription(subscriptions, sub)
+	if err := s.store.SaveSubscriptions(upserted); err != nil {
+		return domain.Subscription{}, fmt.Errorf("save subscriptions: %w", err)
+	}
+
+	state, err := s.store.LoadState()
+	if err == nil {
+		state.LastRefreshAt[sub.ID] = now
+		_ = s.store.SaveState(state)
+	}
+
+	return sub, nil
+}
+
+// RemoveSubscription removes a stored subscription and clears active state if needed.
+func (s *Service) RemoveSubscription(id string) error {
+	subscriptions, err := s.store.LoadSubscriptions()
+	if err != nil {
+		return fmt.Errorf("load subscriptions: %w", err)
+	}
+
+	idx := slices.IndexFunc(subscriptions, func(sub domain.Subscription) bool { return sub.ID == id })
+	if idx < 0 {
+		return fmt.Errorf("subscription %q not found", id)
+	}
+
+	subscriptions = append(subscriptions[:idx], subscriptions[idx+1:]...)
+	if err := s.store.SaveSubscriptions(subscriptions); err != nil {
+		return fmt.Errorf("save subscriptions: %w", err)
+	}
+
+	state, err := s.store.LoadState()
+	if err != nil {
+		return nil
+	}
+	if state.ActiveSubscriptionID == id {
+		state.ActiveSubscriptionID = ""
+		state.ActiveNodeID = ""
+		state.Mode = domain.SelectionModeDisconnected
+		state.Connected = false
+		return s.store.SaveState(state)
+	}
+
+	return nil
+}
+
+// RenameSubscription updates the display name of a stored subscription.
+func (s *Service) RenameSubscription(id, name string) error {
+	subscriptions, err := s.store.LoadSubscriptions()
+	if err != nil {
+		return fmt.Errorf("load subscriptions: %w", err)
+	}
+
+	for idx := range subscriptions {
+		if subscriptions[idx].ID == id {
+			subscriptions[idx].DisplayName = name
+			subscriptions[idx].ProviderName = name
+			return s.store.SaveSubscriptions(subscriptions)
+		}
+	}
+
+	return fmt.Errorf("subscription %q not found", id)
+}
+
+// ListSubscriptions returns the stored subscriptions.
+func (s *Service) ListSubscriptions() ([]domain.Subscription, error) {
+	return s.store.LoadSubscriptions()
+}
+
+// ListNodes returns all nodes for a subscription.
+func (s *Service) ListNodes(subscriptionID string) ([]domain.Node, error) {
+	sub, err := s.subscriptionByID(subscriptionID)
+	if err != nil {
+		return nil, err
+	}
+
+	return sub.Nodes, nil
+}
+
+// RefreshSubscription reloads and reparses a subscription.
+func (s *Service) RefreshSubscription(ctx context.Context, subscriptionID string) (domain.Subscription, error) {
+	subscriptions, err := s.store.LoadSubscriptions()
+	if err != nil {
+		return domain.Subscription{}, fmt.Errorf("load subscriptions: %w", err)
+	}
+
+	index := slices.IndexFunc(subscriptions, func(sub domain.Subscription) bool { return sub.ID == subscriptionID })
+	if index < 0 {
+		return domain.Subscription{}, fmt.Errorf("subscription %q not found", subscriptionID)
+	}
+
+	sub := subscriptions[index]
+	content := sub.Source
+	if sub.SourceType == domain.SourceTypeURL {
+		content, err = s.fetchSubscription(ctx, sub.Source)
+		if err != nil {
+			sub.LastError = err.Error()
+			sub.ParserStatus = "error"
+			subscriptions[index] = sub
+			_ = s.store.SaveSubscriptions(subscriptions)
+			return domain.Subscription{}, fmt.Errorf("fetch subscription: %w", err)
+		}
+	}
+
+	nodes, err := parser.ParseNodes(content, sub.ProviderName)
+	if err != nil {
+		sub.LastError = err.Error()
+		sub.ParserStatus = "error"
+		subscriptions[index] = sub
+		_ = s.store.SaveSubscriptions(subscriptions)
+		return domain.Subscription{}, fmt.Errorf("parse subscription: %w", err)
+	}
+
+	for idx := range nodes {
+		nodes[idx].SubscriptionID = sub.ID
+	}
+
+	sub.Nodes = nodes
+	sub.LastError = ""
+	sub.ParserStatus = "ok"
+	sub.LastUpdatedAt = time.Now().UTC()
+	subscriptions[index] = sub
+	if err := s.store.SaveSubscriptions(subscriptions); err != nil {
+		return domain.Subscription{}, fmt.Errorf("save subscriptions: %w", err)
+	}
+
+	state, err := s.store.LoadState()
+	if err == nil {
+		state.LastRefreshAt[sub.ID] = sub.LastUpdatedAt
+		_ = s.store.SaveState(state)
+	}
+
+	return sub, nil
+}
+
+// RefreshAll refreshes every stored subscription.
+func (s *Service) RefreshAll(ctx context.Context) ([]domain.Subscription, error) {
+	subscriptions, err := s.store.LoadSubscriptions()
+	if err != nil {
+		return nil, fmt.Errorf("load subscriptions: %w", err)
+	}
+
+	updated := make([]domain.Subscription, 0, len(subscriptions))
+	for _, sub := range subscriptions {
+		refreshed, err := s.RefreshSubscription(ctx, sub.ID)
+		if err != nil {
+			return updated, err
+		}
+		updated = append(updated, refreshed)
+	}
+
+	return updated, nil
+}
+
+// ConnectManual pins a subscription and node and applies the backend config.
+func (s *Service) ConnectManual(ctx context.Context, subscriptionID, nodeID string) error {
+	sub, err := s.subscriptionByID(subscriptionID)
+	if err != nil {
+		return err
+	}
+
+	node, ok := sub.NodeByID(nodeID)
+	if !ok {
+		return fmt.Errorf("node %q not found in subscription %q", nodeID, subscriptionID)
+	}
+
+	if err := s.applyNodeSelection(ctx, sub, node, domain.SelectionModeManual); err != nil {
+		return err
+	}
+
+	settings, err := s.store.LoadSettings()
+	if err == nil {
+		settings.AutoMode = false
+		settings.Mode = domain.SelectionModeManual
+		_ = s.store.SaveSettings(settings)
+	}
+
+	return nil
+}
+
+// ConnectAuto probes the selected subscription and applies the best available node.
+func (s *Service) ConnectAuto(ctx context.Context, subscriptionID string) (domain.Node, error) {
+	sub, err := s.subscriptionByID(subscriptionID)
+	if err != nil {
+		return domain.Node{}, err
+	}
+
+	state, err := s.store.LoadState()
+	if err != nil {
+		return domain.Node{}, fmt.Errorf("load state: %w", err)
+	}
+
+	if state.Health == nil {
+		state.Health = make(map[string]domain.NodeHealth)
+	}
+
+	results := s.probeSubscription(ctx, sub, state.Health)
+	bestNode, bestScore, err := probe.SelectBestNode(sub.Nodes, state.Health, probe.DefaultScoreConfig())
+	if err != nil {
+		return domain.Node{}, err
+	}
+	current := state.Health[state.ActiveNodeID]
+	candidate := state.Health[bestNode.ID]
+	shouldSwitch, _ := probe.ShouldSwitch(current, candidate, time.Now().UTC(), state.LastSwitchAt, probe.DefaultSwitchPolicy())
+	if state.ActiveNodeID == "" {
+		shouldSwitch = true
+	}
+	if !shouldSwitch && state.ActiveNodeID != "" {
+		if active, ok := sub.NodeByID(state.ActiveNodeID); ok {
+			return active, nil
+		}
+	}
+
+	if err := s.applyNodeSelection(ctx, sub, bestNode, domain.SelectionModeAuto); err != nil {
+		return domain.Node{}, err
+	}
+
+	state, _ = s.store.LoadState()
+	if state.Health == nil {
+		state.Health = make(map[string]domain.NodeHealth)
+	}
+	for _, result := range results {
+		if result.Health.NodeID != "" {
+			state.Health[result.NodeID] = result.Health
+		}
+	}
+	scored := state.Health[bestNode.ID]
+	scored.Score = bestScore.Score
+	state.Health[bestNode.ID] = scored
+	state.LastSwitchAt = time.Now().UTC()
+	state.Mode = domain.SelectionModeAuto
+	state.Connected = true
+	state.ActiveSubscriptionID = sub.ID
+	state.ActiveNodeID = bestNode.ID
+	if err := s.store.SaveState(state); err != nil {
+		return domain.Node{}, fmt.Errorf("save state: %w", err)
+	}
+
+	settings, err := s.store.LoadSettings()
+	if err == nil {
+		settings.AutoMode = true
+		settings.Mode = domain.SelectionModeAuto
+		_ = s.store.SaveSettings(settings)
+	}
+
+	return bestNode, nil
+}
+
+// Disconnect tears down the current runtime selection.
+func (s *Service) Disconnect(ctx context.Context) error {
+	if s.backend != nil {
+		if err := s.backend.Stop(ctx); err != nil {
+			return fmt.Errorf("stop backend: %w", err)
+		}
+	}
+
+	state, err := s.store.LoadState()
+	if err != nil {
+		return fmt.Errorf("load state: %w", err)
+	}
+	state.ActiveNodeID = ""
+	state.ActiveSubscriptionID = ""
+	state.Mode = domain.SelectionModeDisconnected
+	state.Connected = false
+	if err := s.store.SaveState(state); err != nil {
+		return fmt.Errorf("save state: %w", err)
+	}
+
+	settings, err := s.store.LoadSettings()
+	if err == nil {
+		settings.AutoMode = false
+		settings.Mode = domain.SelectionModeDisconnected
+		_ = s.store.SaveSettings(settings)
+	}
+
+	return nil
+}
+
+// Status returns the current service status.
+func (s *Service) Status() (StatusSnapshot, error) {
+	settings, err := s.store.LoadSettings()
+	if err != nil {
+		return StatusSnapshot{}, fmt.Errorf("load settings: %w", err)
+	}
+
+	state, err := s.store.LoadState()
+	if err != nil {
+		return StatusSnapshot{}, fmt.Errorf("load state: %w", err)
+	}
+
+	snapshot := StatusSnapshot{
+		State:    state,
+		Settings: settings,
+	}
+
+	if state.ActiveSubscriptionID == "" {
+		return snapshot, nil
+	}
+
+	sub, err := s.subscriptionByID(state.ActiveSubscriptionID)
+	if err == nil {
+		snapshot.ActiveSubscription = &sub
+		if node, ok := sub.NodeByID(state.ActiveNodeID); ok {
+			snapshot.ActiveNode = &node
+		}
+	}
+
+	return snapshot, nil
+}
+
+// GetSettings returns current settings.
+func (s *Service) GetSettings() (domain.Settings, error) {
+	return s.store.LoadSettings()
+}
+
+// SetSetting updates a single setting key.
+func (s *Service) SetSetting(key, value string) (domain.Settings, error) {
+	settings, err := s.store.LoadSettings()
+	if err != nil {
+		return domain.Settings{}, fmt.Errorf("load settings: %w", err)
+	}
+
+	switch key {
+	case "refresh-interval":
+		d, err := domain.ParseDurationValue(value)
+		if err != nil {
+			return domain.Settings{}, err
+		}
+		settings.RefreshInterval = d
+	case "health-check-interval":
+		d, err := domain.ParseDurationValue(value)
+		if err != nil {
+			return domain.Settings{}, err
+		}
+		settings.HealthCheckInterval = d
+	case "switch-cooldown":
+		d, err := domain.ParseDurationValue(value)
+		if err != nil {
+			return domain.Settings{}, err
+		}
+		settings.SwitchCooldown = d
+	case "latency-threshold":
+		d, err := domain.ParseDurationValue(value)
+		if err != nil {
+			return domain.Settings{}, err
+		}
+		settings.LatencyThreshold = d
+	case "auto-mode":
+		settings.AutoMode = strings.EqualFold(value, "true")
+		if settings.AutoMode {
+			settings.Mode = domain.SelectionModeAuto
+		} else if settings.Mode == domain.SelectionModeAuto {
+			settings.Mode = domain.SelectionModeManual
+		}
+	case "log-level":
+		settings.LogLevel = value
+	default:
+		return domain.Settings{}, fmt.Errorf("unsupported setting %q", key)
+	}
+
+	if err := s.store.SaveSettings(settings); err != nil {
+		return domain.Settings{}, fmt.Errorf("save settings: %w", err)
+	}
+
+	return settings, nil
+}
+
+func (s *Service) resolveSubscriptionSource(ctx context.Context, req AddSubscriptionRequest) (string, domain.SourceType, error) {
+	switch {
+	case strings.TrimSpace(req.URL) != "":
+		content, err := s.fetchSubscription(ctx, req.URL)
+		if err != nil {
+			return "", "", fmt.Errorf("fetch subscription: %w", err)
+		}
+		return content, domain.SourceTypeURL, nil
+	case strings.TrimSpace(req.Raw) != "":
+		return req.Raw, domain.SourceTypeRaw, nil
+	default:
+		return "", "", fmt.Errorf("either url or raw payload is required")
+	}
+}
+
+func (s *Service) fetchSubscription(ctx context.Context, rawURL string) (string, error) {
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, rawURL, nil)
+	if err != nil {
+		return "", fmt.Errorf("build request: %w", err)
+	}
+
+	resp, err := s.httpClient.Do(req)
+	if err != nil {
+		return "", fmt.Errorf("fetch %s: %w", rawURL, err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		return "", fmt.Errorf("fetch %s: unexpected status %s", rawURL, resp.Status)
+	}
+
+	body, err := io.ReadAll(io.LimitReader(resp.Body, 8<<20))
+	if err != nil {
+		return "", fmt.Errorf("read response body: %w", err)
+	}
+
+	return string(body), nil
+}
+
+func (s *Service) subscriptionByID(id string) (domain.Subscription, error) {
+	subscriptions, err := s.store.LoadSubscriptions()
+	if err != nil {
+		return domain.Subscription{}, fmt.Errorf("load subscriptions: %w", err)
+	}
+
+	for _, sub := range subscriptions {
+		if sub.ID == id {
+			return sub, nil
+		}
+	}
+
+	return domain.Subscription{}, fmt.Errorf("subscription %q not found", id)
+}
+
+func (s *Service) applyNodeSelection(ctx context.Context, sub domain.Subscription, node domain.Node, mode domain.SelectionMode) error {
+	settings, err := s.store.LoadSettings()
+	if err != nil {
+		return fmt.Errorf("load settings: %w", err)
+	}
+
+	if s.backend != nil {
+		if err := s.backend.ApplyConfig(ctx, backend.ConfigRequest{
+			Mode:           mode,
+			Nodes:          []domain.Node{node},
+			SelectedNodeID: node.ID,
+			LogLevel:       settings.LogLevel,
+			SOCKSPort:      10808,
+			HTTPPort:       10809,
+		}); err != nil {
+			return fmt.Errorf("apply backend config: %w", err)
+		}
+	}
+
+	state, err := s.store.LoadState()
+	if err != nil {
+		return fmt.Errorf("load state: %w", err)
+	}
+	state.ActiveSubscriptionID = sub.ID
+	state.ActiveNodeID = node.ID
+	state.Mode = mode
+	state.Connected = true
+	state.LastSuccessAt = time.Now().UTC()
+	state.LastFailureReason = ""
+	if mode == domain.SelectionModeAuto {
+		state.LastSwitchAt = time.Now().UTC()
+	}
+
+	if err := s.store.SaveState(state); err != nil {
+		return fmt.Errorf("save state: %w", err)
+	}
+
+	return nil
+}
+
+func (s *Service) probeSubscription(ctx context.Context, sub domain.Subscription, health map[string]domain.NodeHealth) []probe.Result {
+	results := make([]probe.Result, 0, len(sub.Nodes))
+	for _, node := range sub.Nodes {
+		result := s.checker.Check(ctx, node)
+		updated := probe.UpdateHealth(health[node.ID], result.Healthy, result.Latency, result.Checked, errString(result.Err))
+		updated.NodeID = node.ID
+		updated.Score = probe.CalculateScore(updated, probe.DefaultScoreConfig()).Score
+		health[node.ID] = updated
+		result.Health = updated
+		results = append(results, result)
+	}
+
+	return results
+}
+
+func stableSubscriptionID(sourceType domain.SourceType, source string) string {
+	sum := sha1.Sum([]byte(string(sourceType) + "|" + source))
+	return "sub-" + hex.EncodeToString(sum[:])[:10]
+}
+
+func sourceOrURL(sourceType domain.SourceType, req AddSubscriptionRequest) string {
+	if sourceType == domain.SourceTypeURL {
+		return strings.TrimSpace(req.URL)
+	}
+	return req.Raw
+}
+
+func deriveProviderName(sourceType domain.SourceType, rawURL string) string {
+	if sourceType == domain.SourceTypeURL {
+		if parsed, err := url.Parse(rawURL); err == nil && parsed.Host != "" {
+			return parsed.Host
+		}
+	}
+
+	return "Imported Subscription"
+}
+
+func upsertSubscription(subscriptions []domain.Subscription, next domain.Subscription) []domain.Subscription {
+	for idx := range subscriptions {
+		if subscriptions[idx].ID == next.ID {
+			subscriptions[idx] = next
+			return subscriptions
+		}
+	}
+
+	return append(subscriptions, next)
+}
+
+func errString(err error) string {
+	if err == nil {
+		return ""
+	}
+	return err.Error()
+}
