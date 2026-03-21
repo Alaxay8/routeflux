@@ -14,6 +14,10 @@ func ParseNodes(input, provider string) ([]domain.Node, error) {
 		return nil, fmt.Errorf("empty subscription input")
 	}
 
+	if nodes, ok, err := tryParseJSONNodes(trimmed, provider); ok {
+		return nodes, err
+	}
+
 	if looksLikeBase64Payload(trimmed) {
 		decoded, err := decodeBase64Payload(trimmed)
 		if err == nil && strings.Contains(decoded, "://") {

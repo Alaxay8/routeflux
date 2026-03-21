@@ -46,6 +46,18 @@ func TestParseMixedBase64Subscription(t *testing.T) {
 	assertGoldenNodes(t, nodes, "mixed", "normalized.golden.json")
 }
 
+func TestParseXrayJSONConfig(t *testing.T) {
+	t.Parallel()
+
+	input := mustReadFixture(t, "three_x_ui", "config.json")
+	nodes, err := parser.ParseNodes(input, "3x-ui Import")
+	if err != nil {
+		t.Fatalf("parse nodes: %v", err)
+	}
+
+	assertGoldenNodes(t, nodes, "three_x_ui", "normalized.golden.json")
+}
+
 func TestParseInvalidInput(t *testing.T) {
 	t.Parallel()
 

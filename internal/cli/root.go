@@ -45,7 +45,9 @@ func newRootCmd() *cobra.Command {
 
 	cmd.AddCommand(
 		newAddCmd(opts),
+		newFirewallCmd(opts),
 		newListCmd(opts),
+		newRemoveCmd(opts),
 		newRefreshCmd(opts),
 		newConnectCmd(opts),
 		newDisconnectCmd(opts),
@@ -69,10 +71,12 @@ func (o *rootOptions) initService() error {
 
 	fileStore := store.NewFileStore(root)
 	controller := openwrt.NewXrayController()
+	firewall := openwrt.NewFirewallManager()
 	var runtimeBackend backend.Backend = xray.NewRuntimeBackend(openwrt.XrayConfigPath(), controller)
 	o.service = app.NewService(app.Dependencies{
 		Store:      fileStore,
 		Backend:    runtimeBackend,
+		Firewaller: firewall,
 		HTTPClient: &http.Client{Timeout: 20 * time.Second},
 		Checker:    probe.TCPChecker{Timeout: 5 * time.Second},
 		Logger:     slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelInfo})),

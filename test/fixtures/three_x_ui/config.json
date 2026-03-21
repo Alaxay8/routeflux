@@ -1,0 +1,40 @@
+{
+  "log": {
+    "loglevel": "warning"
+  },
+  "outbounds": [
+    {
+      "protocol": "freedom",
+      "tag": "direct"
+    },
+    {
+      "protocol": "vless",
+      "tag": "3x-ui Reality",
+      "settings": {
+        "vnext": [
+          {
+            "address": "ru-sb-01.com",
+            "port": 8443,
+            "users": [
+              {
+                "id": "d2b91ba7-db8c-4d4b-8589-5ba42ffd23ed",
+                "encryption": "none",
+                "flow": "xtls-rprx-vision"
+              }
+            ]
+          }
+        ]
+      },
+      "streamSettings": {
+        "network": "tcp",
+        "security": "reality",
+        "realitySettings": {
+          "serverName": "sni.ru-sb-01.com",
+          "publicKey": "ySjh6i7SzApnuaxEqMYv2bAqaB4b1yATfJEF_mFjm1Y",
+          "shortId": "3ebbc04da7f0919d",
+          "fingerprint": "random"
+        }
+      }
+    }
+  ]
+}

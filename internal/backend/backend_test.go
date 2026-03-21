@@ -62,6 +62,58 @@ func TestGenerateManualVLESSConfig(t *testing.T) {
 	}
 }
 
+func TestGenerateTransparentVLESSConfig(t *testing.T) {
+	t.Parallel()
+
+	req := backend.ConfigRequest{
+		Mode: domain.SelectionModeManual,
+		Nodes: []domain.Node{
+			{
+				ID:          "node-1",
+				Name:        "Edge Reality",
+				Protocol:    domain.ProtocolVLESS,
+				Address:     "node1.example.com",
+				Port:        443,
+				UUID:        "11111111-1111-1111-1111-111111111111",
+				Encryption:  "none",
+				Security:    "reality",
+				ServerName:  "edge.example.com",
+				Fingerprint: "chrome",
+				PublicKey:   "public-key-1",
+				ShortID:     "ab12cd34",
+				Transport:   "ws",
+				Path:        "/proxy",
+				Host:        "cdn.example.com",
+			},
+		},
+		SelectedNodeID:   "node-1",
+		LogLevel:         "warning",
+		SOCKSPort:        10808,
+		HTTPPort:         10809,
+		TransparentProxy: true,
+		TransparentPort:  12345,
+	}
+
+	got, err := xray.NewGenerator().Generate(req)
+	if err != nil {
+		t.Fatalf("generate config: %v", err)
+	}
+
+	gotJSON, err := normalizeJSON(got)
+	if err != nil {
+		t.Fatalf("normalize generated json: %v", err)
+	}
+
+	want, err := normalizeJSON([]byte(mustReadGolden(t, "transparent_vless.golden.json")))
+	if err != nil {
+		t.Fatalf("normalize golden json: %v", err)
+	}
+
+	if string(gotJSON) != string(want) {
+		t.Fatalf("golden mismatch\nwant:\n%s\n\ngot:\n%s", string(want), string(gotJSON))
+	}
+}
+
 func mustReadGolden(t *testing.T, name string) string {
 	t.Helper()
 

@@ -12,27 +12,24 @@ func (m model) updateKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	switch msg.String() {
 	case "q", "ctrl+c":
 		return m, tea.Quit
+	case "tab", "l", "right":
+		m.focus = nextFocus(m.focus, 1)
+		return m, nil
+	case "shift+tab", "h", "left":
+		m.focus = nextFocus(m.focus, -1)
+		return m, nil
 	case "j", "down":
-		if len(m.subscriptions) > 0 && m.selectedSub < len(m.subscriptions)-1 {
-			m.selectedSub++
-			m.selectedNode = 0
-		}
+		m.moveSelection(1)
 		return m, nil
 	case "k", "up":
-		if m.selectedSub > 0 {
-			m.selectedSub--
-			m.selectedNode = 0
+		m.moveSelection(-1)
+		return m, nil
+	case "n", "ctrl+n":
+		if sub, ok := m.currentSubscription(); ok && m.selectedNode < len(sub.Nodes)-1 {
+			m.selectedNode++
 		}
 		return m, nil
-	case "l", "right":
-		if len(m.subscriptions) > 0 {
-			sub := m.subscriptions[m.selectedSub]
-			if m.selectedNode < len(sub.Nodes)-1 {
-				m.selectedNode++
-			}
-		}
-		return m, nil
-	case "h", "left":
+	case "p", "ctrl+p":
 		if m.selectedNode > 0 {
 			m.selectedNode--
 		}
@@ -63,31 +60,31 @@ func (m model) updateKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		}
 		return m, nil
 	case "r":
-		if len(m.subscriptions) == 0 {
+		sub, ok := m.currentSubscription()
+		if !ok {
 			return m, nil
 		}
-		sub := m.subscriptions[m.selectedSub]
 		return m, action(func(ctx context.Context) error {
 			_, err := m.service.RefreshSubscription(ctx, sub.ID)
 			return err
 		}, "Subscription refreshed")
 	case "c", "enter":
-		if len(m.subscriptions) == 0 {
+		sub, ok := m.currentSubscription()
+		if !ok {
 			return m, nil
 		}
-		sub := m.subscriptions[m.selectedSub]
-		if len(sub.Nodes) == 0 {
+		node, ok := m.currentNode()
+		if !ok {
 			return m, nil
 		}
-		node := sub.Nodes[m.selectedNode]
 		return m, action(func(ctx context.Context) error {
 			return m.service.ConnectManual(ctx, sub.ID, node.ID)
 		}, "Connected")
 	case "a":
-		if len(m.subscriptions) == 0 {
+		sub, ok := m.currentSubscription()
+		if !ok {
 			return m, nil
 		}
-		sub := m.subscriptions[m.selectedSub]
 		return m, nodeAction(func(ctx context.Context) (domain.Node, error) {
 			return m.service.ConnectAuto(ctx, sub.ID)
 		}, "Auto selected")
@@ -97,5 +94,62 @@ func (m model) updateKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		}, "Disconnected")
 	default:
 		return m, nil
+	}
+}
+
+func nextFocus(current paneFocus, delta int) paneFocus {
+	values := []paneFocus{focusProviders, focusProfiles, focusNodes}
+	index := 0
+	for idx, value := range values {
+		if value == current {
+			index = idx
+			break
+		}
+	}
+
+	index += delta
+	if index < 0 {
+		index = len(values) - 1
+	}
+	if index >= len(values) {
+		index = 0
+	}
+	return values[index]
+}
+
+func (m *model) moveSelection(delta int) {
+	switch m.focus {
+	case focusProviders:
+		if len(m.providers) == 0 {
+			return
+		}
+		next := m.selectedProvider + delta
+		if next < 0 || next >= len(m.providers) {
+			return
+		}
+		m.selectedProvider = next
+		m.selectedProfile = 0
+		m.selectedNode = 0
+	case focusProfiles:
+		provider, ok := m.currentProvider()
+		if !ok {
+			return
+		}
+		next := m.selectedProfile + delta
+		if next < 0 || next >= len(provider.Subscriptions) {
+			return
+		}
+		m.selectedProfile = next
+		m.selectedNode = 0
+	case focusNodes:
+		sub, ok := m.currentSubscription()
+		if !ok {
+			return
+		}
+		next := m.selectedNode + delta
+		if next < 0 || next >= len(sub.Nodes) {
+			return
+		}
+		m.selectedNode = next
 	}
 }

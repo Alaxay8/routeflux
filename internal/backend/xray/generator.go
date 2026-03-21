@@ -62,6 +62,28 @@ func (Generator) Generate(req backend.ConfigRequest) ([]byte, error) {
 		},
 	}
 
+	if req.TransparentProxy {
+		cfg.Inbounds = append(cfg.Inbounds, xrayInbound{
+			Tag:      "transparent-in",
+			Listen:   "0.0.0.0",
+			Port:     fallbackPort(req.TransparentPort, 12345),
+			Protocol: "dokodemo-door",
+			Settings: map[string]any{
+				"followRedirect": true,
+				"network":        "tcp",
+			},
+			Sniffing: map[string]any{
+				"enabled":      true,
+				"destOverride": []string{"http", "tls"},
+			},
+			StreamSettings: map[string]any{
+				"sockopt": map[string]any{
+					"tproxy": "redirect",
+				},
+			},
+		})
+	}
+
 	rendered, err := json.MarshalIndent(cfg, "", "  ")
 	if err != nil {
 		return nil, fmt.Errorf("marshal xray config: %w", err)

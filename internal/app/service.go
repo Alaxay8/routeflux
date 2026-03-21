@@ -29,6 +29,12 @@ type Store interface {
 	SaveState(domain.RuntimeState) error
 }
 
+// Firewaller applies OpenWrt destination-based transparent proxy rules.
+type Firewaller interface {
+	Apply(ctx context.Context, settings domain.FirewallSettings) error
+	Disable(ctx context.Context) error
+}
+
 // AddSubscriptionRequest defines how a subscription is added.
 type AddSubscriptionRequest struct {
 	URL  string
@@ -48,6 +54,7 @@ type StatusSnapshot struct {
 type Service struct {
 	store      Store
 	backend    backend.Backend
+	firewall   Firewaller
 	httpClient *http.Client
 	checker    probe.Checker
 	logger     *slog.Logger
@@ -57,6 +64,7 @@ type Service struct {
 type Dependencies struct {
 	Store      Store
 	Backend    backend.Backend
+	Firewaller Firewaller
 	HTTPClient *http.Client
 	Checker    probe.Checker
 	Logger     *slog.Logger
@@ -82,6 +90,7 @@ func NewService(deps Dependencies) *Service {
 	return &Service{
 		store:      deps.Store,
 		backend:    deps.Backend,
+		firewall:   deps.Firewaller,
 		httpClient: client,
 		checker:    checker,
 		logger:     logger,
@@ -151,8 +160,8 @@ func (s *Service) AddSubscription(ctx context.Context, req AddSubscriptionReques
 	return sub, nil
 }
 
-// RemoveSubscription removes a stored subscription and clears active state if needed.
-func (s *Service) RemoveSubscription(id string) error {
+// RemoveSubscription removes a stored subscription and disconnects if it was active.
+func (s *Service) RemoveSubscription(ctx context.Context, id string) error {
 	subscriptions, err := s.store.LoadSubscriptions()
 	if err != nil {
 		return fmt.Errorf("load subscriptions: %w", err)
@@ -163,21 +172,43 @@ func (s *Service) RemoveSubscription(id string) error {
 		return fmt.Errorf("subscription %q not found", id)
 	}
 
+	state, stateErr := s.store.LoadState()
+	active := stateErr == nil && state.ActiveSubscriptionID == id
+	if active {
+		if s.backend != nil {
+			if err := s.backend.Stop(ctx); err != nil {
+				return fmt.Errorf("stop backend: %w", err)
+			}
+		}
+		if s.firewall != nil {
+			if err := s.firewall.Disable(ctx); err != nil {
+				return fmt.Errorf("disable firewall: %w", err)
+			}
+		}
+	}
+
 	subscriptions = append(subscriptions[:idx], subscriptions[idx+1:]...)
 	if err := s.store.SaveSubscriptions(subscriptions); err != nil {
 		return fmt.Errorf("save subscriptions: %w", err)
 	}
 
-	state, err := s.store.LoadState()
-	if err != nil {
+	if !active {
 		return nil
 	}
-	if state.ActiveSubscriptionID == id {
-		state.ActiveSubscriptionID = ""
-		state.ActiveNodeID = ""
-		state.Mode = domain.SelectionModeDisconnected
-		state.Connected = false
-		return s.store.SaveState(state)
+
+	state.ActiveSubscriptionID = ""
+	state.ActiveNodeID = ""
+	state.Mode = domain.SelectionModeDisconnected
+	state.Connected = false
+	if err := s.store.SaveState(state); err != nil {
+		return fmt.Errorf("save state: %w", err)
+	}
+
+	settings, err := s.store.LoadSettings()
+	if err == nil {
+		settings.AutoMode = false
+		settings.Mode = domain.SelectionModeDisconnected
+		_ = s.store.SaveSettings(settings)
 	}
 
 	return nil
@@ -344,13 +375,17 @@ func (s *Service) ConnectAuto(ctx context.Context, subscriptionID string) (domai
 	if state.ActiveNodeID == "" {
 		shouldSwitch = true
 	}
+
+	selectedNode := bestNode
+	switched := true
 	if !shouldSwitch && state.ActiveNodeID != "" {
 		if active, ok := sub.NodeByID(state.ActiveNodeID); ok {
-			return active, nil
+			selectedNode = active
+			switched = false
 		}
 	}
 
-	if err := s.applyNodeSelection(ctx, sub, bestNode, domain.SelectionModeAuto); err != nil {
+	if err := s.applyNodeSelection(ctx, sub, selectedNode, domain.SelectionModeAuto); err != nil {
 		return domain.Node{}, err
 	}
 
@@ -366,11 +401,13 @@ func (s *Service) ConnectAuto(ctx context.Context, subscriptionID string) (domai
 	scored := state.Health[bestNode.ID]
 	scored.Score = bestScore.Score
 	state.Health[bestNode.ID] = scored
-	state.LastSwitchAt = time.Now().UTC()
+	if switched {
+		state.LastSwitchAt = time.Now().UTC()
+	}
 	state.Mode = domain.SelectionModeAuto
 	state.Connected = true
 	state.ActiveSubscriptionID = sub.ID
-	state.ActiveNodeID = bestNode.ID
+	state.ActiveNodeID = selectedNode.ID
 	if err := s.store.SaveState(state); err != nil {
 		return domain.Node{}, fmt.Errorf("save state: %w", err)
 	}
@@ -382,7 +419,7 @@ func (s *Service) ConnectAuto(ctx context.Context, subscriptionID string) (domai
 		_ = s.store.SaveSettings(settings)
 	}
 
-	return bestNode, nil
+	return selectedNode, nil
 }
 
 // Disconnect tears down the current runtime selection.
@@ -449,7 +486,105 @@ func (s *Service) Status() (StatusSnapshot, error) {
 
 // GetSettings returns current settings.
 func (s *Service) GetSettings() (domain.Settings, error) {
-	return s.store.LoadSettings()
+	settings, err := s.store.LoadSettings()
+	if err != nil {
+		return domain.Settings{}, fmt.Errorf("load settings: %w", err)
+	}
+
+	state, err := s.store.LoadState()
+	if err != nil {
+		return settings, nil
+	}
+
+	if state.Connected && syncSettingsToRuntime(&settings, state) {
+		if err := s.store.SaveSettings(settings); err != nil {
+			return domain.Settings{}, fmt.Errorf("save settings: %w", err)
+		}
+	}
+
+	return settings, nil
+}
+
+// GetFirewallSettings returns the transparent proxy routing settings.
+func (s *Service) GetFirewallSettings() (domain.FirewallSettings, error) {
+	settings, err := s.store.LoadSettings()
+	if err != nil {
+		return domain.FirewallSettings{}, fmt.Errorf("load settings: %w", err)
+	}
+
+	return settings.Firewall, nil
+}
+
+// ConfigureFirewall updates firewall targets and enabled state.
+func (s *Service) ConfigureFirewall(ctx context.Context, targets []string, enabled bool, port int) (domain.FirewallSettings, error) {
+	settings, err := s.store.LoadSettings()
+	if err != nil {
+		return domain.FirewallSettings{}, fmt.Errorf("load settings: %w", err)
+	}
+
+	settings.Firewall.Enabled = enabled
+	settings.Firewall.TargetCIDRs = slices.Clone(targets)
+	settings.Firewall.SourceCIDRs = nil
+	if port > 0 {
+		settings.Firewall.TransparentPort = port
+	}
+
+	if err := s.store.SaveSettings(settings); err != nil {
+		return domain.FirewallSettings{}, fmt.Errorf("save settings: %w", err)
+	}
+
+	if err := s.reapplyCurrentConnection(ctx); err != nil {
+		return domain.FirewallSettings{}, err
+	}
+
+	return settings.Firewall, nil
+}
+
+// ConfigureFirewallHosts routes all TCP traffic from selected client IPs through the transparent proxy.
+func (s *Service) ConfigureFirewallHosts(ctx context.Context, sources []string, enabled bool, port int) (domain.FirewallSettings, error) {
+	settings, err := s.store.LoadSettings()
+	if err != nil {
+		return domain.FirewallSettings{}, fmt.Errorf("load settings: %w", err)
+	}
+
+	settings.Firewall.Enabled = enabled
+	settings.Firewall.SourceCIDRs = slices.Clone(sources)
+	settings.Firewall.TargetCIDRs = nil
+	settings.Firewall.BlockQUIC = true
+	if port > 0 {
+		settings.Firewall.TransparentPort = port
+	}
+
+	if err := s.store.SaveSettings(settings); err != nil {
+		return domain.FirewallSettings{}, fmt.Errorf("save settings: %w", err)
+	}
+
+	if err := s.reapplyCurrentConnection(ctx); err != nil {
+		return domain.FirewallSettings{}, err
+	}
+
+	return settings.Firewall, nil
+}
+
+// DisableFirewall disables transparent proxy routing.
+func (s *Service) DisableFirewall(ctx context.Context) (domain.FirewallSettings, error) {
+	settings, err := s.store.LoadSettings()
+	if err != nil {
+		return domain.FirewallSettings{}, fmt.Errorf("load settings: %w", err)
+	}
+
+	settings.Firewall.Enabled = false
+	settings.Firewall.TargetCIDRs = nil
+	settings.Firewall.SourceCIDRs = nil
+	if err := s.store.SaveSettings(settings); err != nil {
+		return domain.FirewallSettings{}, fmt.Errorf("save settings: %w", err)
+	}
+
+	if err := s.reapplyCurrentConnection(ctx); err != nil {
+		return domain.FirewallSettings{}, err
+	}
+
+	return settings.Firewall, nil
 }
 
 // SetSetting updates a single setting key.
@@ -485,11 +620,39 @@ func (s *Service) SetSetting(key, value string) (domain.Settings, error) {
 		}
 		settings.LatencyThreshold = d
 	case "auto-mode":
-		settings.AutoMode = strings.EqualFold(value, "true")
-		if settings.AutoMode {
+		enableAuto := strings.EqualFold(value, "true")
+		state, stateErr := s.store.LoadState()
+		if enableAuto {
+			if stateErr == nil && state.Connected && state.ActiveSubscriptionID != "" {
+				if _, err := s.ConnectAuto(context.Background(), state.ActiveSubscriptionID); err != nil {
+					return domain.Settings{}, err
+				}
+				return s.store.LoadSettings()
+			}
+
+			settings.AutoMode = true
 			settings.Mode = domain.SelectionModeAuto
-		} else if settings.Mode == domain.SelectionModeAuto {
-			settings.Mode = domain.SelectionModeManual
+		} else {
+			if stateErr == nil &&
+				state.Connected &&
+				state.Mode == domain.SelectionModeAuto &&
+				state.ActiveSubscriptionID != "" &&
+				state.ActiveNodeID != "" {
+				if err := s.ConnectManual(context.Background(), state.ActiveSubscriptionID, state.ActiveNodeID); err != nil {
+					return domain.Settings{}, err
+				}
+				return s.store.LoadSettings()
+			}
+
+			settings.AutoMode = false
+			if stateErr == nil && state.Connected {
+				settings.Mode = state.Mode
+				if settings.Mode == domain.SelectionModeAuto {
+					settings.Mode = domain.SelectionModeManual
+				}
+			} else if settings.Mode == domain.SelectionModeAuto {
+				settings.Mode = domain.SelectionModeManual
+			}
 		}
 	case "log-level":
 		settings.LogLevel = value
@@ -566,14 +729,26 @@ func (s *Service) applyNodeSelection(ctx context.Context, sub domain.Subscriptio
 
 	if s.backend != nil {
 		if err := s.backend.ApplyConfig(ctx, backend.ConfigRequest{
-			Mode:           mode,
-			Nodes:          []domain.Node{node},
-			SelectedNodeID: node.ID,
-			LogLevel:       settings.LogLevel,
-			SOCKSPort:      10808,
-			HTTPPort:       10809,
+			Mode:             mode,
+			Nodes:            []domain.Node{node},
+			SelectedNodeID:   node.ID,
+			LogLevel:         settings.LogLevel,
+			SOCKSPort:        10808,
+			HTTPPort:         10809,
+			TransparentProxy: settings.Firewall.Enabled && (len(settings.Firewall.TargetCIDRs) > 0 || len(settings.Firewall.SourceCIDRs) > 0),
+			TransparentPort:  settings.Firewall.TransparentPort,
 		}); err != nil {
 			return fmt.Errorf("apply backend config: %w", err)
+		}
+	}
+
+	if s.firewall != nil {
+		if settings.Firewall.Enabled && (len(settings.Firewall.TargetCIDRs) > 0 || len(settings.Firewall.SourceCIDRs) > 0) {
+			if err := s.firewall.Apply(ctx, settings.Firewall); err != nil {
+				return fmt.Errorf("apply firewall: %w", err)
+			}
+		} else if err := s.firewall.Disable(ctx); err != nil {
+			return fmt.Errorf("disable firewall: %w", err)
 		}
 	}
 
@@ -651,4 +826,45 @@ func errString(err error) string {
 		return ""
 	}
 	return err.Error()
+}
+
+func syncSettingsToRuntime(settings *domain.Settings, state domain.RuntimeState) bool {
+	expectedMode := state.Mode
+	if expectedMode == "" {
+		expectedMode = domain.SelectionModeDisconnected
+	}
+	expectedAuto := expectedMode == domain.SelectionModeAuto
+
+	changed := settings.Mode != expectedMode || settings.AutoMode != expectedAuto
+	settings.Mode = expectedMode
+	settings.AutoMode = expectedAuto
+	return changed
+}
+
+func (s *Service) reapplyCurrentConnection(ctx context.Context) error {
+	state, err := s.store.LoadState()
+	if err != nil {
+		return fmt.Errorf("load state: %w", err)
+	}
+
+	if !state.Connected || state.ActiveSubscriptionID == "" || state.ActiveNodeID == "" {
+		if s.firewall != nil {
+			if err := s.firewall.Disable(ctx); err != nil {
+				return fmt.Errorf("disable firewall: %w", err)
+			}
+		}
+		return nil
+	}
+
+	sub, err := s.subscriptionByID(state.ActiveSubscriptionID)
+	if err != nil {
+		return err
+	}
+
+	node, ok := sub.NodeByID(state.ActiveNodeID)
+	if !ok {
+		return fmt.Errorf("node %q not found in subscription %q", state.ActiveNodeID, state.ActiveSubscriptionID)
+	}
+
+	return s.applyNodeSelection(ctx, sub, node, state.Mode)
 }

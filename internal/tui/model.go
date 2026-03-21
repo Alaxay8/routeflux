@@ -12,19 +12,32 @@ import (
 )
 
 type model struct {
-	service       *app.Service
-	status        app.StatusSnapshot
-	subscriptions []domain.Subscription
-	settings      domain.Settings
-	selectedSub   int
-	selectedNode  int
-	screen        screen
-	message       string
-	err           error
-	headerStyle   lipgloss.Style
-	mutedStyle    lipgloss.Style
-	activeStyle   lipgloss.Style
+	service          *app.Service
+	status           app.StatusSnapshot
+	subscriptions    []domain.Subscription
+	providers        []providerGroup
+	settings         domain.Settings
+	selectedProvider int
+	selectedProfile  int
+	selectedNode     int
+	focus            paneFocus
+	width            int
+	height           int
+	screen           screen
+	message          string
+	err              error
+	headerStyle      lipgloss.Style
+	mutedStyle       lipgloss.Style
+	activeStyle      lipgloss.Style
 }
+
+type paneFocus int
+
+const (
+	focusProviders paneFocus = iota
+	focusProfiles
+	focusNodes
+)
 
 type loadMsg struct {
 	status        app.StatusSnapshot
@@ -49,6 +62,9 @@ func newModel(service *app.Service) model {
 	return model{
 		service:     service,
 		screen:      screenMain,
+		focus:       focusNodes,
+		width:       100,
+		height:      24,
 		headerStyle: lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("205")),
 		mutedStyle:  lipgloss.NewStyle().Foreground(lipgloss.Color("241")),
 		activeStyle: lipgloss.NewStyle().Foreground(lipgloss.Color("42")).Bold(true),
@@ -64,9 +80,14 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch msg := msg.(type) {
 	case tea.KeyMsg:
 		return m.updateKey(msg)
+	case tea.WindowSizeMsg:
+		m.width = msg.Width
+		m.height = msg.Height
+		return m, nil
 	case loadMsg:
 		m.status = msg.status
 		m.subscriptions = msg.subscriptions
+		m.providers = buildProviderGroups(msg.subscriptions)
 		m.settings = msg.settings
 		m.err = msg.err
 		if msg.err == nil {
@@ -94,7 +115,12 @@ func (m model) View() string {
 	case screenSettings:
 		return renderStatus(m) + "\n\n" + renderSettings(m) + "\n"
 	default:
-		return renderStatus(m) + "\n\n" + renderSubscriptions(m) + "\n\n" + renderNodes(m) + "\n"
+		top := renderStatus(m) + "\n\n" + renderProviders(m) + "\n\n" + renderProfiles(m)
+		availableLines := m.height - lipgloss.Height(top) - 2
+		if availableLines < 6 {
+			availableLines = 6
+		}
+		return top + "\n\n" + renderNodes(m, availableLines) + "\n"
 	}
 }
 

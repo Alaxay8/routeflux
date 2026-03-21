@@ -8,9 +8,17 @@ func renderStatus(m model) string {
 		mode = "disconnected"
 	}
 
-	activeSubscription := "none"
+	activeProvider := "none"
 	if m.status.ActiveSubscription != nil {
-		activeSubscription = m.status.ActiveSubscription.DisplayName
+		activeProvider = providerTitle(*m.status.ActiveSubscription)
+	}
+
+	activeProfile := "none"
+	if m.status.ActiveSubscription != nil {
+		activeProfile = profileLabel(*m.status.ActiveSubscription)
+		if activeProfile == "" {
+			activeProfile = "Main profile"
+		}
 	}
 
 	activeNode := "none"
@@ -19,10 +27,11 @@ func renderStatus(m model) string {
 	}
 
 	return fmt.Sprintf(
-		"%s\nState: %s\nSubscription: %s\nNode: %s\nMode: %s\nMessage: %s\n\nKeys: j/k subscription  h/l node  c connect  a auto  d disconnect  r refresh  s settings  q quit",
+		"%s\nState: %s\nVPN: %s\nProfile: %s\nNode: %s\nMode: %s\nMessage: %s\n\nKeys: tab pane  h/l pane  j/k move  n/p location  c connect  a auto  d disconnect  r refresh  s settings  q quit",
 		m.headerStyle.Render("RouteFlux"),
 		connectionState(m.status.State.Connected, mode),
-		activeSubscription,
+		activeProvider,
+		activeProfile,
 		activeNode,
 		mode,
 		m.message,

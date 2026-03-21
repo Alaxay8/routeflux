@@ -65,14 +65,24 @@ const (
 
 // Settings stores user-configurable application behavior.
 type Settings struct {
-	SchemaVersion       int           `json:"schema_version"`
-	RefreshInterval     Duration      `json:"refresh_interval"`
-	HealthCheckInterval Duration      `json:"health_check_interval"`
-	SwitchCooldown      Duration      `json:"switch_cooldown"`
-	LatencyThreshold    Duration      `json:"latency_threshold"`
-	AutoMode            bool          `json:"auto_mode"`
-	Mode                SelectionMode `json:"mode"`
-	LogLevel            string        `json:"log_level"`
+	SchemaVersion       int              `json:"schema_version"`
+	RefreshInterval     Duration         `json:"refresh_interval"`
+	HealthCheckInterval Duration         `json:"health_check_interval"`
+	SwitchCooldown      Duration         `json:"switch_cooldown"`
+	LatencyThreshold    Duration         `json:"latency_threshold"`
+	Firewall            FirewallSettings `json:"firewall"`
+	AutoMode            bool             `json:"auto_mode"`
+	Mode                SelectionMode    `json:"mode"`
+	LogLevel            string           `json:"log_level"`
+}
+
+// FirewallSettings stores transparent proxy routing preferences.
+type FirewallSettings struct {
+	Enabled         bool     `json:"enabled"`
+	TransparentPort int      `json:"transparent_port"`
+	TargetCIDRs     []string `json:"target_cidrs"`
+	SourceCIDRs     []string `json:"source_cidrs"`
+	BlockQUIC       bool     `json:"block_quic"`
 }
 
 // DefaultSettings returns the baseline configuration used on first start.
@@ -83,9 +93,16 @@ func DefaultSettings() Settings {
 		HealthCheckInterval: NewDuration(30 * time.Second),
 		SwitchCooldown:      NewDuration(5 * time.Minute),
 		LatencyThreshold:    NewDuration(50 * time.Millisecond),
-		AutoMode:            false,
-		Mode:                SelectionModeManual,
-		LogLevel:            "info",
+		Firewall: FirewallSettings{
+			Enabled:         false,
+			TransparentPort: 12345,
+			TargetCIDRs:     nil,
+			SourceCIDRs:     nil,
+			BlockQUIC:       true,
+		},
+		AutoMode: false,
+		Mode:     SelectionModeManual,
+		LogLevel: "info",
 	}
 }
 

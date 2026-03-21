@@ -12,11 +12,13 @@ type xrayLog struct {
 }
 
 type xrayInbound struct {
-	Tag      string `json:"tag"`
-	Listen   string `json:"listen"`
-	Port     int    `json:"port"`
-	Protocol string `json:"protocol"`
-	Settings any    `json:"settings"`
+	Tag            string `json:"tag"`
+	Listen         string `json:"listen"`
+	Port           int    `json:"port"`
+	Protocol       string `json:"protocol"`
+	Settings       any    `json:"settings"`
+	Sniffing       any    `json:"sniffing,omitempty"`
+	StreamSettings any    `json:"streamSettings,omitempty"`
 }
 
 type xrayRouting struct {

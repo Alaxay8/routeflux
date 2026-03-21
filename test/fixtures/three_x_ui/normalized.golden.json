@@ -1,0 +1,30 @@
+[
+  {
+    "id": "19bebaf805a5",
+    "subscription_id": "",
+    "name": "3x-ui Reality",
+    "provider_name": "3x-ui Import",
+    "protocol": "vless",
+    "address": "ru-sb-01.com",
+    "port": 8443,
+    "uuid": "d2b91ba7-db8c-4d4b-8589-5ba42ffd23ed",
+    "password": "",
+    "encryption": "none",
+    "security": "reality",
+    "server_name": "sni.ru-sb-01.com",
+    "alpn": null,
+    "fingerprint": "random",
+    "public_key": "ySjh6i7SzApnuaxEqMYv2bAqaB4b1yATfJEF_mFjm1Y",
+    "short_id": "3ebbc04da7f0919d",
+    "flow": "xtls-rprx-vision",
+    "transport": "tcp",
+    "path": "",
+    "host": "",
+    "remark": "3x-ui Reality",
+    "raw_query": "",
+    "extras": {
+      "tag": "3x-ui Reality",
+      "type": "tcp"
+    }
+  }
+]
