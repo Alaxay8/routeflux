@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"strconv"
+	"strings"
 	"time"
 )
 
@@ -70,10 +71,46 @@ type Settings struct {
 	HealthCheckInterval Duration         `json:"health_check_interval"`
 	SwitchCooldown      Duration         `json:"switch_cooldown"`
 	LatencyThreshold    Duration         `json:"latency_threshold"`
+	DNS                 DNSSettings      `json:"dns"`
 	Firewall            FirewallSettings `json:"firewall"`
 	AutoMode            bool             `json:"auto_mode"`
 	Mode                SelectionMode    `json:"mode"`
 	LogLevel            string           `json:"log_level"`
+}
+
+// DNSMode controls how RouteFlux manages runtime DNS behavior.
+type DNSMode string
+
+const (
+	// DNSModeSystem leaves DNS handling to the router or host system.
+	DNSModeSystem DNSMode = "system"
+	// DNSModeRemote forces DNS queries to configured upstream servers.
+	DNSModeRemote DNSMode = "remote"
+	// DNSModeSplit keeps selected domains on system DNS and sends the rest upstream.
+	DNSModeSplit DNSMode = "split"
+	// DNSModeDisabled omits RouteFlux-managed DNS config.
+	DNSModeDisabled DNSMode = "disabled"
+)
+
+// DNSTransport controls how RouteFlux talks to upstream DNS servers.
+type DNSTransport string
+
+const (
+	// DNSTransportPlain uses plain DNS as written by the server address.
+	DNSTransportPlain DNSTransport = "plain"
+	// DNSTransportDoH uses DNS over HTTPS.
+	DNSTransportDoH DNSTransport = "doh"
+	// DNSTransportDoT is reserved for future backends.
+	DNSTransportDoT DNSTransport = "dot"
+)
+
+// DNSSettings stores RouteFlux-managed DNS preferences.
+type DNSSettings struct {
+	Mode          DNSMode      `json:"mode"`
+	Transport     DNSTransport `json:"transport"`
+	Servers       []string     `json:"servers"`
+	Bootstrap     []string     `json:"bootstrap"`
+	DirectDomains []string     `json:"direct_domains"`
 }
 
 // FirewallSettings stores transparent proxy routing preferences.
@@ -88,11 +125,18 @@ type FirewallSettings struct {
 // DefaultSettings returns the baseline configuration used on first start.
 func DefaultSettings() Settings {
 	return Settings{
-		SchemaVersion:       1,
+		SchemaVersion:       2,
 		RefreshInterval:     NewDuration(time.Hour),
 		HealthCheckInterval: NewDuration(30 * time.Second),
 		SwitchCooldown:      NewDuration(5 * time.Minute),
 		LatencyThreshold:    NewDuration(50 * time.Millisecond),
+		DNS: DNSSettings{
+			Mode:          DNSModeSystem,
+			Transport:     DNSTransportPlain,
+			Servers:       nil,
+			Bootstrap:     nil,
+			DirectDomains: nil,
+		},
 		Firewall: FirewallSettings{
 			Enabled:         false,
 			TransparentPort: 12345,
@@ -118,4 +162,28 @@ func ParseDurationValue(raw string) (Duration, error) {
 	}
 
 	return Duration(value), nil
+}
+
+// ParseDNSMode validates and normalizes a DNS mode value.
+func ParseDNSMode(raw string) (DNSMode, error) {
+	switch DNSMode(strings.ToLower(strings.TrimSpace(raw))) {
+	case "":
+		return DNSModeSystem, nil
+	case DNSModeSystem, DNSModeRemote, DNSModeSplit, DNSModeDisabled:
+		return DNSMode(strings.ToLower(strings.TrimSpace(raw))), nil
+	default:
+		return "", fmt.Errorf("unsupported dns mode %q", raw)
+	}
+}
+
+// ParseDNSTransport validates and normalizes a DNS transport value.
+func ParseDNSTransport(raw string) (DNSTransport, error) {
+	switch DNSTransport(strings.ToLower(strings.TrimSpace(raw))) {
+	case "":
+		return DNSTransportPlain, nil
+	case DNSTransportPlain, DNSTransportDoH, DNSTransportDoT:
+		return DNSTransport(strings.ToLower(strings.TrimSpace(raw))), nil
+	default:
+		return "", fmt.Errorf("unsupported dns transport %q", raw)
+	}
 }

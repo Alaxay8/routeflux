@@ -3,6 +3,9 @@ package xray
 import (
 	"encoding/json"
 	"fmt"
+	"net/netip"
+	"net/url"
+	"strings"
 
 	"github.com/Alaxay8/routeflux/internal/backend"
 	"github.com/Alaxay8/routeflux/internal/domain"
@@ -29,8 +32,14 @@ func (Generator) Generate(req backend.ConfigRequest) ([]byte, error) {
 	}
 	outbound.Tag = "selected"
 
+	dnsConfig, err := buildDNSConfig(req.DNS)
+	if err != nil {
+		return nil, err
+	}
+
 	cfg := xrayConfig{
 		Log: xrayLog{LogLevel: firstNonEmpty(req.LogLevel, "warning")},
+		DNS: dnsConfig,
 		Inbounds: []xrayInbound{
 			{
 				Tag:      "socks-in",
@@ -116,6 +125,153 @@ func firstNonEmpty(values ...string) string {
 		}
 	}
 	return ""
+}
+
+func buildDNSConfig(settings domain.DNSSettings) (*xrayDNS, error) {
+	mode, err := domain.ParseDNSMode(string(settings.Mode))
+	if err != nil {
+		return nil, err
+	}
+
+	switch mode {
+	case domain.DNSModeSystem, domain.DNSModeDisabled:
+		return nil, nil
+	}
+
+	transport, err := domain.ParseDNSTransport(string(settings.Transport))
+	if err != nil {
+		return nil, err
+	}
+
+	servers, err := formatDNSServers(settings.Servers, transport)
+	if err != nil {
+		return nil, err
+	}
+	if len(servers) == 0 {
+		return nil, fmt.Errorf("dns servers are required when dns mode is %q", mode)
+	}
+
+	result := make([]any, 0, len(servers)+len(settings.Bootstrap)+1)
+	if mode == domain.DNSModeSplit {
+		directDomains := cleanStringList(settings.DirectDomains)
+		if len(directDomains) > 0 {
+			result = append(result, xrayDNSServer{
+				Address:      "localhost",
+				Domains:      directDomains,
+				SkipFallback: true,
+			})
+		}
+	}
+
+	bootstrapDomains := dnsBootstrapDomains(servers)
+	if len(bootstrapDomains) > 0 {
+		bootstrapServers, err := formatDNSServers(settings.Bootstrap, domain.DNSTransportPlain)
+		if err != nil {
+			return nil, err
+		}
+		for _, server := range bootstrapServers {
+			result = append(result, xrayDNSServer{
+				Address:      server,
+				Domains:      bootstrapDomains,
+				SkipFallback: true,
+			})
+		}
+	}
+
+	for _, server := range servers {
+		result = append(result, server)
+	}
+
+	return &xrayDNS{Servers: result}, nil
+}
+
+func formatDNSServers(servers []string, transport domain.DNSTransport) ([]string, error) {
+	cleaned := cleanStringList(servers)
+	if len(cleaned) == 0 {
+		return nil, nil
+	}
+
+	out := make([]string, 0, len(cleaned))
+	for _, server := range cleaned {
+		if hasScheme(server) {
+			out = append(out, server)
+			continue
+		}
+
+		switch transport {
+		case domain.DNSTransportPlain:
+			out = append(out, server)
+		case domain.DNSTransportDoH:
+			out = append(out, formatDoHServer(server))
+		case domain.DNSTransportDoT:
+			return nil, fmt.Errorf("dns transport %q is not supported by the current xray backend", transport)
+		default:
+			return nil, fmt.Errorf("unsupported dns transport %q", transport)
+		}
+	}
+
+	return out, nil
+}
+
+func formatDoHServer(server string) string {
+	server = strings.TrimSpace(server)
+	if server == "" {
+		return ""
+	}
+	if strings.Contains(server, "/") {
+		return "https://" + strings.TrimPrefix(server, "https://")
+	}
+	return "https://" + server + "/dns-query"
+}
+
+func dnsBootstrapDomains(servers []string) []string {
+	seen := make(map[string]struct{}, len(servers))
+	out := make([]string, 0, len(servers))
+	for _, server := range servers {
+		host := dnsServerHostname(server)
+		if host == "" {
+			continue
+		}
+		if _, err := netip.ParseAddr(host); err == nil {
+			continue
+		}
+
+		domain := "full:" + host
+		if _, ok := seen[domain]; ok {
+			continue
+		}
+		seen[domain] = struct{}{}
+		out = append(out, domain)
+	}
+	return out
+}
+
+func dnsServerHostname(server string) string {
+	if hasScheme(server) {
+		if parsed, err := url.Parse(server); err == nil {
+			return parsed.Hostname()
+		}
+	}
+	if parsed, err := url.Parse("//" + server); err == nil {
+		return parsed.Hostname()
+	}
+	return ""
+}
+
+func hasScheme(value string) bool {
+	return strings.Contains(value, "://")
+}
+
+func cleanStringList(values []string) []string {
+	out := make([]string, 0, len(values))
+	for _, value := range values {
+		value = strings.TrimSpace(value)
+		if value == "" {
+			continue
+		}
+		out = append(out, value)
+	}
+	return out
 }
 
 func outboundForNode(node domain.Node) (xrayCommonOutbound, error) {

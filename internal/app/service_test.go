@@ -260,6 +260,97 @@ func TestSetSettingAutoModeFalsePinsCurrentNode(t *testing.T) {
 	}
 }
 
+func TestSetSettingDNSFields(t *testing.T) {
+	t.Parallel()
+
+	store := &memoryStore{
+		settings: domain.DefaultSettings(),
+		state:    domain.DefaultRuntimeState(),
+	}
+	service := NewService(Dependencies{Store: store})
+
+	settings, err := service.SetSetting("dns.servers", "dns.google, 1.1.1.1")
+	if err != nil {
+		t.Fatalf("set dns.servers: %v", err)
+	}
+	if len(settings.DNS.Servers) != 2 || settings.DNS.Servers[0] != "dns.google" || settings.DNS.Servers[1] != "1.1.1.1" {
+		t.Fatalf("unexpected dns servers: %+v", settings.DNS.Servers)
+	}
+
+	settings, err = service.SetSetting("dns.bootstrap", "9.9.9.9, 8.8.8.8")
+	if err != nil {
+		t.Fatalf("set dns.bootstrap: %v", err)
+	}
+	if len(settings.DNS.Bootstrap) != 2 || settings.DNS.Bootstrap[0] != "9.9.9.9" || settings.DNS.Bootstrap[1] != "8.8.8.8" {
+		t.Fatalf("unexpected dns bootstrap: %+v", settings.DNS.Bootstrap)
+	}
+
+	settings, err = service.SetSetting("dns.domains", "domain:lan, full:router.lan")
+	if err != nil {
+		t.Fatalf("set dns.domains: %v", err)
+	}
+	if len(settings.DNS.DirectDomains) != 2 || settings.DNS.DirectDomains[0] != "domain:lan" || settings.DNS.DirectDomains[1] != "full:router.lan" {
+		t.Fatalf("unexpected dns direct domains: %+v", settings.DNS.DirectDomains)
+	}
+}
+
+func TestSetSettingDNSModeReappliesCurrentConnection(t *testing.T) {
+	t.Parallel()
+
+	store := &memoryStore{
+		settings: domain.DefaultSettings(),
+		state:    domain.DefaultRuntimeState(),
+		subs: []domain.Subscription{
+			{
+				ID: "sub-1",
+				Nodes: []domain.Node{
+					{
+						ID:       "node-1",
+						Name:     "Germany",
+						Protocol: domain.ProtocolVLESS,
+						Address:  "de.example.com",
+						Port:     443,
+						UUID:     "11111111-1111-1111-1111-111111111111",
+					},
+				},
+			},
+		},
+	}
+	store.state.Connected = true
+	store.state.Mode = domain.SelectionModeManual
+	store.state.ActiveSubscriptionID = "sub-1"
+	store.state.ActiveNodeID = "node-1"
+	store.settings.DNS.Servers = []string{"dns.google"}
+	store.settings.DNS.Transport = domain.DNSTransportDoH
+
+	runtimeBackend := &recordingBackend{}
+	service := NewService(Dependencies{
+		Store:   store,
+		Backend: runtimeBackend,
+	})
+
+	settings, err := service.SetSetting("dns.mode", string(domain.DNSModeSplit))
+	if err != nil {
+		t.Fatalf("set dns.mode: %v", err)
+	}
+
+	if settings.DNS.Mode != domain.DNSModeSplit {
+		t.Fatalf("unexpected dns mode: %s", settings.DNS.Mode)
+	}
+	if len(runtimeBackend.requests) != 1 {
+		t.Fatalf("expected one backend reapply, got %d", len(runtimeBackend.requests))
+	}
+	if runtimeBackend.requests[0].DNS.Mode != domain.DNSModeSplit {
+		t.Fatalf("unexpected request dns mode: %s", runtimeBackend.requests[0].DNS.Mode)
+	}
+	if runtimeBackend.requests[0].DNS.Transport != domain.DNSTransportDoH {
+		t.Fatalf("unexpected request dns transport: %s", runtimeBackend.requests[0].DNS.Transport)
+	}
+	if len(runtimeBackend.requests[0].DNS.Servers) != 1 || runtimeBackend.requests[0].DNS.Servers[0] != "dns.google" {
+		t.Fatalf("unexpected request dns servers: %+v", runtimeBackend.requests[0].DNS.Servers)
+	}
+}
+
 func TestRemoveSubscriptionDeletesInactiveSubscription(t *testing.T) {
 	t.Parallel()
 

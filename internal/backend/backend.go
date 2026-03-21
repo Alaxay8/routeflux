@@ -12,6 +12,7 @@ type ConfigRequest struct {
 	Nodes            []domain.Node
 	SelectedNodeID   string
 	LogLevel         string
+	DNS              domain.DNSSettings
 	SOCKSPort        int
 	HTTPPort         int
 	TransparentProxy bool

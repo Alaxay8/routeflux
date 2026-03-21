@@ -594,6 +594,8 @@ func (s *Service) SetSetting(key, value string) (domain.Settings, error) {
 		return domain.Settings{}, fmt.Errorf("load settings: %w", err)
 	}
 
+	reapplyRuntime := false
+
 	switch key {
 	case "refresh-interval":
 		d, err := domain.ParseDurationValue(value)
@@ -656,12 +658,42 @@ func (s *Service) SetSetting(key, value string) (domain.Settings, error) {
 		}
 	case "log-level":
 		settings.LogLevel = value
+		reapplyRuntime = true
+	case "dns.mode":
+		mode, err := domain.ParseDNSMode(value)
+		if err != nil {
+			return domain.Settings{}, err
+		}
+		settings.DNS.Mode = mode
+		reapplyRuntime = true
+	case "dns.transport":
+		transport, err := domain.ParseDNSTransport(value)
+		if err != nil {
+			return domain.Settings{}, err
+		}
+		settings.DNS.Transport = transport
+		reapplyRuntime = true
+	case "dns.servers":
+		settings.DNS.Servers = parseStringList(value)
+		reapplyRuntime = true
+	case "dns.bootstrap":
+		settings.DNS.Bootstrap = parseStringList(value)
+		reapplyRuntime = true
+	case "dns.direct-domains", "dns.domains":
+		settings.DNS.DirectDomains = parseStringList(value)
+		reapplyRuntime = true
 	default:
 		return domain.Settings{}, fmt.Errorf("unsupported setting %q", key)
 	}
 
 	if err := s.store.SaveSettings(settings); err != nil {
 		return domain.Settings{}, fmt.Errorf("save settings: %w", err)
+	}
+
+	if reapplyRuntime {
+		if err := s.reapplyCurrentConnection(context.Background()); err != nil {
+			return domain.Settings{}, err
+		}
 	}
 
 	return settings, nil
@@ -733,6 +765,7 @@ func (s *Service) applyNodeSelection(ctx context.Context, sub domain.Subscriptio
 			Nodes:            []domain.Node{node},
 			SelectedNodeID:   node.ID,
 			LogLevel:         settings.LogLevel,
+			DNS:              settings.DNS,
 			SOCKSPort:        10808,
 			HTTPPort:         10809,
 			TransparentProxy: settings.Firewall.Enabled && (len(settings.Firewall.TargetCIDRs) > 0 || len(settings.Firewall.SourceCIDRs) > 0),
@@ -826,6 +859,19 @@ func errString(err error) string {
 		return ""
 	}
 	return err.Error()
+}
+
+func parseStringList(raw string) []string {
+	parts := strings.Split(raw, ",")
+	out := make([]string, 0, len(parts))
+	for _, part := range parts {
+		part = strings.TrimSpace(part)
+		if part == "" {
+			continue
+		}
+		out = append(out, part)
+	}
+	return out
 }
 
 func syncSettingsToRuntime(settings *domain.Settings, state domain.RuntimeState) bool {

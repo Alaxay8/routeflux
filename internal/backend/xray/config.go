@@ -2,6 +2,7 @@ package xray
 
 type xrayConfig struct {
 	Log       xrayLog       `json:"log"`
+	DNS       *xrayDNS      `json:"dns,omitempty"`
 	Inbounds  []xrayInbound `json:"inbounds"`
 	Outbounds []any         `json:"outbounds"`
 	Routing   xrayRouting   `json:"routing"`
@@ -9,6 +10,16 @@ type xrayConfig struct {
 
 type xrayLog struct {
 	LogLevel string `json:"loglevel"`
+}
+
+type xrayDNS struct {
+	Servers []any `json:"servers,omitempty"`
+}
+
+type xrayDNSServer struct {
+	Address      string   `json:"address"`
+	Domains      []string `json:"domains,omitempty"`
+	SkipFallback bool     `json:"skipFallback,omitempty"`
 }
 
 type xrayInbound struct {

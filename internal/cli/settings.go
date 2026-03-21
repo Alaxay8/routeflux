@@ -28,7 +28,7 @@ func newSettingsCmd(opts *rootOptions) *cobra.Command {
 				}
 
 				text := fmt.Sprintf(
-					"refresh-interval=%s\nhealth-check-interval=%s\nswitch-cooldown=%s\nlatency-threshold=%s\nauto-mode=%t\nmode=%s\nlog-level=%s\nfirewall-enabled=%t\nfirewall-port=%d\nfirewall-targets=%s\nfirewall-hosts=%s\nfirewall-block-quic=%t",
+					"refresh-interval=%s\nhealth-check-interval=%s\nswitch-cooldown=%s\nlatency-threshold=%s\nauto-mode=%t\nmode=%s\nlog-level=%s\ndns.mode=%s\ndns.transport=%s\ndns.servers=%s\ndns.bootstrap=%s\ndns.direct-domains=%s\nfirewall-enabled=%t\nfirewall-port=%d\nfirewall-targets=%s\nfirewall-hosts=%s\nfirewall-block-quic=%t",
 					settings.RefreshInterval,
 					settings.HealthCheckInterval,
 					settings.SwitchCooldown,
@@ -36,6 +36,11 @@ func newSettingsCmd(opts *rootOptions) *cobra.Command {
 					settings.AutoMode,
 					settings.Mode,
 					settings.LogLevel,
+					settings.DNS.Mode,
+					settings.DNS.Transport,
+					strings.Join(settings.DNS.Servers, ", "),
+					strings.Join(settings.DNS.Bootstrap, ", "),
+					strings.Join(settings.DNS.DirectDomains, ", "),
 					settings.Firewall.Enabled,
 					settings.Firewall.TransparentPort,
 					strings.Join(settings.Firewall.TargetCIDRs, ", "),
