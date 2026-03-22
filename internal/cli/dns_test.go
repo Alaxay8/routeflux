@@ -76,6 +76,46 @@ func TestDNSExplainCommandOutputsFriendlyGuide(t *testing.T) {
 	}
 }
 
+func TestDNSGetShowsCurrentValuesAndMeaning(t *testing.T) {
+	t.Parallel()
+
+	store := &cliMemoryStore{
+		settings: domain.DefaultSettings(),
+		state:    domain.DefaultRuntimeState(),
+	}
+	store.settings.DNS.Mode = domain.DNSModeSplit
+	store.settings.DNS.Transport = domain.DNSTransportDoH
+	store.settings.DNS.Servers = []string{"dns.google", "1.1.1.1"}
+	store.settings.DNS.Bootstrap = []string{"9.9.9.9"}
+	store.settings.DNS.DirectDomains = []string{"domain:lan", "full:router.lan"}
+
+	cmd := newDNSCmd(&rootOptions{service: app.NewService(app.Dependencies{Store: store})})
+	var stdout bytes.Buffer
+	cmd.SetOut(&stdout)
+	cmd.SetErr(new(bytes.Buffer))
+	cmd.SetArgs([]string{"get"})
+
+	if err := cmd.Execute(); err != nil {
+		t.Fatalf("execute dns get: %v", err)
+	}
+
+	output := stdout.String()
+	wants := []string{
+		"mode=split",
+		"mode-help=Keep local home-network names local",
+		"transport=doh",
+		"transport-help=DNS over HTTPS.",
+		"servers=dns.google, 1.1.1.1",
+		"bootstrap=9.9.9.9",
+		"direct-domains=domain:lan, full:router.lan",
+	}
+	for _, want := range wants {
+		if !strings.Contains(output, want) {
+			t.Fatalf("dns get missing %q\n%s", want, output)
+		}
+	}
+}
+
 func TestRootHelpIncludesDNSCommand(t *testing.T) {
 	t.Parallel()
 

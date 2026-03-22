@@ -163,11 +163,41 @@ func mapDNSOptionKey(raw string) (string, error) {
 
 func renderDNSSettingsText(dns domain.DNSSettings) string {
 	return fmt.Sprintf(
-		"mode=%v\ntransport=%v\nservers=%s\nbootstrap=%s\ndirect-domains=%s",
+		"mode=%v\nmode-help=%s\ntransport=%v\ntransport-help=%s\nservers=%s\nbootstrap=%s\ndirect-domains=%s",
 		dns.Mode,
+		dnsModeHelp(dns.Mode),
 		dns.Transport,
+		dnsTransportHelp(dns.Transport),
 		strings.Join(dns.Servers, ", "),
 		strings.Join(dns.Bootstrap, ", "),
 		strings.Join(dns.DirectDomains, ", "),
 	)
+}
+
+func dnsModeHelp(mode domain.DNSMode) string {
+	switch mode {
+	case domain.DNSModeSystem:
+		return "Use your router's normal DNS. RouteFlux does not change it."
+	case domain.DNSModeRemote:
+		return "Send all DNS requests to the DNS servers you selected."
+	case domain.DNSModeSplit:
+		return "Keep local home-network names local, but send the rest to your selected DNS."
+	case domain.DNSModeDisabled:
+		return "Do not write a DNS block into the Xray config."
+	default:
+		return "DNS mode is not set."
+	}
+}
+
+func dnsTransportHelp(transport domain.DNSTransport) string {
+	switch transport {
+	case domain.DNSTransportPlain:
+		return "Regular DNS, not encrypted."
+	case domain.DNSTransportDoH:
+		return "DNS over HTTPS. This is the working encrypted DNS option right now."
+	case domain.DNSTransportDoT:
+		return "DNS over TLS. The setting exists, but the current backend does not apply it yet."
+	default:
+		return "DNS transport is not set."
+	}
 }

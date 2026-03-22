@@ -52,11 +52,6 @@ func TestSettingsGetIncludesFirewallHosts(t *testing.T) {
 	store.settings.Firewall.TargetCIDRs = []string{"1.1.1.1"}
 	store.settings.Firewall.SourceCIDRs = []string{"192.168.1.150"}
 	store.settings.Firewall.BlockQUIC = true
-	store.settings.DNS.Mode = domain.DNSModeSplit
-	store.settings.DNS.Transport = domain.DNSTransportDoH
-	store.settings.DNS.Servers = []string{"dns.google", "1.1.1.1"}
-	store.settings.DNS.Bootstrap = []string{"9.9.9.9"}
-	store.settings.DNS.DirectDomains = []string{"domain:lan", "full:router.lan"}
 
 	cmd := newSettingsCmd(&rootOptions{service: app.NewService(app.Dependencies{Store: store})})
 	var stdout bytes.Buffer
@@ -73,11 +68,6 @@ func TestSettingsGetIncludesFirewallHosts(t *testing.T) {
 		"firewall-targets=1.1.1.1",
 		"firewall-hosts=192.168.1.150",
 		"firewall-block-quic=true",
-		"dns.mode=split",
-		"dns.transport=doh",
-		"dns.servers=dns.google, 1.1.1.1",
-		"dns.bootstrap=9.9.9.9",
-		"dns.direct-domains=domain:lan, full:router.lan",
 	}
 	for _, want := range wants {
 		if !strings.Contains(output, want) {
