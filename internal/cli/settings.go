@@ -11,6 +11,7 @@ func newSettingsCmd(opts *rootOptions) *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "settings",
 		Short: "Get or update RouteFlux settings",
+		Long:  "General RouteFlux settings. For DNS, prefer `routeflux dns ...` because it explains each option in plain language.",
 	}
 
 	cmd.AddCommand(
@@ -53,6 +54,7 @@ func newSettingsCmd(opts *rootOptions) *cobra.Command {
 		&cobra.Command{
 			Use:   "set <key> <value>",
 			Short: "Update a setting",
+			Long:  "Update one low-level setting key. For DNS settings, prefer `routeflux dns set ...` because it uses simpler names and clearer help.",
 			Args:  cobra.ExactArgs(2),
 			RunE: func(cmd *cobra.Command, args []string) error {
 				settings, err := opts.service.SetSetting(args[0], args[1])

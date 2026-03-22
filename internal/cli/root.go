@@ -45,6 +45,7 @@ func newRootCmd() *cobra.Command {
 
 	cmd.AddCommand(
 		newAddCmd(opts),
+		newDNSCmd(opts),
 		newFirewallCmd(opts),
 		newListCmd(opts),
 		newRemoveCmd(opts),
