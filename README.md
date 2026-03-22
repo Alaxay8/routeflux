@@ -23,25 +23,23 @@ RouteFlux imports subscription URLs, raw `vless://`, `vmess://`, `trojan://`, an
 
 ## Quick Start
 
-```bash
-make build
-./bin/routeflux add 'vless://uuid@example.com:443?...#Example'
-./bin/routeflux list subscriptions
-./bin/routeflux connect --subscription sub-1234567890 --node abcdef123456
-```
+1. Install the RouteFlux binary on the router.
+2. Add a subscription, share link, or valid 3x-ui/Xray JSON config.
+3. Connect a node or enable auto mode.
+
+See [Installation](#installation) and [Usage](#usage).
 
 ## Installation
 
 1. Install Go `1.22` or later if you are building locally.
-2. Install Xray Core on the target router.
-3. Use OpenWrt or ImmortalWrt with `nftables` available. OpenWrt `22.03+` is the practical baseline for the current firewall integration.
-4. Build RouteFlux:
+2. Use OpenWrt or ImmortalWrt with `nftables` available. OpenWrt `22.03+` is the practical baseline for the current firewall integration.
+3. Build RouteFlux:
 
 ```bash
 make build-openwrt
 ```
 
-1. Copy the binary to the router. On many OpenWrt devices, `scp -O` works more reliably than default SFTP mode:
+4. Copy the binary to the router. On many OpenWrt devices, `scp -O` works more reliably than default SFTP mode:
 
 ```bash
 scp -O ./bin/openwrt/routeflux root@router:/usr/bin/routeflux
@@ -53,7 +51,7 @@ If your router does not provide SFTP support, stream the file over SSH:
 ssh root@router 'cat > /tmp/routeflux.new && chmod 0755 /tmp/routeflux.new && mv /tmp/routeflux.new /usr/bin/routeflux' < ./bin/openwrt/routeflux
 ```
 
-1. Ensure the Xray service script exists at `/etc/init.d/xray`, or override it with `ROUTEFLUX_XRAY_SERVICE`.
+5. Install Xray Core later when you want to use `connect`, `disconnect`, or generated runtime config. Ensure the service script exists at `/etc/init.d/xray`, or override it with `ROUTEFLUX_XRAY_SERVICE`.
 
 ## Usage
 
@@ -76,9 +74,14 @@ routeflux status
 routeflux settings get
 routeflux settings set refresh-interval 1h
 routeflux settings set auto-mode true
-routeflux firewall set 1.1.1.1 8.8.8.8/32
-routeflux firewall host 192.168.1.150
-routeflux firewall status
+routeflux firewall get
+routeflux firewall explain
+routeflux firewall set targets 1.1.1.1 8.8.8.8/32
+routeflux firewall set hosts 192.168.1.150
+routeflux firewall set hosts 192.168.1.0/24
+routeflux firewall set hosts 192.168.1.150-192.168.1.159
+routeflux firewall set hosts all
+routeflux firewall set block-quic true
 routeflux dns get
 routeflux dns explain
 routeflux dns set default
@@ -108,10 +111,24 @@ Enable automatic best-node selection:
 routeflux connect --auto --subscription sub-8b9f930214
 ```
 
-Route all TCP traffic from a LAN host through RouteFlux:
+Route all TCP traffic from one LAN device through RouteFlux:
 
 ```bash
-routeflux firewall host 192.168.1.150
+routeflux firewall set hosts 192.168.1.150
+routeflux connect --subscription sub-8b9f930214 --node 90c42d5dd302
+```
+
+Route a pool of LAN devices through RouteFlux:
+
+```bash
+routeflux firewall set hosts 192.168.1.32/27
+routeflux connect --subscription sub-8b9f930214 --node 90c42d5dd302
+```
+
+Route all common private LAN clients through RouteFlux:
+
+```bash
+routeflux firewall set hosts all
 routeflux connect --subscription sub-8b9f930214 --node 90c42d5dd302
 ```
 
@@ -157,6 +174,15 @@ DNS workflow:
 - Use `routeflux dns set ...` to change DNS behavior.
 - Keep using `routeflux settings` for general app settings such as refresh interval, auto mode, and log level.
 
+Firewall workflow:
+
+- Use `routeflux firewall get` to see current transparent routing settings.
+- Use `routeflux firewall explain` to read plain-language explanations of host mode, target mode, and QUIC blocking.
+- Use `routeflux firewall set hosts ...` to route selected LAN clients through RouteFlux.
+- Use `routeflux firewall set targets ...` to route selected destination IPv4 addresses or ranges through RouteFlux.
+- Use `routeflux firewall set port ...` and `routeflux firewall set block-quic ...` to tune the active firewall behavior.
+- `routeflux firewall host ...` and `routeflux firewall status` still work as compatibility aliases.
+
 DNS modes:
 
 - `system`: RouteFlux leaves DNS alone and does not write a DNS block into the Xray config.
@@ -191,8 +217,9 @@ Project notes:
 
 - The parser, selector, firewall integration, DNS rendering, and Xray config generation are covered by unit tests and golden files.
 - `routeflux add` accepts URLs, raw share links, or stdin, so it works well with copy-paste and shell pipelines.
-- 3x-ui and Xray JSON imports are normalized into RouteFlux nodes instead of being copied as full runtime configs.
+- 3x-ui and Xray JSON imports, including JSON arrays of full configs, are normalized into RouteFlux nodes instead of being copied as full runtime configs.
 - General settings and DNS settings are intentionally split. Use `routeflux settings` for app behavior and `routeflux dns` for runtime DNS.
+- `routeflux firewall set hosts` accepts single IPv4 addresses, IPv4 CIDR pools, IPv4 ranges, and the aliases `all` or `*` for common private LAN ranges.
 
 ## Architecture
 
@@ -229,7 +256,7 @@ Placeholder screenshots:
 1. Build with `make build-openwrt`.
 2. Copy the binary to the router.
 3. Create `/etc/routeflux` if it does not exist.
-4. Install Xray and verify that `/etc/init.d/xray` can `reload`, `start`, and `stop`.
+4. Install Xray only when you want to connect traffic, and verify that `/etc/init.d/xray` can `reload`, `start`, and `stop`.
 5. Run `routeflux add`, import a valid subscription or 3x-ui/Xray JSON config, and connect to a node.
 6. If you need encrypted DNS, configure it through `routeflux dns` after the runtime is working.
 
@@ -240,7 +267,7 @@ Placeholder screenshots:
 - The current Xray backend connects VLESS, VMess, and Trojan nodes. Shadowsocks parsing is available, but end-to-end Xray outbound generation for Shadowsocks is not wired yet.
 - `dns.transport=dot` is defined in settings but is not applied by the current Xray backend.
 - Transparent router traffic interception is not fully automated in MVP.
-- Simple firewall routing currently supports IPv4 targets, IPv4 ranges, LAN hosts, and TCP redirect. QUIC blocking is host-mode only.
+- Simple firewall routing currently supports destination IPv4 targets, source IPv4 hosts, CIDR pools, IPv4 ranges, and the `all` or `*` LAN-wide shortcut. QUIC blocking is host-mode only.
 - There is no LuCI web UI or native package feed integration yet.
 
 ## License

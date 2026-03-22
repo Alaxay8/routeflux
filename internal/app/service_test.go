@@ -3,6 +3,8 @@ package app
 import (
 	"context"
 	"fmt"
+	"net/http"
+	"net/http/httptest"
 	"testing"
 	"time"
 
@@ -41,6 +43,50 @@ func TestConfigureFirewallHostsClearsDestinationTargets(t *testing.T) {
 	}
 	if !settings.BlockQUIC {
 		t.Fatal("expected QUIC blocking to be enabled for host routing")
+	}
+}
+
+func TestConfigureFirewallHostsCanonicalizesAllAlias(t *testing.T) {
+	t.Parallel()
+
+	store := &memoryStore{
+		settings: domain.DefaultSettings(),
+		state:    domain.DefaultRuntimeState(),
+	}
+
+	service := NewService(Dependencies{Store: store})
+
+	settings, err := service.ConfigureFirewallHosts(context.Background(), []string{"*", "192.168.1.150"}, true, 23456)
+	if err != nil {
+		t.Fatalf("configure firewall hosts: %v", err)
+	}
+
+	if len(settings.SourceCIDRs) != 1 || settings.SourceCIDRs[0] != "all" {
+		t.Fatalf("unexpected source hosts: %v", settings.SourceCIDRs)
+	}
+	if len(store.settings.Firewall.SourceCIDRs) != 1 || store.settings.Firewall.SourceCIDRs[0] != "all" {
+		t.Fatalf("unexpected persisted source hosts: %v", store.settings.Firewall.SourceCIDRs)
+	}
+}
+
+func TestConfigureFirewallHostsPreservesBlockQUICSetting(t *testing.T) {
+	t.Parallel()
+
+	store := &memoryStore{
+		settings: domain.DefaultSettings(),
+		state:    domain.DefaultRuntimeState(),
+	}
+	store.settings.Firewall.BlockQUIC = false
+
+	service := NewService(Dependencies{Store: store})
+
+	settings, err := service.ConfigureFirewallHosts(context.Background(), []string{"192.168.1.150"}, true, 23456)
+	if err != nil {
+		t.Fatalf("configure firewall hosts: %v", err)
+	}
+
+	if settings.BlockQUIC {
+		t.Fatal("expected block-quic to remain false")
 	}
 }
 
@@ -409,6 +455,83 @@ func TestApplyDefaultDNSReappliesCurrentConnection(t *testing.T) {
 	}
 	if runtimeBackend.requests[0].DNS.Mode != want.Mode || runtimeBackend.requests[0].DNS.Transport != want.Transport {
 		t.Fatalf("unexpected request dns: %+v", runtimeBackend.requests[0].DNS)
+	}
+}
+
+func TestRefreshSubscriptionParsesJSONArrayOfConfigs(t *testing.T) {
+	t.Parallel()
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, _ = w.Write([]byte(`[
+		  {
+		    "remarks": "One",
+		    "outbounds": [
+		      {
+		        "protocol": "vless",
+		        "tag": "proxy-one",
+		        "settings": {
+		          "vnext": [
+		            {
+		              "address": "one.example.com",
+		              "port": 443,
+		              "users": [
+		                {
+		                  "id": "11111111-1111-1111-1111-111111111111",
+		                  "encryption": "none",
+		                  "flow": "xtls-rprx-vision"
+		                }
+		              ]
+		            }
+		          ]
+		        },
+		        "streamSettings": {
+		          "network": "tcp",
+		          "security": "reality",
+		          "realitySettings": {
+		            "serverName": "rbc.ru",
+		            "publicKey": "public-key-one",
+		            "shortId": "short-one",
+		            "fingerprint": "random"
+		          }
+		        }
+		      }
+		    ]
+		  }
+		]`))
+	}))
+	defer server.Close()
+
+	store := &memoryStore{
+		settings: domain.DefaultSettings(),
+		state:    domain.DefaultRuntimeState(),
+		subs: []domain.Subscription{
+			{
+				ID:           "sub-1",
+				SourceType:   domain.SourceTypeURL,
+				Source:       server.URL,
+				ProviderName: "test-provider",
+				Nodes: []domain.Node{
+					{ID: "old-node"},
+				},
+			},
+		},
+	}
+
+	service := NewService(Dependencies{Store: store, HTTPClient: server.Client()})
+
+	sub, err := service.RefreshSubscription(context.Background(), "sub-1")
+	if err != nil {
+		t.Fatalf("refresh subscription: %v", err)
+	}
+
+	if sub.ParserStatus != "ok" {
+		t.Fatalf("unexpected parser status: %s", sub.ParserStatus)
+	}
+	if len(sub.Nodes) != 1 {
+		t.Fatalf("expected 1 node after refresh, got %d", len(sub.Nodes))
+	}
+	if sub.Nodes[0].Address != "one.example.com" {
+		t.Fatalf("unexpected node address: %s", sub.Nodes[0].Address)
 	}
 }
 

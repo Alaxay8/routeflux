@@ -58,6 +58,96 @@ func TestParseXrayJSONConfig(t *testing.T) {
 	assertGoldenNodes(t, nodes, "three_x_ui", "normalized.golden.json")
 }
 
+func TestParseJSONArrayOfXrayConfigs(t *testing.T) {
+	t.Parallel()
+
+	input := `[
+	  {
+	    "remarks": "One",
+	    "outbounds": [
+	      {
+	        "protocol": "vless",
+	        "tag": "proxy-one",
+	        "settings": {
+	          "vnext": [
+	            {
+	              "address": "one.example.com",
+	              "port": 443,
+	              "users": [
+	                {
+	                  "id": "11111111-1111-1111-1111-111111111111",
+	                  "encryption": "none",
+	                  "flow": "xtls-rprx-vision"
+	                }
+	              ]
+	            }
+	          ]
+	        },
+	        "streamSettings": {
+	          "network": "tcp",
+	          "security": "reality",
+	          "realitySettings": {
+	            "serverName": "rbc.ru",
+	            "publicKey": "public-key-one",
+	            "shortId": "short-one",
+	            "fingerprint": "random"
+	          }
+	        }
+	      },
+	      {
+	        "protocol": "freedom",
+	        "tag": "direct"
+	      }
+	    ]
+	  },
+	  {
+	    "remarks": "Two",
+	    "outbounds": [
+	      {
+	        "protocol": "vless",
+	        "tag": "proxy-two",
+	        "settings": {
+	          "vnext": [
+	            {
+	              "address": "two.example.com",
+	              "port": 8443,
+	              "users": [
+	                {
+	                  "id": "22222222-2222-2222-2222-222222222222",
+	                  "encryption": "none",
+	                  "flow": "xtls-rprx-vision"
+	                }
+	              ]
+	            }
+	          ]
+	        },
+	        "streamSettings": {
+	          "network": "tcp",
+	          "security": "reality",
+	          "realitySettings": {
+	            "serverName": "tradingview.com",
+	            "publicKey": "public-key-two",
+	            "shortId": "short-two",
+	            "fingerprint": "random"
+	          }
+	        }
+	      }
+	    ]
+	  }
+	]`
+
+	nodes, err := parser.ParseNodes(input, "JSON Array Provider")
+	if err != nil {
+		t.Fatalf("parse nodes: %v", err)
+	}
+	if len(nodes) != 2 {
+		t.Fatalf("expected 2 nodes, got %d", len(nodes))
+	}
+	if nodes[0].Protocol != "vless" || nodes[1].Protocol != "vless" {
+		t.Fatalf("unexpected protocols: %+v", nodes)
+	}
+}
+
 func TestParseInvalidInput(t *testing.T) {
 	t.Parallel()
 

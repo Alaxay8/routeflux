@@ -100,3 +100,31 @@ func TestBuildNFTablesRulesForSourceHostRange(t *testing.T) {
 		}
 	}
 }
+
+func TestBuildNFTablesRulesForAllSourceHosts(t *testing.T) {
+	t.Parallel()
+
+	rules, err := BuildNFTablesRules(domain.FirewallSettings{
+		Enabled:         true,
+		TransparentPort: 12345,
+		SourceCIDRs:     []string{"all"},
+		BlockQUIC:       true,
+	})
+	if err != nil {
+		t.Fatalf("build rules: %v", err)
+	}
+
+	wants := []string{
+		"set source_v4",
+		"10.0.0.0/8",
+		"172.16.0.0/12",
+		"192.168.0.0/16",
+		"ip saddr @source_v4 tcp dport != 12345 redirect to :12345",
+		"ip saddr @source_v4 udp dport 443 drop",
+	}
+	for _, want := range wants {
+		if !strings.Contains(rules, want) {
+			t.Fatalf("rules missing %q\n%s", want, rules)
+		}
+	}
+}

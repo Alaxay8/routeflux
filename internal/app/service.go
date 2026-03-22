@@ -548,13 +548,54 @@ func (s *Service) ConfigureFirewallHosts(ctx context.Context, sources []string, 
 	}
 
 	settings.Firewall.Enabled = enabled
-	settings.Firewall.SourceCIDRs = slices.Clone(sources)
+	settings.Firewall.SourceCIDRs = normalizeFirewallSources(sources)
 	settings.Firewall.TargetCIDRs = nil
-	settings.Firewall.BlockQUIC = true
 	if port > 0 {
 		settings.Firewall.TransparentPort = port
 	}
 
+	if err := s.store.SaveSettings(settings); err != nil {
+		return domain.FirewallSettings{}, fmt.Errorf("save settings: %w", err)
+	}
+
+	if err := s.reapplyCurrentConnection(ctx); err != nil {
+		return domain.FirewallSettings{}, err
+	}
+
+	return settings.Firewall, nil
+}
+
+// UpdateFirewallPort changes the transparent redirect port and reapplies the active rules.
+func (s *Service) UpdateFirewallPort(ctx context.Context, port int) (domain.FirewallSettings, error) {
+	if port <= 0 {
+		return domain.FirewallSettings{}, fmt.Errorf("transparent port must be greater than zero")
+	}
+
+	settings, err := s.store.LoadSettings()
+	if err != nil {
+		return domain.FirewallSettings{}, fmt.Errorf("load settings: %w", err)
+	}
+
+	settings.Firewall.TransparentPort = port
+	if err := s.store.SaveSettings(settings); err != nil {
+		return domain.FirewallSettings{}, fmt.Errorf("save settings: %w", err)
+	}
+
+	if err := s.reapplyCurrentConnection(ctx); err != nil {
+		return domain.FirewallSettings{}, err
+	}
+
+	return settings.Firewall, nil
+}
+
+// UpdateFirewallBlockQUIC enables or disables QUIC blocking for source-host routing.
+func (s *Service) UpdateFirewallBlockQUIC(ctx context.Context, enabled bool) (domain.FirewallSettings, error) {
+	settings, err := s.store.LoadSettings()
+	if err != nil {
+		return domain.FirewallSettings{}, fmt.Errorf("load settings: %w", err)
+	}
+
+	settings.Firewall.BlockQUIC = enabled
 	if err := s.store.SaveSettings(settings); err != nil {
 		return domain.FirewallSettings{}, fmt.Errorf("save settings: %w", err)
 	}
@@ -889,6 +930,21 @@ func parseStringList(raw string) []string {
 			continue
 		}
 		out = append(out, part)
+	}
+	return out
+}
+
+func normalizeFirewallSources(sources []string) []string {
+	out := make([]string, 0, len(sources))
+	for _, source := range sources {
+		source = strings.TrimSpace(source)
+		if source == "" {
+			continue
+		}
+		if strings.EqualFold(source, "all") || source == "*" {
+			return []string{"all"}
+		}
+		out = append(out, source)
 	}
 	return out
 }

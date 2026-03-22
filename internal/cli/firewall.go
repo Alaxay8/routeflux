@@ -3,53 +3,253 @@ package cli
 import (
 	"context"
 	"fmt"
+	"strconv"
 	"strings"
 
 	"github.com/spf13/cobra"
+
+	"github.com/Alaxay8/routeflux/internal/domain"
 )
 
 func newFirewallCmd(opts *rootOptions) *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "firewall",
-		Short: "Configure simple OpenWrt routing through RouteFlux",
+		Short: "Easy firewall routing settings for RouteFlux",
+		Long: strings.TrimSpace(`
+Firewall controls which traffic RouteFlux redirects into the transparent proxy.
+
+Think of it like this:
+- mode answers "what do you want to match?"
+- targets means selected destination IPs go through RouteFlux
+- hosts means all TCP traffic from selected LAN clients goes through RouteFlux
+`),
+		Example: strings.TrimSpace(`
+routeflux firewall get
+routeflux firewall explain
+routeflux firewall set hosts 192.168.1.150
+routeflux firewall set hosts 192.168.1.0/24
+routeflux firewall set hosts all
+routeflux firewall set targets 1.1.1.1 8.8.8.8/32
+routeflux firewall set port 12345
+routeflux firewall set block-quic true
+routeflux firewall disable
+`),
 	}
 
+	cmd.AddCommand(
+		newFirewallGetCmd(opts),
+		newFirewallExplainCmd(opts),
+		newFirewallSetCmd(opts),
+		newFirewallHostCmd(opts),
+		newFirewallDisableCmd(opts),
+	)
+
+	return cmd
+}
+
+func newFirewallGetCmd(opts *rootOptions) *cobra.Command {
+	return &cobra.Command{
+		Use:     "get",
+		Aliases: []string{"status"},
+		Short:   "Show current firewall routing settings",
+		RunE: func(cmd *cobra.Command, args []string) error {
+			settings, err := opts.service.GetFirewallSettings()
+			if err != nil {
+				return err
+			}
+
+			if opts.jsonOutput {
+				return printOutput(cmd, true, settings, "")
+			}
+
+			return printOutput(cmd, false, nil, renderFirewallSettingsText(settings))
+		},
+	}
+}
+
+func newFirewallExplainCmd(opts *rootOptions) *cobra.Command {
+	return &cobra.Command{
+		Use:   "explain",
+		Short: "Explain firewall routing settings in plain language",
+		RunE: func(cmd *cobra.Command, args []string) error {
+			return printOutput(cmd, false, nil, strings.TrimSpace(`
+Firewall modes:
+- disabled: RouteFlux does not redirect traffic with nftables.
+- targets: only selected destination IPv4 addresses, CIDRs, or ranges go through RouteFlux.
+- hosts: all TCP traffic from selected LAN clients goes through RouteFlux.
+
+Hosts selectors:
+- single IPv4: 192.168.1.150
+- IPv4 CIDR pool: 192.168.1.0/24
+- IPv4 range: 192.168.1.150-192.168.1.159
+- all or *: all common private LAN ranges
+
+Other options:
+- port: transparent redirect port used by nftables
+- block-quic: drop UDP/443 for host mode so apps do not bypass TCP routing through QUIC
+
+Good starting profiles:
+- One device through RouteFlux: routeflux firewall set hosts 192.168.1.150
+- Whole LAN through RouteFlux: routeflux firewall set hosts all
+- Only selected destinations through RouteFlux: routeflux firewall set targets 1.1.1.1 8.8.8.8/32
+`))
+		},
+	}
+}
+
+func newFirewallSetCmd(opts *rootOptions) *cobra.Command {
 	var port int
-	setCmd := &cobra.Command{
-		Use:   "set <ip-or-cidr-or-range> [more ...]",
-		Short: "Enable routing for destination IPv4 addresses, CIDRs, or ranges",
-		Args:  cobra.MinimumNArgs(1),
+
+	cmd := &cobra.Command{
+		Use:   "set <option> <value...>",
+		Short: "Change firewall routing settings",
+		Long: strings.TrimSpace(`
+Firewall options:
+- targets: selected destination IPv4 addresses, CIDRs, or ranges
+- hosts: LAN clients whose TCP traffic should go through RouteFlux
+- port: transparent redirect port
+- block-quic: true or false
+
+Legacy compatibility:
+- routeflux firewall set 1.1.1.1 8.8.8.8/32
+  still works and is treated as routeflux firewall set targets ...
+`),
+		Example: strings.TrimSpace(`
+routeflux firewall set hosts 192.168.1.150
+routeflux firewall set hosts 192.168.1.0/24
+routeflux firewall set hosts 192.168.1.150-192.168.1.159
+routeflux firewall set hosts all
+routeflux firewall set targets 1.1.1.1 8.8.8.8/32
+routeflux firewall set port 12345
+routeflux firewall set block-quic true
+routeflux firewall set 1.1.1.1 8.8.8.8/32
+`),
+		Args: cobra.MinimumNArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			settings, err := opts.service.ConfigureFirewall(context.Background(), args, true, port)
+			option, values, err := parseFirewallSetArgs(args)
 			if err != nil {
 				return err
 			}
 
-			text := fmt.Sprintf("Firewall enabled for %s", strings.Join(settings.TargetCIDRs, ", "))
-			return printOutput(cmd, opts.jsonOutput, settings, text)
+			switch option {
+			case "targets":
+				settings, err := opts.service.GetFirewallSettings()
+				if err != nil {
+					return err
+				}
+				targetPort := settings.TransparentPort
+				if cmd.Flags().Changed("port") {
+					targetPort = port
+				}
+
+				updated, err := opts.service.ConfigureFirewall(context.Background(), values, true, targetPort)
+				if err != nil {
+					return err
+				}
+				return printOutput(cmd, opts.jsonOutput, updated, fmt.Sprintf("Firewall targets set to %s", strings.Join(updated.TargetCIDRs, ", ")))
+			case "hosts":
+				settings, err := opts.service.GetFirewallSettings()
+				if err != nil {
+					return err
+				}
+				targetPort := settings.TransparentPort
+				if cmd.Flags().Changed("port") {
+					targetPort = port
+				}
+
+				updated, err := opts.service.ConfigureFirewallHosts(context.Background(), values, true, targetPort)
+				if err != nil {
+					return err
+				}
+				return printOutput(cmd, opts.jsonOutput, updated, fmt.Sprintf("Firewall hosts set to %s", strings.Join(updated.SourceCIDRs, ", ")))
+			case "port":
+				if len(values) != 1 {
+					return fmt.Errorf("firewall port expects exactly one value")
+				}
+				value, err := strconv.Atoi(values[0])
+				if err != nil {
+					return fmt.Errorf("parse firewall port %q: %w", values[0], err)
+				}
+				updated, err := opts.service.UpdateFirewallPort(context.Background(), value)
+				if err != nil {
+					return err
+				}
+				return printOutput(cmd, opts.jsonOutput, updated, fmt.Sprintf("Firewall port set to %d", updated.TransparentPort))
+			case "block-quic":
+				if len(values) != 1 {
+					return fmt.Errorf("firewall block-quic expects exactly one value")
+				}
+				value, err := strconv.ParseBool(values[0])
+				if err != nil {
+					return fmt.Errorf("parse firewall block-quic %q: %w", values[0], err)
+				}
+				updated, err := opts.service.UpdateFirewallBlockQUIC(context.Background(), value)
+				if err != nil {
+					return err
+				}
+				return printOutput(cmd, opts.jsonOutput, updated, fmt.Sprintf("Firewall block-quic set to %t", updated.BlockQUIC))
+			default:
+				return fmt.Errorf("unsupported firewall option %q", option)
+			}
 		},
 	}
-	setCmd.Flags().IntVar(&port, "port", 12345, "Transparent redirect port")
 
-	hostCmd := &cobra.Command{
-		Use:   "host <ipv4-or-cidr-or-range> [more ...]",
-		Short: "Route all TCP traffic from selected LAN hosts or ranges through RouteFlux",
-		Args:  cobra.MinimumNArgs(1),
+	cmd.Flags().IntVar(&port, "port", 0, "Override transparent redirect port for hosts or targets")
+	return cmd
+}
+
+func newFirewallHostCmd(opts *rootOptions) *cobra.Command {
+	var port int
+
+	cmd := &cobra.Command{
+		Use:   "host <ipv4-or-cidr-or-range|all|*> [more ...]",
+		Short: "Legacy alias for routeflux firewall set hosts ...",
+		Long: strings.TrimSpace(`
+Choose which LAN clients should send all TCP traffic through RouteFlux.
+
+Supported selectors:
+- single IPv4 address: 192.168.1.150
+- IPv4 CIDR pool: 192.168.1.0/24
+- IPv4 range: 192.168.1.150-192.168.1.159
+- all or *: all common private LAN ranges (10.0.0.0/8, 172.16.0.0/12, 192.168.0.0/16)
+`),
+		Example: strings.TrimSpace(`
+routeflux firewall host 192.168.1.150
+routeflux firewall host 192.168.1.0/24
+routeflux firewall host 192.168.1.150-192.168.1.159
+routeflux firewall host 192.168.1.10 192.168.1.32/27
+routeflux firewall host all
+routeflux firewall host *
+`),
+		Args: cobra.MinimumNArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			settings, err := opts.service.ConfigureFirewallHosts(context.Background(), args, true, port)
+			settings, err := opts.service.GetFirewallSettings()
+			if err != nil {
+				return err
+			}
+			targetPort := settings.TransparentPort
+			if cmd.Flags().Changed("port") {
+				targetPort = port
+			}
+
+			updated, err := opts.service.ConfigureFirewallHosts(context.Background(), args, true, targetPort)
 			if err != nil {
 				return err
 			}
 
-			text := fmt.Sprintf("Host routing enabled for %s", strings.Join(settings.SourceCIDRs, ", "))
-			return printOutput(cmd, opts.jsonOutput, settings, text)
+			return printOutput(cmd, opts.jsonOutput, updated, fmt.Sprintf("Host routing enabled for %s", strings.Join(updated.SourceCIDRs, ", ")))
 		},
 	}
-	hostCmd.Flags().IntVar(&port, "port", 12345, "Transparent redirect port")
 
-	disableCmd := &cobra.Command{
-		Use:   "disable",
-		Short: "Disable simple destination routing",
+	cmd.Flags().IntVar(&port, "port", 0, "Override transparent redirect port")
+	return cmd
+}
+
+func newFirewallDisableCmd(opts *rootOptions) *cobra.Command {
+	return &cobra.Command{
+		Use:     "disable",
+		Aliases: []string{"off"},
+		Short:   "Disable firewall routing",
 		RunE: func(cmd *cobra.Command, args []string) error {
 			settings, err := opts.service.DisableFirewall(context.Background())
 			if err != nil {
@@ -58,28 +258,58 @@ func newFirewallCmd(opts *rootOptions) *cobra.Command {
 			return printOutput(cmd, opts.jsonOutput, settings, "Firewall disabled")
 		},
 	}
+}
 
-	statusCmd := &cobra.Command{
-		Use:   "status",
-		Short: "Show firewall routing status",
-		RunE: func(cmd *cobra.Command, args []string) error {
-			settings, err := opts.service.GetFirewallSettings()
-			if err != nil {
-				return err
-			}
-
-			text := fmt.Sprintf(
-				"enabled=%t\ntransparent-port=%d\ntargets=%s\nhosts=%s\nblock-quic=%t",
-				settings.Enabled,
-				settings.TransparentPort,
-				strings.Join(settings.TargetCIDRs, ", "),
-				strings.Join(settings.SourceCIDRs, ", "),
-				settings.BlockQUIC,
-			)
-			return printOutput(cmd, opts.jsonOutput, settings, text)
-		},
+func parseFirewallSetArgs(args []string) (string, []string, error) {
+	if len(args) == 0 {
+		return "", nil, fmt.Errorf("firewall set expects an option or target values")
 	}
 
-	cmd.AddCommand(setCmd, hostCmd, disableCmd, statusCmd)
-	return cmd
+	switch strings.TrimSpace(strings.ToLower(args[0])) {
+	case "targets", "hosts", "port", "block-quic":
+		if len(args) < 2 {
+			return "", nil, fmt.Errorf("firewall %s expects at least one value", args[0])
+		}
+		return strings.ToLower(strings.TrimSpace(args[0])), args[1:], nil
+	default:
+		return "targets", args, nil
+	}
+}
+
+func renderFirewallSettingsText(settings domain.FirewallSettings) string {
+	return strings.Join([]string{
+		fmt.Sprintf("enabled=%t", settings.Enabled),
+		fmt.Sprintf("mode=%s", firewallMode(settings)),
+		fmt.Sprintf("mode-help=%s", firewallModeHelp(settings)),
+		fmt.Sprintf("transparent-port=%d", settings.TransparentPort),
+		fmt.Sprintf("targets=%s", strings.Join(settings.TargetCIDRs, ", ")),
+		fmt.Sprintf("hosts=%s", strings.Join(settings.SourceCIDRs, ", ")),
+		fmt.Sprintf("block-quic=%t", settings.BlockQUIC),
+	}, "\n")
+}
+
+func firewallMode(settings domain.FirewallSettings) string {
+	switch {
+	case !settings.Enabled || (len(settings.TargetCIDRs) == 0 && len(settings.SourceCIDRs) == 0):
+		return "disabled"
+	case len(settings.TargetCIDRs) > 0 && len(settings.SourceCIDRs) == 0:
+		return "targets"
+	case len(settings.SourceCIDRs) > 0 && len(settings.TargetCIDRs) == 0:
+		return "hosts"
+	default:
+		return "mixed"
+	}
+}
+
+func firewallModeHelp(settings domain.FirewallSettings) string {
+	switch firewallMode(settings) {
+	case "disabled":
+		return "RouteFlux is not redirecting traffic with nftables."
+	case "targets":
+		return "Only selected destination IPv4 addresses or ranges go through RouteFlux."
+	case "hosts":
+		return "All TCP traffic from selected LAN clients goes through RouteFlux."
+	default:
+		return "Both destination targets and source hosts are set."
+	}
 }

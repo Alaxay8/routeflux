@@ -41,6 +41,137 @@ func TestFirewallHostCommand(t *testing.T) {
 	}
 }
 
+func TestFirewallHostCommandSupportsAllAlias(t *testing.T) {
+	t.Parallel()
+
+	store := &cliMemoryStore{
+		settings: domain.DefaultSettings(),
+		state:    domain.DefaultRuntimeState(),
+	}
+	service := app.NewService(app.Dependencies{Store: store})
+
+	cmd := newFirewallCmd(&rootOptions{service: service})
+	var stdout bytes.Buffer
+	cmd.SetOut(&stdout)
+	cmd.SetErr(new(bytes.Buffer))
+	cmd.SetArgs([]string{"host", "*"})
+
+	if err := cmd.Execute(); err != nil {
+		t.Fatalf("execute firewall host all: %v", err)
+	}
+
+	if got := stdout.String(); !strings.Contains(got, "Host routing enabled for all") {
+		t.Fatalf("unexpected output: %q", got)
+	}
+
+	settings, err := service.GetFirewallSettings()
+	if err != nil {
+		t.Fatalf("get firewall settings: %v", err)
+	}
+	if len(settings.SourceCIDRs) != 1 || settings.SourceCIDRs[0] != "all" {
+		t.Fatalf("unexpected source hosts: %v", settings.SourceCIDRs)
+	}
+}
+
+func TestFirewallSetHostsCommandSupportsAllAlias(t *testing.T) {
+	t.Parallel()
+
+	store := &cliMemoryStore{
+		settings: domain.DefaultSettings(),
+		state:    domain.DefaultRuntimeState(),
+	}
+	service := app.NewService(app.Dependencies{Store: store})
+
+	cmd := newFirewallCmd(&rootOptions{service: service})
+	var stdout bytes.Buffer
+	cmd.SetOut(&stdout)
+	cmd.SetErr(new(bytes.Buffer))
+	cmd.SetArgs([]string{"set", "hosts", "all"})
+
+	if err := cmd.Execute(); err != nil {
+		t.Fatalf("execute firewall set hosts all: %v", err)
+	}
+
+	if got := stdout.String(); !strings.Contains(got, "Firewall hosts set to all") {
+		t.Fatalf("unexpected output: %q", got)
+	}
+
+	settings, err := service.GetFirewallSettings()
+	if err != nil {
+		t.Fatalf("get firewall settings: %v", err)
+	}
+	if len(settings.SourceCIDRs) != 1 || settings.SourceCIDRs[0] != "all" {
+		t.Fatalf("unexpected source hosts: %v", settings.SourceCIDRs)
+	}
+}
+
+func TestFirewallGetShowsCurrentValuesAndMeaning(t *testing.T) {
+	t.Parallel()
+
+	store := &cliMemoryStore{
+		settings: domain.DefaultSettings(),
+		state:    domain.DefaultRuntimeState(),
+	}
+	store.settings.Firewall.Enabled = true
+	store.settings.Firewall.SourceCIDRs = []string{"192.168.1.150"}
+	store.settings.Firewall.BlockQUIC = true
+
+	cmd := newFirewallCmd(&rootOptions{service: app.NewService(app.Dependencies{Store: store})})
+	var stdout bytes.Buffer
+	cmd.SetOut(&stdout)
+	cmd.SetErr(new(bytes.Buffer))
+	cmd.SetArgs([]string{"get"})
+
+	if err := cmd.Execute(); err != nil {
+		t.Fatalf("execute firewall get: %v", err)
+	}
+
+	output := stdout.String()
+	wants := []string{
+		"enabled=true",
+		"mode=hosts",
+		"mode-help=All TCP traffic from selected LAN clients goes through RouteFlux.",
+		"hosts=192.168.1.150",
+		"block-quic=true",
+	}
+	for _, want := range wants {
+		if !strings.Contains(output, want) {
+			t.Fatalf("firewall get missing %q\n%s", want, output)
+		}
+	}
+}
+
+func TestFirewallExplainOutputsFriendlyGuide(t *testing.T) {
+	t.Parallel()
+
+	cmd := newFirewallCmd(&rootOptions{service: app.NewService(app.Dependencies{Store: &cliMemoryStore{
+		settings: domain.DefaultSettings(),
+		state:    domain.DefaultRuntimeState(),
+	}})})
+	var stdout bytes.Buffer
+	cmd.SetOut(&stdout)
+	cmd.SetErr(new(bytes.Buffer))
+	cmd.SetArgs([]string{"explain"})
+
+	if err := cmd.Execute(); err != nil {
+		t.Fatalf("execute firewall explain: %v", err)
+	}
+
+	output := stdout.String()
+	wants := []string{
+		"disabled: RouteFlux does not redirect traffic with nftables.",
+		"targets: only selected destination IPv4 addresses",
+		"hosts: all TCP traffic from selected LAN clients goes through RouteFlux.",
+		"all or *: all common private LAN ranges",
+		"routeflux firewall set hosts all",
+	}
+	for _, want := range wants {
+		if !strings.Contains(output, want) {
+			t.Fatalf("firewall explain missing %q\n%s", want, output)
+		}
+	}
+}
+
 func TestSettingsGetIncludesFirewallHosts(t *testing.T) {
 	t.Parallel()
 

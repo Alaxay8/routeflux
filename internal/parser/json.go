@@ -10,6 +10,7 @@ import (
 )
 
 var errUnsupportedJSONOutbound = errors.New("unsupported json outbound")
+var errUnsupportedJSONImport = errors.New("unsupported json import")
 
 type xrayOutboundJSON struct {
 	Protocol       string          `json:"protocol"`
@@ -122,12 +123,40 @@ func parseJSONImport(raw json.RawMessage, provider string) ([]domain.Node, error
 			}
 		}
 
-		return nil, fmt.Errorf("unsupported json import format")
+		return nil, errUnsupportedJSONImport
 	case '[':
-		return parseOutboundList([]byte(trimmed), provider)
+		return parseJSONList([]byte(trimmed), provider)
 	default:
-		return nil, fmt.Errorf("unsupported json import format")
+		return nil, errUnsupportedJSONImport
 	}
+}
+
+func parseJSONList(raw json.RawMessage, provider string) ([]domain.Node, error) {
+	var items []json.RawMessage
+	if err := json.Unmarshal(raw, &items); err != nil {
+		return nil, fmt.Errorf("decode json list: %w", err)
+	}
+
+	nodes := make([]domain.Node, 0, len(items))
+	for _, item := range items {
+		parsed, err := parseJSONImport(item, provider)
+		if err != nil {
+			if errors.Is(err, errUnsupportedJSONImport) || errors.Is(err, errUnsupportedJSONOutbound) {
+				continue
+			}
+			if strings.Contains(err.Error(), "no supported nodes found") {
+				continue
+			}
+			return nil, err
+		}
+		nodes = append(nodes, parsed...)
+	}
+
+	if len(nodes) == 0 {
+		return nil, fmt.Errorf("no supported nodes found")
+	}
+
+	return nodes, nil
 }
 
 func parseOutboundList(raw json.RawMessage, provider string) ([]domain.Node, error) {

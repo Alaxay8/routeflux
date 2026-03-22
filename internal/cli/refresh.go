@@ -31,6 +31,10 @@ func newRefreshCmd(opts *rootOptions) *cobra.Command {
 				return printOutput(cmd, false, nil, strings.Join(lines, "\n"))
 			}
 
+			if strings.TrimSpace(subscriptionID) == "" {
+				return fmt.Errorf("use --all or --subscription <id>")
+			}
+
 			sub, err := opts.service.RefreshSubscription(context.Background(), subscriptionID)
 			if err != nil {
 				return err
