@@ -21,26 +21,26 @@ func TestDNSSetCommandUpdatesSettings(t *testing.T) {
 	var stdout bytes.Buffer
 	cmd.SetOut(&stdout)
 	cmd.SetErr(new(bytes.Buffer))
-	cmd.SetArgs([]string{"set", "mode", "split"})
+	cmd.SetArgs([]string{"set", "mode", "system"})
 
 	if err := cmd.Execute(); err != nil {
 		t.Fatalf("execute dns set mode: %v", err)
 	}
 
-	if store.settings.DNS.Mode != domain.DNSModeSplit {
+	if store.settings.DNS.Mode != domain.DNSModeSystem {
 		t.Fatalf("unexpected dns mode: %s", store.settings.DNS.Mode)
 	}
-	if got := stdout.String(); !strings.Contains(got, "Updated dns.mode=split") {
+	if got := stdout.String(); !strings.Contains(got, "Updated dns.mode=system") {
 		t.Fatalf("unexpected output: %q", got)
 	}
 
 	stdout.Reset()
-	cmd.SetArgs([]string{"set", "transport", "doh"})
+	cmd.SetArgs([]string{"set", "transport", "plain"})
 	if err := cmd.Execute(); err != nil {
 		t.Fatalf("execute dns set transport: %v", err)
 	}
 
-	if store.settings.DNS.Transport != domain.DNSTransportDoH {
+	if store.settings.DNS.Transport != domain.DNSTransportPlain {
 		t.Fatalf("unexpected dns transport: %s", store.settings.DNS.Transport)
 	}
 }
@@ -68,11 +68,105 @@ func TestDNSExplainCommandOutputsFriendlyGuide(t *testing.T) {
 		"split: Keep local home-network names local",
 		"doh: DNS over HTTPS.",
 		"dot: DNS over TLS.",
+		"RouteFlux default: routeflux dns set default",
 	}
 	for _, want := range wants {
 		if !strings.Contains(output, want) {
 			t.Fatalf("dns explain missing %q\n%s", want, output)
 		}
+	}
+}
+
+func TestDNSHelpIncludesDefaultCommand(t *testing.T) {
+	t.Parallel()
+
+	cmd := newDNSCmd(&rootOptions{service: app.NewService(app.Dependencies{Store: &cliMemoryStore{
+		settings: domain.DefaultSettings(),
+		state:    domain.DefaultRuntimeState(),
+	}})})
+	var stdout bytes.Buffer
+	cmd.SetOut(&stdout)
+	cmd.SetErr(new(bytes.Buffer))
+	cmd.SetArgs([]string{"--help"})
+
+	if err := cmd.Execute(); err != nil {
+		t.Fatalf("execute dns help: %v", err)
+	}
+
+	output := stdout.String()
+	wants := []string{
+		"default     Apply the RouteFlux recommended DNS profile",
+		"routeflux dns default",
+		"routeflux dns set default",
+	}
+	for _, want := range wants {
+		if !strings.Contains(output, want) {
+			t.Fatalf("dns help missing %q\n%s", want, output)
+		}
+	}
+}
+
+func TestDNSSetDefaultAppliesRecommendedProfile(t *testing.T) {
+	t.Parallel()
+
+	store := &cliMemoryStore{
+		settings: domain.DefaultSettings(),
+		state:    domain.DefaultRuntimeState(),
+	}
+	store.settings.DNS.Mode = domain.DNSModeSystem
+	store.settings.DNS.Transport = domain.DNSTransportPlain
+	store.settings.DNS.Servers = nil
+	store.settings.DNS.Bootstrap = []string{"9.9.9.9"}
+	store.settings.DNS.DirectDomains = nil
+
+	cmd := newDNSCmd(&rootOptions{service: app.NewService(app.Dependencies{Store: store})})
+	var stdout bytes.Buffer
+	cmd.SetOut(&stdout)
+	cmd.SetErr(new(bytes.Buffer))
+	cmd.SetArgs([]string{"set", "default"})
+
+	if err := cmd.Execute(); err != nil {
+		t.Fatalf("execute dns set default: %v", err)
+	}
+
+	want := domain.DefaultDNSSettings()
+	if store.settings.DNS.Mode != want.Mode || store.settings.DNS.Transport != want.Transport {
+		t.Fatalf("unexpected dns profile: %+v", store.settings.DNS)
+	}
+	if !strings.Contains(stdout.String(), "Applied the RouteFlux default DNS profile.") {
+		t.Fatalf("unexpected output: %q", stdout.String())
+	}
+}
+
+func TestDNSDefaultCommandAppliesRecommendedProfile(t *testing.T) {
+	t.Parallel()
+
+	store := &cliMemoryStore{
+		settings: domain.DefaultSettings(),
+		state:    domain.DefaultRuntimeState(),
+	}
+	store.settings.DNS.Mode = domain.DNSModeSystem
+	store.settings.DNS.Transport = domain.DNSTransportPlain
+	store.settings.DNS.Servers = nil
+	store.settings.DNS.Bootstrap = []string{"9.9.9.9"}
+	store.settings.DNS.DirectDomains = nil
+
+	cmd := newDNSCmd(&rootOptions{service: app.NewService(app.Dependencies{Store: store})})
+	var stdout bytes.Buffer
+	cmd.SetOut(&stdout)
+	cmd.SetErr(new(bytes.Buffer))
+	cmd.SetArgs([]string{"default"})
+
+	if err := cmd.Execute(); err != nil {
+		t.Fatalf("execute dns default: %v", err)
+	}
+
+	want := domain.DefaultDNSSettings()
+	if store.settings.DNS.Mode != want.Mode || store.settings.DNS.Transport != want.Transport {
+		t.Fatalf("unexpected dns profile: %+v", store.settings.DNS)
+	}
+	if !strings.Contains(stdout.String(), "Applied the RouteFlux default DNS profile.") {
+		t.Fatalf("unexpected output: %q", stdout.String())
 	}
 }
 
@@ -113,6 +207,24 @@ func TestDNSGetShowsCurrentValuesAndMeaning(t *testing.T) {
 		if !strings.Contains(output, want) {
 			t.Fatalf("dns get missing %q\n%s", want, output)
 		}
+	}
+
+	defaultStore := &cliMemoryStore{
+		settings: domain.DefaultSettings(),
+		state:    domain.DefaultRuntimeState(),
+	}
+	defaultCmd := newDNSCmd(&rootOptions{service: app.NewService(app.Dependencies{Store: defaultStore})})
+	stdout.Reset()
+	defaultCmd.SetOut(&stdout)
+	defaultCmd.SetErr(new(bytes.Buffer))
+	defaultCmd.SetArgs([]string{"get"})
+
+	if err := defaultCmd.Execute(); err != nil {
+		t.Fatalf("execute default dns get: %v", err)
+	}
+
+	if !strings.Contains(stdout.String(), "profile=routeflux-default") {
+		t.Fatalf("default dns get missing profile label\n%s", stdout.String())
 	}
 }
 

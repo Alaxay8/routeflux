@@ -1,4 +1,4 @@
-[English](README.md) | [العربية](README.ar.md) | [فارسی](README.fa.md) | [中文](README.zh_CN.md) | [Русский](README.ru_RU.md)
+[English](README.md) | [العربية](README.ar.md) | [فارسی](README.fa.md) | [中文](README.zh_CN.md) | [Español](README.es.md) | [Русский](README.ru_RU.md)
 
 # RouteFlux
 
@@ -18,6 +18,7 @@ RouteFlux imports subscription URLs, raw `vless://`, `vmess://`, `trojan://`, an
 - Generate Xray runtime config and reload the OpenWrt `init.d` service.
 - Configure simple nftables-based routing for selected destination IPs, CIDRs, ranges, or LAN hosts.
 - Manage DNS behavior through a dedicated `routeflux dns` command instead of mixing it into general settings.
+- Start with a sensible DNS default profile: split DNS, DoH to Cloudflare, and local `.lan` names kept on local DNS.
 - Persist subscriptions, settings, runtime state, and telemetry with atomic JSON writes.
 
 ## Quick Start
@@ -80,6 +81,7 @@ routeflux firewall host 192.168.1.150
 routeflux firewall status
 routeflux dns get
 routeflux dns explain
+routeflux dns set default
 routeflux dns set mode split
 routeflux dns set transport doh
 routeflux dns set servers "dns.google,1.1.1.1"
@@ -116,11 +118,17 @@ routeflux connect --subscription sub-8b9f930214 --node 90c42d5dd302
 Use encrypted DNS for external domains but keep home-network names local:
 
 ```bash
-routeflux dns set servers "dns.google,1.1.1.1"
-routeflux dns set bootstrap "9.9.9.9"
-routeflux dns set direct-domains "domain:lan,full:router.lan"
-routeflux dns set transport doh
-routeflux dns set mode split
+routeflux dns set default
+```
+
+This applies the current RouteFlux recommended profile:
+
+```text
+mode=split
+transport=doh
+servers=1.1.1.1,1.0.0.1
+bootstrap=
+direct-domains=domain:lan,full:router.lan
 ```
 
 ## Configuration
@@ -142,8 +150,10 @@ Persisted files:
 
 DNS workflow:
 
+- RouteFlux starts with a practical default profile: `split + doh + 1.1.1.1/1.0.0.1 + domain:lan,full:router.lan`.
 - Use `routeflux dns get` to see current DNS settings.
 - Use `routeflux dns explain` to read plain-language explanations of each DNS mode and transport.
+- Use `routeflux dns set default` to restore the recommended everyday DNS profile in one command.
 - Use `routeflux dns set ...` to change DNS behavior.
 - Keep using `routeflux settings` for general app settings such as refresh interval, auto mode, and log level.
 

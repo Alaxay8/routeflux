@@ -699,6 +699,25 @@ func (s *Service) SetSetting(key, value string) (domain.Settings, error) {
 	return settings, nil
 }
 
+// ApplyDefaultDNS replaces current DNS settings with the RouteFlux recommended profile.
+func (s *Service) ApplyDefaultDNS(ctx context.Context) (domain.Settings, error) {
+	settings, err := s.store.LoadSettings()
+	if err != nil {
+		return domain.Settings{}, fmt.Errorf("load settings: %w", err)
+	}
+
+	settings.DNS = domain.DefaultDNSSettings()
+	if err := s.store.SaveSettings(settings); err != nil {
+		return domain.Settings{}, fmt.Errorf("save settings: %w", err)
+	}
+
+	if err := s.reapplyCurrentConnection(ctx); err != nil {
+		return domain.Settings{}, err
+	}
+
+	return settings, nil
+}
+
 func (s *Service) resolveSubscriptionSource(ctx context.Context, req AddSubscriptionRequest) (string, domain.SourceType, error) {
 	switch {
 	case strings.TrimSpace(req.URL) != "":

@@ -130,13 +130,7 @@ func DefaultSettings() Settings {
 		HealthCheckInterval: NewDuration(30 * time.Second),
 		SwitchCooldown:      NewDuration(5 * time.Minute),
 		LatencyThreshold:    NewDuration(50 * time.Millisecond),
-		DNS: DNSSettings{
-			Mode:          DNSModeSystem,
-			Transport:     DNSTransportPlain,
-			Servers:       nil,
-			Bootstrap:     nil,
-			DirectDomains: nil,
-		},
+		DNS:                 DefaultDNSSettings(),
 		Firewall: FirewallSettings{
 			Enabled:         false,
 			TransparentPort: 12345,
@@ -147,6 +141,17 @@ func DefaultSettings() Settings {
 		AutoMode: false,
 		Mode:     SelectionModeManual,
 		LogLevel: "info",
+	}
+}
+
+// DefaultDNSSettings returns the recommended DNS profile for RouteFlux.
+func DefaultDNSSettings() DNSSettings {
+	return DNSSettings{
+		Mode:          DNSModeSplit,
+		Transport:     DNSTransportDoH,
+		Servers:       []string{"1.1.1.1", "1.0.0.1"},
+		Bootstrap:     nil,
+		DirectDomains: []string{"domain:lan", "full:router.lan"},
 	}
 }
 

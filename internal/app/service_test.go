@@ -351,6 +351,67 @@ func TestSetSettingDNSModeReappliesCurrentConnection(t *testing.T) {
 	}
 }
 
+func TestApplyDefaultDNSReappliesCurrentConnection(t *testing.T) {
+	t.Parallel()
+
+	store := &memoryStore{
+		settings: domain.DefaultSettings(),
+		state:    domain.DefaultRuntimeState(),
+		subs: []domain.Subscription{
+			{
+				ID: "sub-1",
+				Nodes: []domain.Node{
+					{
+						ID:       "node-1",
+						Name:     "Germany",
+						Protocol: domain.ProtocolVLESS,
+						Address:  "de.example.com",
+						Port:     443,
+						UUID:     "11111111-1111-1111-1111-111111111111",
+					},
+				},
+			},
+		},
+	}
+	store.settings.DNS.Mode = domain.DNSModeSystem
+	store.settings.DNS.Transport = domain.DNSTransportPlain
+	store.settings.DNS.Servers = nil
+	store.settings.DNS.Bootstrap = []string{"9.9.9.9"}
+	store.settings.DNS.DirectDomains = nil
+	store.state.Connected = true
+	store.state.Mode = domain.SelectionModeManual
+	store.state.ActiveSubscriptionID = "sub-1"
+	store.state.ActiveNodeID = "node-1"
+
+	runtimeBackend := &recordingBackend{}
+	service := NewService(Dependencies{
+		Store:   store,
+		Backend: runtimeBackend,
+	})
+
+	settings, err := service.ApplyDefaultDNS(context.Background())
+	if err != nil {
+		t.Fatalf("apply default dns: %v", err)
+	}
+
+	want := domain.DefaultDNSSettings()
+	if settings.DNS.Mode != want.Mode || settings.DNS.Transport != want.Transport {
+		t.Fatalf("unexpected default dns: %+v", settings.DNS)
+	}
+	if len(settings.DNS.Servers) != len(want.Servers) || settings.DNS.Servers[0] != want.Servers[0] || settings.DNS.Servers[1] != want.Servers[1] {
+		t.Fatalf("unexpected default dns servers: %+v", settings.DNS.Servers)
+	}
+	if len(settings.DNS.DirectDomains) != len(want.DirectDomains) {
+		t.Fatalf("unexpected default direct domains: %+v", settings.DNS.DirectDomains)
+	}
+	if len(runtimeBackend.requests) != 1 {
+		t.Fatalf("expected one backend reapply, got %d", len(runtimeBackend.requests))
+	}
+	if runtimeBackend.requests[0].DNS.Mode != want.Mode || runtimeBackend.requests[0].DNS.Transport != want.Transport {
+		t.Fatalf("unexpected request dns: %+v", runtimeBackend.requests[0].DNS)
+	}
+}
+
 func TestRemoveSubscriptionDeletesInactiveSubscription(t *testing.T) {
 	t.Parallel()
 
