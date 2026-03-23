@@ -831,16 +831,22 @@ func (s *Service) applyNodeSelection(ctx context.Context, sub domain.Subscriptio
 			TransparentProxy: settings.Firewall.Enabled && (len(settings.Firewall.TargetCIDRs) > 0 || len(settings.Firewall.SourceCIDRs) > 0),
 			TransparentPort:  settings.Firewall.TransparentPort,
 		}); err != nil {
+			_ = s.markConnectionFailed(ctx, sub.ID, node.ID, mode, fmt.Sprintf("apply backend config: %v", err))
 			return fmt.Errorf("apply backend config: %w", err)
+		}
+		if err := s.ensureBackendRunning(ctx, sub.ID, node.ID, mode); err != nil {
+			return err
 		}
 	}
 
 	if s.firewall != nil {
 		if settings.Firewall.Enabled && (len(settings.Firewall.TargetCIDRs) > 0 || len(settings.Firewall.SourceCIDRs) > 0) {
 			if err := s.firewall.Apply(ctx, settings.Firewall); err != nil {
+				_ = s.markConnectionFailed(ctx, sub.ID, node.ID, mode, fmt.Sprintf("apply firewall: %v", err))
 				return fmt.Errorf("apply firewall: %w", err)
 			}
 		} else if err := s.firewall.Disable(ctx); err != nil {
+			_ = s.markConnectionFailed(ctx, sub.ID, node.ID, mode, fmt.Sprintf("disable firewall: %v", err))
 			return fmt.Errorf("disable firewall: %w", err)
 		}
 	}
@@ -988,4 +994,51 @@ func (s *Service) reapplyCurrentConnection(ctx context.Context) error {
 	}
 
 	return s.applyNodeSelection(ctx, sub, node, state.Mode)
+}
+
+func (s *Service) ensureBackendRunning(ctx context.Context, subscriptionID, nodeID string, mode domain.SelectionMode) error {
+	if s.backend == nil {
+		return nil
+	}
+
+	status, err := s.backend.Status(ctx)
+	if err != nil {
+		_ = s.markConnectionFailed(ctx, subscriptionID, nodeID, mode, fmt.Sprintf("backend status check failed: %v", err))
+		return fmt.Errorf("check backend status: %w", err)
+	}
+	if status.Running {
+		return nil
+	}
+
+	reason := "backend is not running"
+	if strings.TrimSpace(status.ServiceState) != "" && status.ServiceState != "unknown" {
+		reason = fmt.Sprintf("backend is not running (%s)", status.ServiceState)
+	}
+	_ = s.markConnectionFailed(ctx, subscriptionID, nodeID, mode, reason)
+	return fmt.Errorf(reason)
+}
+
+func (s *Service) markConnectionFailed(ctx context.Context, subscriptionID, nodeID string, mode domain.SelectionMode, reason string) error {
+	if s.firewall != nil {
+		if err := s.firewall.Disable(ctx); err != nil {
+			return fmt.Errorf("disable firewall after backend failure: %w", err)
+		}
+	}
+
+	state, err := s.store.LoadState()
+	if err != nil {
+		return fmt.Errorf("load state after backend failure: %w", err)
+	}
+
+	state.ActiveSubscriptionID = subscriptionID
+	state.ActiveNodeID = nodeID
+	state.Mode = mode
+	state.Connected = false
+	state.LastFailureReason = reason
+
+	if err := s.store.SaveState(state); err != nil {
+		return fmt.Errorf("save state after backend failure: %w", err)
+	}
+
+	return nil
 }

@@ -268,7 +268,7 @@ Placeholder screenshots:
 - `dns.transport=dot` is defined in settings but is not applied by the current Xray backend.
 - Transparent router traffic interception is not fully automated in MVP.
 - Simple firewall routing currently supports destination IPv4 targets, source IPv4 hosts, CIDR pools, IPv4 ranges, and the `all` or `*` LAN-wide shortcut. QUIC blocking is host-mode only.
-- There is no LuCI web UI or native package feed integration yet.
+- A LuCI MVP lives in `luci-app-routeflux` with `Overview` and `Subscriptions` pages. The DNS, firewall, and diagnostics pages are still pending.
 
 ## License
 

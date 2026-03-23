@@ -1,0 +1,80 @@
+package app
+
+import (
+	"context"
+	"strings"
+	"testing"
+
+	"github.com/Alaxay8/routeflux/internal/backend"
+	"github.com/Alaxay8/routeflux/internal/domain"
+)
+
+func TestConnectManualDisablesFirewallWhenBackendIsNotRunning(t *testing.T) {
+	t.Parallel()
+
+	store := &memoryStore{
+		settings: domain.DefaultSettings(),
+		state:    domain.DefaultRuntimeState(),
+		subs: []domain.Subscription{
+			{
+				ID: "sub-1",
+				Nodes: []domain.Node{
+					{
+						ID:       "node-1",
+						Name:     "Germany",
+						Protocol: domain.ProtocolVLESS,
+						Address:  "de.example.com",
+						Port:     443,
+						UUID:     "11111111-1111-1111-1111-111111111111",
+					},
+				},
+			},
+		},
+	}
+	store.settings.Firewall.Enabled = true
+	store.settings.Firewall.SourceCIDRs = []string{"192.168.1.150"}
+	store.settings.Firewall.TransparentPort = 12345
+
+	runtimeBackend := &recordingBackend{
+		status: backend.RuntimeStatus{
+			Running:      false,
+			ServiceState: "active with no instances",
+		},
+	}
+	firewall := &recordingFirewaller{}
+	service := NewService(Dependencies{
+		Store:      store,
+		Backend:    runtimeBackend,
+		Firewaller: firewall,
+	})
+
+	err := service.ConnectManual(context.Background(), "sub-1", "node-1")
+	if err == nil {
+		t.Fatal("expected connect to fail when backend is not running")
+	}
+	if !strings.Contains(err.Error(), "backend is not running") {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	if len(runtimeBackend.requests) != 1 {
+		t.Fatalf("expected one backend apply, got %d", len(runtimeBackend.requests))
+	}
+	if len(firewall.applied) != 0 {
+		t.Fatalf("expected no firewall apply on backend failure, got %d", len(firewall.applied))
+	}
+	if firewall.disableCalls != 1 {
+		t.Fatalf("expected firewall disable once, got %d", firewall.disableCalls)
+	}
+	if store.state.Connected {
+		t.Fatal("expected runtime state to be disconnected")
+	}
+	if store.state.ActiveSubscriptionID != "sub-1" || store.state.ActiveNodeID != "node-1" {
+		t.Fatalf("expected failed selection to be preserved in state, got %+v", store.state)
+	}
+	if store.state.Mode != domain.SelectionModeManual {
+		t.Fatalf("expected mode to stay manual, got %s", store.state.Mode)
+	}
+	if !strings.Contains(store.state.LastFailureReason, "backend is not running") {
+		t.Fatalf("unexpected last failure reason: %q", store.state.LastFailureReason)
+	}
+}

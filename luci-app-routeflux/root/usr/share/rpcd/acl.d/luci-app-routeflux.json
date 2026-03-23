@@ -1,0 +1,15 @@
+{
+	"luci-app-routeflux": {
+		"description": "Grant access to RouteFlux status and control",
+		"read": {
+			"file": {
+				"/usr/bin/routeflux --json *": [ "exec" ]
+			}
+		},
+		"write": {
+			"file": {
+				"/usr/bin/routeflux *": [ "exec" ]
+			}
+		}
+	}
+}

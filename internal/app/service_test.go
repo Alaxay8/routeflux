@@ -650,6 +650,8 @@ type recordingBackend struct {
 	requests   []backend.ConfigRequest
 	stopCalls  int
 	startCalls int
+	status     backend.RuntimeStatus
+	statusErr  error
 }
 
 func (b *recordingBackend) GenerateConfig(req backend.ConfigRequest) ([]byte, error) {
@@ -673,7 +675,13 @@ func (b *recordingBackend) Stop(context.Context) error {
 
 func (b *recordingBackend) Reload(context.Context) error { return nil }
 func (b *recordingBackend) Status(context.Context) (backend.RuntimeStatus, error) {
-	return backend.RuntimeStatus{}, nil
+	if b.statusErr != nil {
+		return backend.RuntimeStatus{}, b.statusErr
+	}
+	if b.status == (backend.RuntimeStatus{}) {
+		return backend.RuntimeStatus{Running: true, ServiceState: "running"}, nil
+	}
+	return b.status, nil
 }
 
 type recordingFirewaller struct {
