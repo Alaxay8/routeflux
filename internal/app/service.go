@@ -70,6 +70,11 @@ type Dependencies struct {
 	Logger     *slog.Logger
 }
 
+const (
+	subscriptionFetchMaxAttempts = 3
+	subscriptionFetchBaseBackoff = 250 * time.Millisecond
+)
+
 // NewService creates an application service with sensible defaults.
 func NewService(deps Dependencies) *Service {
 	client := deps.HTTPClient
@@ -831,27 +836,73 @@ func (s *Service) resolveSubscriptionSource(ctx context.Context, req AddSubscrip
 }
 
 func (s *Service) fetchSubscription(ctx context.Context, rawURL string) (string, error) {
+	var lastErr error
+
+	for attempt := 1; attempt <= subscriptionFetchMaxAttempts; attempt++ {
+		body, retry, err := s.fetchSubscriptionOnce(ctx, rawURL)
+		if err == nil {
+			return body, nil
+		}
+
+		lastErr = err
+		if !retry || attempt == subscriptionFetchMaxAttempts {
+			break
+		}
+
+		delay := subscriptionFetchBaseBackoff * time.Duration(1<<(attempt-1))
+		timer := time.NewTimer(delay)
+		select {
+		case <-ctx.Done():
+			timer.Stop()
+			return "", fmt.Errorf("fetch %s: %w", rawURL, ctx.Err())
+		case <-timer.C:
+		}
+	}
+
+	return "", lastErr
+}
+
+func (s *Service) fetchSubscriptionOnce(ctx context.Context, rawURL string) (string, bool, error) {
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, rawURL, nil)
 	if err != nil {
-		return "", fmt.Errorf("build request: %w", err)
+		return "", false, fmt.Errorf("build request: %w", err)
 	}
+	req.Header.Set("Accept", "text/plain, application/json;q=0.9, */*;q=0.8")
+	req.Header.Set("User-Agent", "Mozilla/5.0 (compatible; RouteFlux/1.0; +https://github.com/Alaxay8/routeflux)")
 
 	resp, err := s.httpClient.Do(req)
 	if err != nil {
-		return "", fmt.Errorf("fetch %s: %w", rawURL, err)
+		if ctx.Err() != nil {
+			return "", false, fmt.Errorf("fetch %s: %w", rawURL, ctx.Err())
+		}
+
+		return "", true, fmt.Errorf("fetch %s: %w", rawURL, err)
 	}
 	defer resp.Body.Close()
 
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		return "", fmt.Errorf("fetch %s: unexpected status %s", rawURL, resp.Status)
+		return "", isTransientSubscriptionStatus(resp.StatusCode), fmt.Errorf("fetch %s: unexpected status %s", rawURL, resp.Status)
 	}
 
 	body, err := io.ReadAll(io.LimitReader(resp.Body, 8<<20))
 	if err != nil {
-		return "", fmt.Errorf("read response body: %w", err)
+		return "", false, fmt.Errorf("read response body: %w", err)
 	}
 
-	return string(body), nil
+	return string(body), false, nil
+}
+
+func isTransientSubscriptionStatus(code int) bool {
+	switch code {
+	case http.StatusTooManyRequests,
+		http.StatusInternalServerError,
+		http.StatusBadGateway,
+		http.StatusServiceUnavailable,
+		http.StatusGatewayTimeout:
+		return true
+	default:
+		return false
+	}
 }
 
 func (s *Service) subscriptionByID(id string) (domain.Subscription, error) {

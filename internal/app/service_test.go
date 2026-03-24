@@ -46,6 +46,83 @@ func TestConfigureFirewallHostsClearsDestinationTargets(t *testing.T) {
 	}
 }
 
+func TestAddSubscriptionRetriesTransientHTTPStatus(t *testing.T) {
+	t.Parallel()
+
+	store := &memoryStore{
+		settings: domain.DefaultSettings(),
+		state:    domain.DefaultRuntimeState(),
+	}
+
+	attempts := 0
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		attempts++
+		if attempts == 1 {
+			http.Error(w, "temporary upstream error", http.StatusServiceUnavailable)
+			return
+		}
+
+		fmt.Fprint(w, "vless://11111111-1111-1111-1111-111111111111@node1.example.com:443?encryption=none&security=reality&sni=edge.example.com&fp=chrome&pbk=public-key-1&sid=ab12cd34&type=ws&path=%2Fproxy&host=cdn.example.com#Edge%20Reality")
+	}))
+	t.Cleanup(server.Close)
+
+	service := NewService(Dependencies{
+		Store:      store,
+		HTTPClient: server.Client(),
+	})
+
+	sub, err := service.AddSubscription(context.Background(), AddSubscriptionRequest{
+		URL:  server.URL,
+		Name: "Retry Test",
+	})
+	if err != nil {
+		t.Fatalf("add subscription: %v", err)
+	}
+
+	if attempts != 2 {
+		t.Fatalf("expected 2 fetch attempts, got %d", attempts)
+	}
+	if len(sub.Nodes) != 1 {
+		t.Fatalf("expected 1 node, got %d", len(sub.Nodes))
+	}
+}
+
+func TestAddSubscriptionUsesCompatibleUserAgent(t *testing.T) {
+	t.Parallel()
+
+	store := &memoryStore{
+		settings: domain.DefaultSettings(),
+		state:    domain.DefaultRuntimeState(),
+	}
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.UserAgent() == "" || r.UserAgent() == "Go-http-client/1.1" {
+			http.Error(w, "blocked user agent", http.StatusServiceUnavailable)
+			return
+		}
+
+		fmt.Fprint(w, "vless://11111111-1111-1111-1111-111111111111@node1.example.com:443?encryption=none&security=reality&sni=edge.example.com&fp=chrome&pbk=public-key-1&sid=ab12cd34&type=ws&path=%2Fproxy&host=cdn.example.com#Edge%20Reality")
+	}))
+	t.Cleanup(server.Close)
+
+	service := NewService(Dependencies{
+		Store:      store,
+		HTTPClient: server.Client(),
+	})
+
+	sub, err := service.AddSubscription(context.Background(), AddSubscriptionRequest{
+		URL:  server.URL,
+		Name: "UA Test",
+	})
+	if err != nil {
+		t.Fatalf("add subscription: %v", err)
+	}
+
+	if len(sub.Nodes) != 1 {
+		t.Fatalf("expected 1 node, got %d", len(sub.Nodes))
+	}
+}
+
 func TestConfigureFirewallHostsCanonicalizesAllAlias(t *testing.T) {
 	t.Parallel()
 
