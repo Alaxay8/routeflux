@@ -1,8 +1,12 @@
 package store_test
 
 import (
+	"bufio"
+	"fmt"
 	"os"
+	"os/exec"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -107,4 +111,88 @@ func TestFileStoreRoundTrip(t *testing.T) {
 	if gotSettings.LogLevel != settings.LogLevel {
 		t.Fatalf("unexpected settings: %+v", gotSettings)
 	}
+}
+
+func TestFileStoreWithWriteLockSerializesAcrossProcesses(t *testing.T) {
+	dir := t.TempDir()
+	releasePath := filepath.Join(dir, "release")
+
+	cmd := exec.Command(os.Args[0], "-test.run=^TestFileStoreWithWriteLockHelperProcess$")
+	cmd.Env = append(os.Environ(),
+		"ROUTEFLUX_STORE_LOCK_HELPER=1",
+		"ROUTEFLUX_STORE_LOCK_DIR="+dir,
+		"ROUTEFLUX_STORE_LOCK_RELEASE="+releasePath,
+	)
+
+	stdout, err := cmd.StdoutPipe()
+	if err != nil {
+		t.Fatalf("stdout pipe: %v", err)
+	}
+
+	if err := cmd.Start(); err != nil {
+		t.Fatalf("start helper: %v", err)
+	}
+
+	reader := bufio.NewReader(stdout)
+	line, err := reader.ReadString('\n')
+	if err != nil {
+		t.Fatalf("read helper ready line: %v", err)
+	}
+	if strings.TrimSpace(line) != "locked" {
+		t.Fatalf("unexpected helper ready line: %q", line)
+	}
+
+	fs := store.NewFileStore(dir)
+	acquired := make(chan error, 1)
+	go func() {
+		acquired <- fs.WithWriteLock(func() error { return nil })
+	}()
+
+	select {
+	case err := <-acquired:
+		t.Fatalf("lock acquired before helper released it: %v", err)
+	case <-time.After(200 * time.Millisecond):
+	}
+
+	if err := os.WriteFile(releasePath, []byte("release\n"), 0o644); err != nil {
+		t.Fatalf("write release marker: %v", err)
+	}
+
+	select {
+	case err := <-acquired:
+		if err != nil {
+			t.Fatalf("acquire lock after release: %v", err)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("timed out waiting for lock after helper release")
+	}
+
+	if err := cmd.Wait(); err != nil {
+		t.Fatalf("wait helper: %v", err)
+	}
+}
+
+func TestFileStoreWithWriteLockHelperProcess(t *testing.T) {
+	if os.Getenv("ROUTEFLUX_STORE_LOCK_HELPER") != "1" {
+		return
+	}
+
+	dir := os.Getenv("ROUTEFLUX_STORE_LOCK_DIR")
+	releasePath := os.Getenv("ROUTEFLUX_STORE_LOCK_RELEASE")
+
+	fs := store.NewFileStore(dir)
+	if err := fs.WithWriteLock(func() error {
+		fmt.Fprintln(os.Stdout, "locked")
+		for deadline := time.Now().Add(5 * time.Second); time.Now().Before(deadline); time.Sleep(10 * time.Millisecond) {
+			if _, err := os.Stat(releasePath); err == nil {
+				return nil
+			}
+		}
+		return fmt.Errorf("timed out waiting for release marker")
+	}); err != nil {
+		fmt.Fprintln(os.Stderr, err)
+		os.Exit(1)
+	}
+
+	os.Exit(0)
 }

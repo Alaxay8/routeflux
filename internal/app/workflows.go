@@ -4,6 +4,12 @@ import "context"
 
 // RefreshAndReconnect refreshes the current subscription and reapplies the active mode.
 func (s *Service) RefreshAndReconnect(ctx context.Context) error {
+	return runStoreWriteLocked(s, func() error {
+		return s.refreshAndReconnect(ctx)
+	})
+}
+
+func (s *Service) refreshAndReconnect(ctx context.Context) error {
 	status, err := s.Status()
 	if err != nil {
 		return err
@@ -13,7 +19,7 @@ func (s *Service) RefreshAndReconnect(ctx context.Context) error {
 		return nil
 	}
 
-	sub, err := s.RefreshSubscription(ctx, status.State.ActiveSubscriptionID)
+	sub, err := s.refreshSubscription(ctx, status.State.ActiveSubscriptionID)
 	if err != nil {
 		return err
 	}
@@ -23,9 +29,9 @@ func (s *Service) RefreshAndReconnect(ctx context.Context) error {
 		if status.State.ActiveNodeID == "" {
 			return nil
 		}
-		return s.ConnectManual(ctx, sub.ID, status.State.ActiveNodeID)
+		return s.connectManual(ctx, sub.ID, status.State.ActiveNodeID)
 	case "auto":
-		_, err := s.ConnectAuto(ctx, sub.ID)
+		_, err := s.connectAuto(ctx, sub.ID)
 		return err
 	default:
 		return nil
