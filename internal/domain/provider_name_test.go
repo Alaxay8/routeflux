@@ -9,10 +9,10 @@ func TestHumanizeProviderNameFromRootDomain(t *testing.T) {
 		input string
 		want  string
 	}{
-		{input: "connorion.example", want: "Orion VPN"},
-		{input: "key.vpnstarlink.example", want: "Starlink VPN"},
-		{input: "https://key.vpnstarlink.example/sub/abc", want: "Starlink VPN"},
-		{input: "Liberty VPN", want: "Liberty VPN"},
+		{input: "connsample.example", want: "Sample VPN"},
+		{input: "key.vpndemo.example", want: "Demo VPN"},
+		{input: "https://key.vpndemo.example/sub/abc", want: "Demo VPN"},
+		{input: "Sample VPN", want: "Sample VPN"},
 	}
 
 	for _, tt := range tests {

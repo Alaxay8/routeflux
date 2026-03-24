@@ -8,7 +8,7 @@ import (
 )
 
 // HumanizeProviderName converts provider metadata or source hosts into a stable
-// display title such as "Liberty VPN" or "Starlink VPN".
+// display title such as "Sample VPN" or "Demo VPN".
 func HumanizeProviderName(value string) string {
 	value = strings.TrimSpace(value)
 	if value == "" {

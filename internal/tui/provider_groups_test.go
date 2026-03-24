@@ -16,20 +16,20 @@ func TestBuildProviderGroupsGroupsSubscriptionsByProvider(t *testing.T) {
 
 	subscriptions := []domain.Subscription{
 		{
-			ID:           "sub-lib-main",
-			ProviderName: "Orion VPN",
+			ID:           "sub-sample-main",
+			ProviderName: "Sample VPN",
 			DisplayName:  "Classic VLESS",
 			Nodes:        []domain.Node{{ID: "node-1"}},
 		},
 		{
-			ID:           "sub-lib-bypass",
-			ProviderName: "Orion VPN",
+			ID:           "sub-sample-bypass",
+			ProviderName: "Sample VPN",
 			DisplayName:  "Bypass",
 			Nodes:        []domain.Node{{ID: "node-2"}, {ID: "node-3"}},
 		},
 		{
-			ID:           "sub-starlink",
-			ProviderName: "Atlas VPN",
+			ID:           "sub-demo",
+			ProviderName: "Demo VPN",
 			DisplayName:  "Main",
 			Nodes:        []domain.Node{{ID: "node-4"}},
 		},
@@ -40,29 +40,29 @@ func TestBuildProviderGroupsGroupsSubscriptionsByProvider(t *testing.T) {
 		t.Fatalf("expected 2 provider groups, got %d", len(groups))
 	}
 
-	atlas := groups[0]
-	if atlas.Title != "Atlas VPN" {
-		t.Fatalf("unexpected provider title: %q", atlas.Title)
+	demo := groups[0]
+	if demo.Title != "Demo VPN" {
+		t.Fatalf("unexpected provider title: %q", demo.Title)
 	}
-	if atlas.TotalNodes != 1 {
-		t.Fatalf("unexpected Atlas node count: %d", atlas.TotalNodes)
+	if demo.TotalNodes != 1 {
+		t.Fatalf("unexpected Demo node count: %d", demo.TotalNodes)
 	}
-	if len(atlas.Subscriptions) != 1 || atlas.Subscriptions[0].Label != "Main" {
-		t.Fatalf("unexpected Atlas subscriptions: %+v", atlas.Subscriptions)
+	if len(demo.Subscriptions) != 1 || demo.Subscriptions[0].Label != "Main" {
+		t.Fatalf("unexpected Demo subscriptions: %+v", demo.Subscriptions)
 	}
 
-	orion := groups[1]
-	if orion.Title != "Orion VPN" {
-		t.Fatalf("unexpected provider title: %q", orion.Title)
+	sample := groups[1]
+	if sample.Title != "Sample VPN" {
+		t.Fatalf("unexpected provider title: %q", sample.Title)
 	}
-	if orion.TotalNodes != 3 {
-		t.Fatalf("unexpected Orion node count: %d", orion.TotalNodes)
+	if sample.TotalNodes != 3 {
+		t.Fatalf("unexpected Sample node count: %d", sample.TotalNodes)
 	}
-	if len(orion.Subscriptions) != 2 {
-		t.Fatalf("expected 2 subscriptions for Orion VPN, got %d", len(orion.Subscriptions))
+	if len(sample.Subscriptions) != 2 {
+		t.Fatalf("expected 2 subscriptions for Sample VPN, got %d", len(sample.Subscriptions))
 	}
-	if orion.Subscriptions[0].Label != "Bypass" || orion.Subscriptions[1].Label != "Classic VLESS" {
-		t.Fatalf("unexpected Orion labels: %+v", orion.Subscriptions)
+	if sample.Subscriptions[0].Label != "Bypass" || sample.Subscriptions[1].Label != "Classic VLESS" {
+		t.Fatalf("unexpected Sample labels: %+v", sample.Subscriptions)
 	}
 }
 
@@ -72,13 +72,13 @@ func TestBuildProviderGroupsAssignsFallbackProfileLabels(t *testing.T) {
 	subscriptions := []domain.Subscription{
 		{
 			ID:           "sub-1",
-			ProviderName: "Durev VPN",
-			DisplayName:  "Durev VPN",
+			ProviderName: "Sample VPN",
+			DisplayName:  "Sample VPN",
 		},
 		{
 			ID:           "sub-2",
-			ProviderName: "Durev VPN",
-			DisplayName:  "Durev VPN",
+			ProviderName: "Sample VPN",
+			DisplayName:  "Sample VPN",
 		},
 	}
 
@@ -102,8 +102,8 @@ func TestBuildProviderGroupsHumanizesDomainProviderNames(t *testing.T) {
 	subscriptions := []domain.Subscription{
 		{
 			ID:           "sub-1",
-			ProviderName: "key.vpnatlas.example",
-			DisplayName:  "key.vpnatlas.example",
+			ProviderName: "key.vpndemo.example",
+			DisplayName:  "key.vpndemo.example",
 		},
 	}
 
@@ -111,7 +111,7 @@ func TestBuildProviderGroupsHumanizesDomainProviderNames(t *testing.T) {
 	if len(groups) != 1 {
 		t.Fatalf("expected 1 provider group, got %d", len(groups))
 	}
-	if groups[0].Title != "Atlas VPN" {
+	if groups[0].Title != "Demo VPN" {
 		t.Fatalf("unexpected provider title: %q", groups[0].Title)
 	}
 }
@@ -123,16 +123,16 @@ func TestRenderProvidersShowsProviderHierarchy(t *testing.T) {
 	m := model{
 		subscriptions: []domain.Subscription{
 			{
-				ID:            "sub-lib-main",
-				ProviderName:  "Orion VPN",
+				ID:            "sub-sample-main",
+				ProviderName:  "Sample VPN",
 				DisplayName:   "Classic VLESS",
 				LastUpdatedAt: now,
 				ParserStatus:  "ok",
 				Nodes:         []domain.Node{{ID: "node-1"}, {ID: "node-2"}},
 			},
 			{
-				ID:            "sub-lib-bypass",
-				ProviderName:  "Orion VPN",
+				ID:            "sub-sample-bypass",
+				ProviderName:  "Sample VPN",
 				DisplayName:   "Bypass",
 				LastUpdatedAt: now,
 				ParserStatus:  "ok",
@@ -152,7 +152,7 @@ func TestRenderProvidersShowsProviderHierarchy(t *testing.T) {
 
 	wants := []string{
 		"VPN Services",
-		"Orion VPN",
+		"Sample VPN",
 		"2 profiles",
 		"Profiles",
 		"Classic VLESS",
@@ -188,8 +188,8 @@ func TestRenderMainViewKeepsTopSectionsVisibleWithManyNodes(t *testing.T) {
 	m.status.State.Mode = domain.SelectionModeManual
 	m.subscriptions = []domain.Subscription{
 		{
-			ID:           "sub-lib-main",
-			ProviderName: "connorion.example",
+			ID:           "sub-sample-main",
+			ProviderName: "connsample.example",
 			DisplayName:  "Classic VLESS",
 			Nodes:        nodes,
 		},
