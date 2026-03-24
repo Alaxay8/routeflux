@@ -1243,8 +1243,9 @@ func deriveProviderName(sourceType domain.SourceType, rawURL string) string {
 
 func refreshedProviderIdentity(sub domain.Subscription, metadata subscriptionFetchMetadata) (string, string, domain.ProviderNameSource) {
 	currentName := firstNonEmpty(sub.DisplayName, sub.ProviderName)
-	if name := strings.TrimSpace(metadata.ProviderName); name != "" && canUpgradeLegacyProviderName(sub, currentName) {
-		return name, name, domain.ProviderNameSourceHeader
+	if canUpgradeLegacyProviderName(sub, currentName) {
+		name, resolvedSource := resolveProviderName("", sub.SourceType, sub.Source, metadata)
+		return name, name, resolvedSource
 	}
 
 	source := effectiveProviderNameSource(sub)

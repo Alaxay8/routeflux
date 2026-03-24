@@ -180,7 +180,7 @@ func TestAddSubscriptionUsesProfileTitleHeaderForProviderName(t *testing.T) {
 	}
 
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Profile-Title", "base64:TGliZXJ0eSBWUE4g8J+XvQ==")
+		w.Header().Set("Profile-Title", "base64:RGVtbyBWUE4=")
 		fmt.Fprint(w, "vless://11111111-1111-1111-1111-111111111111@node1.example.com:443?encryption=none&security=reality&sni=edge.example.com&fp=chrome&pbk=public-key-1&sid=ab12cd34&type=ws&path=%2Fproxy&host=cdn.example.com#Edge%20Reality")
 	}))
 	t.Cleanup(server.Close)
@@ -197,16 +197,16 @@ func TestAddSubscriptionUsesProfileTitleHeaderForProviderName(t *testing.T) {
 		t.Fatalf("add subscription: %v", err)
 	}
 
-	if sub.ProviderName != "Liberty VPN 🗽" {
+	if sub.ProviderName != "Demo VPN" {
 		t.Fatalf("unexpected provider name: %q", sub.ProviderName)
 	}
-	if sub.DisplayName != "Liberty VPN 🗽" {
+	if sub.DisplayName != "Demo VPN" {
 		t.Fatalf("unexpected display name: %q", sub.DisplayName)
 	}
 	if sub.ProviderNameSource != domain.ProviderNameSourceHeader {
 		t.Fatalf("unexpected provider name source: %q", sub.ProviderNameSource)
 	}
-	if len(sub.Nodes) != 1 || sub.Nodes[0].ProviderName != "Liberty VPN 🗽" {
+	if len(sub.Nodes) != 1 || sub.Nodes[0].ProviderName != "Demo VPN" {
 		t.Fatalf("unexpected parsed nodes: %+v", sub.Nodes)
 	}
 }
@@ -220,7 +220,7 @@ func TestAddSubscriptionKeepsManualProviderNameDespiteProfileTitle(t *testing.T)
 	}
 
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Profile-Title", "base64:TGliZXJ0eSBWUE4g8J+XvQ==")
+		w.Header().Set("Profile-Title", "base64:RGVtbyBWUE4=")
 		fmt.Fprint(w, "vless://11111111-1111-1111-1111-111111111111@node1.example.com:443?encryption=none&security=reality&sni=edge.example.com&fp=chrome&pbk=public-key-1&sid=ab12cd34&type=ws&path=%2Fproxy&host=cdn.example.com#Edge%20Reality")
 	}))
 	t.Cleanup(server.Close)
@@ -363,7 +363,7 @@ func TestRefreshSubscriptionUpdatesLegacyURLDerivedProviderNameFromProfileTitle(
 	t.Parallel()
 
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Profile-Title", "base64:TGliZXJ0eSBWUE4g8J+XvQ==")
+		w.Header().Set("Profile-Title", "base64:RGVtbyBWUE4=")
 		fmt.Fprint(w, `[
 		  {
 		    "outbounds": [
@@ -426,16 +426,16 @@ func TestRefreshSubscriptionUpdatesLegacyURLDerivedProviderNameFromProfileTitle(
 		t.Fatalf("refresh subscription: %v", err)
 	}
 
-	if sub.ProviderName != "Liberty VPN 🗽" {
+	if sub.ProviderName != "Demo VPN" {
 		t.Fatalf("unexpected provider name: %q", sub.ProviderName)
 	}
-	if sub.DisplayName != "Liberty VPN 🗽" {
+	if sub.DisplayName != "Demo VPN" {
 		t.Fatalf("unexpected display name: %q", sub.DisplayName)
 	}
 	if sub.ProviderNameSource != domain.ProviderNameSourceHeader {
 		t.Fatalf("unexpected provider name source: %q", sub.ProviderNameSource)
 	}
-	if len(sub.Nodes) != 1 || sub.Nodes[0].ProviderName != "Liberty VPN 🗽" {
+	if len(sub.Nodes) != 1 || sub.Nodes[0].ProviderName != "Demo VPN" {
 		t.Fatalf("unexpected parsed nodes: %+v", sub.Nodes)
 	}
 }
@@ -444,7 +444,7 @@ func TestRefreshSubscriptionDoesNotOverrideManualProviderNameWithProfileTitle(t 
 	t.Parallel()
 
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Profile-Title", "base64:TGliZXJ0eSBWUE4g8J+XvQ==")
+		w.Header().Set("Profile-Title", "base64:RGVtbyBWUE4=")
 		fmt.Fprint(w, `[
 		  {
 		    "outbounds": [
@@ -535,7 +535,7 @@ func TestRefreshSubscriptionUpgradesLegacyKeyVPNNameFromProfileTitle(t *testing.
 	t.Parallel()
 
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Profile-Title", "base64:U1RBUkxJTksgVlBO")
+		w.Header().Set("Profile-Title", "base64:REVNTyBWUE4=")
 		fmt.Fprint(w, `[
 		  {
 		    "outbounds": [
@@ -581,7 +581,7 @@ func TestRefreshSubscriptionUpgradesLegacyKeyVPNNameFromProfileTitle(t *testing.
 			{
 				ID:           "sub-1",
 				SourceType:   domain.SourceTypeURL,
-				Source:       "https://key.vpnstarlink.ru/5JC65O",
+				Source:       "https://key.vpndemo.example/subscriptions/demo-token",
 				ProviderName: "Key VPN",
 				DisplayName:  "Key VPN",
 				Nodes: []domain.Node{
@@ -611,13 +611,103 @@ func TestRefreshSubscriptionUpgradesLegacyKeyVPNNameFromProfileTitle(t *testing.
 		t.Fatalf("refresh subscription: %v", err)
 	}
 
-	if sub.ProviderName != "STARLINK VPN" {
+	if sub.ProviderName != "DEMO VPN" {
 		t.Fatalf("unexpected provider name: %q", sub.ProviderName)
 	}
-	if sub.DisplayName != "STARLINK VPN" {
+	if sub.DisplayName != "DEMO VPN" {
 		t.Fatalf("unexpected display name: %q", sub.DisplayName)
 	}
 	if sub.ProviderNameSource != domain.ProviderNameSourceHeader {
+		t.Fatalf("unexpected provider name source: %q", sub.ProviderNameSource)
+	}
+}
+
+func TestRefreshSubscriptionNormalizesLegacyRawHostNameWithoutProfileTitle(t *testing.T) {
+	t.Parallel()
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		fmt.Fprint(w, `[
+		  {
+		    "outbounds": [
+		      {
+		        "protocol": "vless",
+		        "tag": "proxy",
+		        "settings": {
+		          "vnext": [
+		            {
+		              "address": "one.example.com",
+		              "port": 443,
+		              "users": [
+		                {
+		                  "id": "11111111-1111-1111-1111-111111111111",
+		                  "encryption": "none",
+		                  "flow": "xtls-rprx-vision"
+		                }
+		              ]
+		            }
+		          ]
+		        },
+		        "streamSettings": {
+		          "network": "tcp",
+		          "security": "reality",
+		          "realitySettings": {
+		            "serverName": "gateway-one.example",
+		            "publicKey": "public-key-one",
+		            "shortId": "short-one",
+		            "fingerprint": "random"
+		          }
+		        }
+		      }
+		    ]
+		  }
+		]`)
+	}))
+	defer server.Close()
+
+	store := &memoryStore{
+		settings: domain.DefaultSettings(),
+		state:    domain.DefaultRuntimeState(),
+		subs: []domain.Subscription{
+			{
+				ID:           "sub-1",
+				SourceType:   domain.SourceTypeURL,
+				Source:       "https://key.vpndemo.example/subscriptions/demo-token",
+				ProviderName: "key.vpndemo.example",
+				DisplayName:  "key.vpndemo.example",
+				Nodes: []domain.Node{
+					{ID: "old-node"},
+				},
+			},
+		},
+	}
+	if !canUpgradeLegacyProviderName(store.subs[0], "key.vpndemo.example") {
+		t.Fatal("expected raw legacy host name to be upgradeable")
+	}
+
+	client := server.Client()
+	targetURL, err := url.Parse(server.URL)
+	if err != nil {
+		t.Fatalf("parse test server url: %v", err)
+	}
+	client.Transport = rewriteURLRoundTripper{
+		base:   client.Transport,
+		target: targetURL,
+	}
+
+	service := NewService(Dependencies{Store: store, HTTPClient: client})
+
+	sub, err := service.RefreshSubscription(context.Background(), "sub-1")
+	if err != nil {
+		t.Fatalf("refresh subscription: %v", err)
+	}
+
+	if sub.ProviderName != "Demo VPN" {
+		t.Fatalf("unexpected provider name: %q", sub.ProviderName)
+	}
+	if sub.DisplayName != "Demo VPN" {
+		t.Fatalf("unexpected display name: %q", sub.DisplayName)
+	}
+	if sub.ProviderNameSource != domain.ProviderNameSourceURL {
 		t.Fatalf("unexpected provider name source: %q", sub.ProviderNameSource)
 	}
 }
