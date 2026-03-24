@@ -179,6 +179,9 @@ func (s *Service) addSubscription(ctx context.Context, req AddSubscriptionReques
 
 	state, err := s.store.LoadState()
 	if err == nil {
+		if state.LastRefreshAt == nil {
+			state.LastRefreshAt = make(map[string]time.Time)
+		}
 		state.LastRefreshAt[sub.ID] = now
 		_ = s.store.SaveState(state)
 	}
@@ -401,6 +404,9 @@ func (s *Service) refreshSubscription(ctx context.Context, subscriptionID string
 
 	state, err := s.store.LoadState()
 	if err == nil {
+		if state.LastRefreshAt == nil {
+			state.LastRefreshAt = make(map[string]time.Time)
+		}
 		state.LastRefreshAt[sub.ID] = sub.LastUpdatedAt
 		_ = s.store.SaveState(state)
 	}

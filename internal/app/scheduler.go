@@ -23,9 +23,18 @@ func NewScheduler(service *Service) *Scheduler {
 	}
 }
 
+// SetTick overrides the scheduler tick interval.
+func (s *Scheduler) SetTick(tick time.Duration) {
+	if tick > 0 {
+		s.tick = tick
+	}
+}
+
 // Start begins the background refresh loop.
 func (s *Scheduler) Start(ctx context.Context) {
 	go func() {
+		s.RunOnce(ctx)
+
 		ticker := time.NewTicker(s.tick)
 		defer ticker.Stop()
 		for {
@@ -50,10 +59,24 @@ func (s *Scheduler) Stop() {
 	}
 }
 
+// RunOnce performs a single refresh scan across stored subscriptions.
+func (s *Scheduler) RunOnce(ctx context.Context) {
+	s.runOnce(ctx)
+}
+
 func (s *Scheduler) runOnce(ctx context.Context) {
 	subscriptions, err := s.service.ListSubscriptions()
 	if err != nil {
+		s.logWarn("list subscriptions for scheduler", "error", err.Error())
 		return
+	}
+
+	status, statusErr := s.service.Status()
+	activeSubscriptionID := ""
+	connected := false
+	if statusErr == nil {
+		activeSubscriptionID = status.State.ActiveSubscriptionID
+		connected = status.State.Connected
 	}
 
 	for _, sub := range subscriptions {
@@ -64,6 +87,32 @@ func (s *Scheduler) runOnce(ctx context.Context) {
 		if s.now().UTC().Sub(sub.LastUpdatedAt) < interval {
 			continue
 		}
-		_, _ = s.service.RefreshSubscription(ctx, sub.ID)
+
+		if connected && sub.ID == activeSubscriptionID {
+			if err := s.service.RefreshAndReconnect(ctx); err != nil {
+				s.logWarn("refresh and reconnect active subscription", "subscription", sub.ID, "error", err.Error())
+				continue
+			}
+			s.logInfo("refreshed and reconnected active subscription", "subscription", sub.ID)
+			continue
+		}
+
+		if _, err := s.service.RefreshSubscription(ctx, sub.ID); err != nil {
+			s.logWarn("refresh subscription", "subscription", sub.ID, "error", err.Error())
+			continue
+		}
+		s.logInfo("refreshed subscription", "subscription", sub.ID)
+	}
+}
+
+func (s *Scheduler) logInfo(msg string, args ...any) {
+	if s.service != nil && s.service.logger != nil {
+		s.service.logger.Info(msg, args...)
+	}
+}
+
+func (s *Scheduler) logWarn(msg string, args ...any) {
+	if s.service != nil && s.service.logger != nil {
+		s.service.logger.Warn(msg, args...)
 	}
 }

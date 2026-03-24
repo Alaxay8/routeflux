@@ -96,6 +96,8 @@ routeflux disconnect
 routeflux status
 routeflux diagnostics
 routeflux logs
+routeflux daemon
+routeflux daemon --once
 routeflux settings get
 routeflux settings set refresh-interval 1h
 routeflux settings set auto-mode true
@@ -251,6 +253,7 @@ Project notes:
 - 3x-ui and Xray JSON imports, including JSON arrays of full configs, are normalized into RouteFlux nodes instead of being copied as full runtime configs.
 - General settings and DNS settings are intentionally split. Use `routeflux settings` for app behavior and `routeflux dns` for runtime DNS.
 - `routeflux firewall set hosts` accepts single IPv4 addresses, IPv4 CIDR pools, IPv4 ranges, and the aliases `all` or `*` for common private LAN ranges.
+- `routeflux daemon` runs the background refresh loop. Use `--once` for a single scan or `--tick 30s` to override the scan interval.
 
 ## Architecture
 
@@ -285,11 +288,18 @@ Placeholder screenshots:
 ## OpenWrt Deployment
 
 1. Build with `make build-openwrt`.
-2. Copy the binary to the router.
+2. Copy the binary to the router. If you install manually instead of unpacking the release tarball, also copy `openwrt/root/etc/init.d/routeflux` to `/etc/init.d/routeflux` and make it executable.
 3. Create `/etc/routeflux` if it does not exist.
 4. Install Xray only when you want to connect traffic, and verify that `/etc/init.d/xray` can `reload`, `start`, and `stop`.
-5. Run `routeflux add`, import a valid subscription or 3x-ui/Xray JSON config, and connect to a node.
-6. If you need encrypted DNS, configure it through `routeflux dns` after the runtime is working.
+5. Enable the RouteFlux background refresh service when you want automatic subscription refresh:
+
+```bash
+/etc/init.d/routeflux enable
+/etc/init.d/routeflux start
+```
+
+6. Run `routeflux add`, import a valid subscription or 3x-ui/Xray JSON config, and connect to a node.
+7. If you need encrypted DNS, configure it through `routeflux dns` after the runtime is working.
 
 ## Limitations
 
@@ -298,6 +308,7 @@ Placeholder screenshots:
 - The current Xray backend connects VLESS, VMess, and Trojan nodes. Shadowsocks parsing is available, but end-to-end Xray outbound generation for Shadowsocks is not wired yet.
 - `dns.transport=dot` is defined in settings but is not applied by the current Xray backend.
 - Transparent router traffic interception is not fully automated in MVP.
+- Automatic subscription refresh requires the RouteFlux daemon or OpenWrt `/etc/init.d/routeflux` service to be running.
 - Simple firewall routing currently supports destination IPv4 targets, source IPv4 hosts, CIDR pools, IPv4 ranges, and the `all` or `*` LAN-wide shortcut. QUIC blocking is host-mode only.
 - A LuCI MVP lives in `luci-app-routeflux` with `Overview`, `Subscriptions`, `Firewall`, `DNS`, `Settings`, `Diagnostics`, and `Logs` pages.
 

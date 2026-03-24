@@ -9,12 +9,15 @@ ROOT_DIR="$(CDPATH= cd -- "$(dirname "$0")/.." && pwd)"
 rm -rf "${PKG_DIR}"
 mkdir -p \
 	"${PKG_DIR}/usr/bin" \
+	"${PKG_DIR}/etc/init.d" \
 	"${PKG_DIR}/usr/share/luci/menu.d" \
 	"${PKG_DIR}/usr/share/rpcd/acl.d" \
 	"${PKG_DIR}/www/luci-static/resources/view/routeflux" \
 	"${PKG_DIR}/CONTROL"
 
 cp "${ROOT_DIR}/bin/openwrt/routeflux" "${PKG_DIR}/usr/bin/routeflux"
+cp "${ROOT_DIR}/openwrt/root/etc/init.d/routeflux" "${PKG_DIR}/etc/init.d/routeflux"
+chmod 0755 "${PKG_DIR}/etc/init.d/routeflux"
 cp "${ROOT_DIR}/luci-app-routeflux/root/usr/share/luci/menu.d/luci-app-routeflux.json" \
 	"${PKG_DIR}/usr/share/luci/menu.d/luci-app-routeflux.json"
 cp "${ROOT_DIR}/luci-app-routeflux/root/usr/share/rpcd/acl.d/luci-app-routeflux.json" \
@@ -35,6 +38,7 @@ cat > "${PKG_DIR}/CONTROL/postinst" <<'EOF'
 set -eu
 
 if [ -z "${IPKG_INSTROOT:-}" ]; then
+	chmod 0755 /etc/init.d/routeflux >/dev/null 2>&1 || true
 	rm -f /tmp/luci-indexcache
 	rm -rf /tmp/luci-modulecache
 	/etc/init.d/rpcd reload >/dev/null 2>&1 || true
