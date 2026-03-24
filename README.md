@@ -1,4 +1,4 @@
-[English](README.md) | [العربية](README.ar.md) | [فارسی](README.fa.md) | [中文](README.zh_CN.md) | [Español](README.es.md) | [Русский](README.ru_RU.md)
+[English](README.md) | [Русский](README.ru_RU.md)
 
 # RouteFlux
 
@@ -13,7 +13,7 @@ RouteFlux imports subscription URLs, raw `vless://`, `vmess://`, `trojan://`, an
 - Import proxy subscriptions from a URL, raw share link, stdin, or valid 3x-ui/Xray JSON.
 - Parse VLESS, VMess, Trojan, and Shadowsocks share links.
 - Normalize supported 3x-ui/Xray proxy outbounds into RouteFlux nodes.
-- Add, list, refresh, connect, disconnect, and remove subscriptions from the CLI or TUI.
+- Add, list, refresh, connect, disconnect, remove one subscription, or remove all subscriptions from the CLI or TUI.
 - Select nodes manually or use automatic best-node selection with health checks and anti-flap logic.
 - Generate Xray runtime config and reload the OpenWrt `init.d` service.
 - Configure simple nftables-based routing for selected destination IPs, CIDRs, ranges, or LAN hosts.
@@ -87,6 +87,7 @@ routeflux add < 3x-ui-config.json
 routeflux list subscriptions
 routeflux list nodes --subscription sub-1234567890
 routeflux remove sub-1234567890
+routeflux remove --all
 routeflux refresh --subscription sub-1234567890
 routeflux refresh --all
 routeflux connect --subscription sub-1234567890 --node abcdef123456
@@ -127,6 +128,12 @@ Remove a stored subscription:
 
 ```bash
 routeflux remove sub-8b9f930214
+```
+
+Remove all stored subscriptions:
+
+```bash
+routeflux remove --all
 ```
 
 Enable automatic best-node selection:
@@ -247,7 +254,7 @@ Project notes:
 
 ## Architecture
 
-The codebase is split into domain, parser, store, probe, backend, app, CLI, and TUI layers. See [docs/architecture.md](/Users/alexey/dev/routeflux/docs/architecture.md) for the full breakdown.
+The codebase is split into domain, parser, store, probe, backend, app, CLI, and TUI layers. See [docs/architecture.md](docs/architecture.md) for the full breakdown.
 
 ## Supported Protocols
 

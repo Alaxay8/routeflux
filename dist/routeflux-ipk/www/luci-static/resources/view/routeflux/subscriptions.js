@@ -22,6 +22,26 @@ function firstNonEmpty(values, fallback) {
 	return fallback || '';
 }
 
+function isPlaceholderNodeLabel(value) {
+	return trim(value).toLowerCase() === 'proxy';
+}
+
+function nodeDisplayName(node, fallback) {
+	var name = trim(node && node.name);
+	var remark = trim(node && node.remark);
+
+	if (name !== '' && !isPlaceholderNodeLabel(name))
+		return name;
+
+	if (remark !== '' && !isPlaceholderNodeLabel(remark))
+		return remark;
+
+	return firstNonEmpty([
+		node && node.address,
+		node && node.id
+	], fallback || '');
+}
+
 function notificationParagraph(message) {
 	return E('p', {}, [ message ]);
 }
@@ -125,6 +145,16 @@ return view.extend({
 		);
 	},
 
+	handleRemoveAll: function(ev) {
+		if (!window.confirm(_('Remove all imported subscriptions? This disconnects the active profile if needed.')))
+			return Promise.resolve();
+
+		return this.execAction(
+			[ 'remove', '--all' ],
+			_('All subscriptions removed.')
+		);
+	},
+
 	handleConnectAuto: function(subscriptionId, ev) {
 		return this.execAction(
 			[ 'connect', '--auto', '--subscription', subscriptionId ],
@@ -147,7 +177,7 @@ return view.extend({
 
 		var rows = nodes.map(L.bind(function(node) {
 			var isActive = subscription.id === activeSubscriptionId && node.id === activeNodeId;
-			var name = firstNonEmpty([ node.name, node.remark, node.id ], node.id);
+			var name = nodeDisplayName(node, node.id);
 			var address = firstNonEmpty([
 				node.address && node.port ? node.address + ':' + node.port : '',
 				node.address
@@ -262,6 +292,7 @@ return view.extend({
 			'.routeflux-subscription-title { font-size:18px; font-weight:600; }',
 			'.routeflux-subscription-actions { display:flex; flex-wrap:wrap; gap:8px; align-items:flex-start; }',
 			'.routeflux-add-grid { display:grid; grid-template-columns:minmax(220px, 320px) 1fr; gap:12px; margin-bottom:12px; }',
+			'.routeflux-add-actions { display:flex; flex-wrap:wrap; gap:10px; }',
 			'.routeflux-add-grid textarea { min-height:140px; width:100%; }',
 			'.routeflux-node-details { margin-top:12px; }',
 			'.routeflux-node-details summary { cursor:pointer; margin-bottom:10px; }'
@@ -269,7 +300,7 @@ return view.extend({
 
 		content.push(E('h2', {}, [ _('RouteFlux - Subscriptions') ]));
 		content.push(E('p', { 'class': 'cbi-section-descr' }, [
-			_('Manage imported subscriptions, add new providers, refresh existing profiles, and connect a specific node or the best node automatically.')
+			_('Manage imported subscriptions, add new providers, refresh existing profiles, remove one or all profiles, and connect a specific node or the best node automatically.')
 		]));
 
 		content.push(E('div', { 'class': 'cbi-section' }, [
@@ -297,10 +328,17 @@ return view.extend({
 					])
 				])
 			]),
-			E('button', {
-				'class': 'cbi-button cbi-button-apply',
-				'click': ui.createHandlerFn(this, 'handleAdd')
-			}, [ _('Add Subscription') ])
+			E('div', { 'class': 'routeflux-add-actions' }, [
+				E('button', {
+					'class': 'cbi-button cbi-button-apply',
+					'click': ui.createHandlerFn(this, 'handleAdd')
+				}, [ _('Add Subscription') ]),
+				E('button', {
+					'class': 'cbi-button cbi-button-negative',
+					'click': ui.createHandlerFn(this, 'handleRemoveAll'),
+					'disabled': subscriptions.length === 0 ? 'disabled' : null
+				}, [ _('Remove All') ])
+			])
 		]));
 
 		if (subscriptions.length === 0) {

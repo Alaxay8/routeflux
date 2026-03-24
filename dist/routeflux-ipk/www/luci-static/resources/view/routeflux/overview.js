@@ -22,6 +22,26 @@ function firstNonEmpty(values, fallback) {
 	return fallback || '';
 }
 
+function isPlaceholderNodeLabel(value) {
+	return trim(value).toLowerCase() === 'proxy';
+}
+
+function nodeDisplayName(node, fallback) {
+	var name = trim(node && node.name);
+	var remark = trim(node && node.remark);
+
+	if (name !== '' && !isPlaceholderNodeLabel(name))
+		return name;
+
+	if (remark !== '' && !isPlaceholderNodeLabel(remark))
+		return remark;
+
+	return firstNonEmpty([
+		node && node.address,
+		node && node.id
+	], fallback || '');
+}
+
 function notificationParagraph(message) {
 	return E('p', {}, [ message ]);
 }
@@ -180,10 +200,7 @@ return view.extend({
 			activeSubscription.display_name,
 			activeSubscription.provider_name
 		], _('Not selected'));
-		var nodeName = firstNonEmpty([
-			activeNode.name,
-			activeNode.remark
-		], _('Not selected'));
+		var nodeName = nodeDisplayName(activeNode, _('Not selected'));
 		var activeSubscriptionId = trim(activeSubscription.id);
 		var currentSubscriptionId = activeSubscriptionId;
 

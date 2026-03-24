@@ -175,15 +175,8 @@ func (s *Service) RemoveSubscription(ctx context.Context, id string) error {
 	state, stateErr := s.store.LoadState()
 	active := stateErr == nil && state.ActiveSubscriptionID == id
 	if active {
-		if s.backend != nil {
-			if err := s.backend.Stop(ctx); err != nil {
-				return fmt.Errorf("stop backend: %w", err)
-			}
-		}
-		if s.firewall != nil {
-			if err := s.firewall.Disable(ctx); err != nil {
-				return fmt.Errorf("disable firewall: %w", err)
-			}
+		if err := s.disconnectRuntime(ctx); err != nil {
+			return err
 		}
 	}
 
@@ -196,6 +189,60 @@ func (s *Service) RemoveSubscription(ctx context.Context, id string) error {
 		return nil
 	}
 
+	return s.persistDisconnectedState(state)
+}
+
+// RemoveAllSubscriptions removes all stored subscriptions and disconnects if one is active.
+func (s *Service) RemoveAllSubscriptions(ctx context.Context) (int, error) {
+	subscriptions, err := s.store.LoadSubscriptions()
+	if err != nil {
+		return 0, fmt.Errorf("load subscriptions: %w", err)
+	}
+
+	removed := len(subscriptions)
+	if removed == 0 {
+		return 0, nil
+	}
+
+	state, stateErr := s.store.LoadState()
+	active := stateErr == nil && state.ActiveSubscriptionID != ""
+	if active {
+		if err := s.disconnectRuntime(ctx); err != nil {
+			return 0, err
+		}
+	}
+
+	if err := s.store.SaveSubscriptions([]domain.Subscription{}); err != nil {
+		return 0, fmt.Errorf("save subscriptions: %w", err)
+	}
+
+	if !active {
+		return removed, nil
+	}
+
+	if err := s.persistDisconnectedState(state); err != nil {
+		return 0, err
+	}
+
+	return removed, nil
+}
+
+func (s *Service) disconnectRuntime(ctx context.Context) error {
+	if s.backend != nil {
+		if err := s.backend.Stop(ctx); err != nil {
+			return fmt.Errorf("stop backend: %w", err)
+		}
+	}
+	if s.firewall != nil {
+		if err := s.firewall.Disable(ctx); err != nil {
+			return fmt.Errorf("disable firewall: %w", err)
+		}
+	}
+
+	return nil
+}
+
+func (s *Service) persistDisconnectedState(state domain.RuntimeState) error {
 	state.ActiveSubscriptionID = ""
 	state.ActiveNodeID = ""
 	state.Mode = domain.SelectionModeDisconnected

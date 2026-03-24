@@ -26,6 +26,150 @@ function firstNonEmpty(values, fallback) {
 	return fallback || '';
 }
 
+function isPlaceholderNodeLabel(value) {
+	return trim(value).toLowerCase() === 'proxy';
+}
+
+var regionNameFallbacks = {
+	'AT': 'Austria',
+	'AU': 'Australia',
+	'BE': 'Belgium',
+	'BG': 'Bulgaria',
+	'BR': 'Brazil',
+	'CA': 'Canada',
+	'CH': 'Switzerland',
+	'CZ': 'Czechia',
+	'DE': 'Germany',
+	'EE': 'Estonia',
+	'ES': 'Spain',
+	'FI': 'Finland',
+	'FR': 'France',
+	'GB': 'United Kingdom',
+	'HK': 'Hong Kong',
+	'HU': 'Hungary',
+	'IE': 'Ireland',
+	'IN': 'India',
+	'IT': 'Italy',
+	'JP': 'Japan',
+	'KR': 'South Korea',
+	'KZ': 'Kazakhstan',
+	'LT': 'Lithuania',
+	'LV': 'Latvia',
+	'MD': 'Moldova',
+	'NL': 'Netherlands',
+	'NO': 'Norway',
+	'PL': 'Poland',
+	'PT': 'Portugal',
+	'RO': 'Romania',
+	'RS': 'Serbia',
+	'RU': 'Russia',
+	'SE': 'Sweden',
+	'SG': 'Singapore',
+	'SK': 'Slovakia',
+	'TR': 'Turkey',
+	'UA': 'Ukraine',
+	'US': 'United States'
+};
+
+function normalizeRegionCode(value) {
+	var code = trim(value).toUpperCase();
+
+	if (code === 'UK')
+		return 'GB';
+
+	return code;
+}
+
+function regionName(code) {
+	var normalized = normalizeRegionCode(code);
+
+	if (normalized === '')
+		return '';
+
+	try {
+		if (typeof Intl !== 'undefined' && typeof Intl.DisplayNames === 'function') {
+			var displayNames = new Intl.DisplayNames([ navigator.language || 'en' ], { 'type': 'region' });
+			var localized = displayNames.of(normalized);
+
+			if (localized && localized !== normalized)
+				return localized;
+		}
+	}
+	catch (err) {
+	}
+
+	return regionNameFallbacks[normalized] || '';
+}
+
+function inferRegionCodeFromText(value) {
+	var tokens = trim(value).toLowerCase().split(/[^a-z]+/).filter(Boolean);
+
+	for (var i = 0; i < tokens.length; i++) {
+		if (!/^[a-z]{2}$/.test(tokens[i]))
+			continue;
+
+		if (regionName(tokens[i]) !== '')
+			return normalizeRegionCode(tokens[i]);
+	}
+
+	return '';
+}
+
+function inferRegionCodeFromAddress(value) {
+	var host = trim(value).toLowerCase();
+
+	if (host === '')
+		return '';
+
+	var labels = host.split('.').filter(Boolean);
+
+	if (labels.length === 0)
+		return '';
+
+	var firstTokens = labels[0].split(/[^a-z0-9]+/).filter(Boolean);
+	for (var i = 0; i < firstTokens.length; i++) {
+		if (!/^[a-z]{2}$/.test(firstTokens[i]))
+			continue;
+
+		if (regionName(firstTokens[i]) !== '')
+			return normalizeRegionCode(firstTokens[i]);
+	}
+
+	var tld = labels[labels.length - 1];
+	if (/^[a-z]{2}$/.test(tld) && regionName(tld) !== '')
+		return normalizeRegionCode(tld);
+
+	return '';
+}
+
+function nodeDisplayName(node, fallback) {
+	var code = firstNonEmpty([
+		inferRegionCodeFromText(node && node.name),
+		inferRegionCodeFromText(node && node.remark),
+		inferRegionCodeFromAddress(node && node.address)
+	], '');
+
+	if (code !== '') {
+		var localizedRegion = regionName(code);
+		if (localizedRegion !== '')
+			return localizedRegion;
+	}
+
+	var name = trim(node && node.name);
+	var remark = trim(node && node.remark);
+
+	if (name !== '' && !isPlaceholderNodeLabel(name))
+		return name;
+
+	if (remark !== '' && !isPlaceholderNodeLabel(remark))
+		return remark;
+
+	return firstNonEmpty([
+		node && node.address,
+		node && node.id
+	], fallback || '');
+}
+
 function backendLabel(runtime, runtimeError) {
 	if (trim(runtimeError) !== '')
 		return _('Error');
@@ -153,10 +297,7 @@ return view.extend({
 			activeSubscription.display_name,
 			activeSubscription.provider_name
 		], _('Not selected'));
-		var activeNodeName = firstNonEmpty([
-			activeNode.name,
-			activeNode.remark
-		], _('Not selected'));
+		var activeNodeName = nodeDisplayName(activeNode, _('Not selected'));
 		var content = [];
 
 		if (diagnostics.__error__)

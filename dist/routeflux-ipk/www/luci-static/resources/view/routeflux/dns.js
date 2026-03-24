@@ -33,6 +33,26 @@ function firstNonEmpty(values, fallback) {
 	return fallback || '';
 }
 
+function isPlaceholderNodeLabel(value) {
+	return trim(value).toLowerCase() === 'proxy';
+}
+
+function nodeDisplayName(node, fallback) {
+	var name = trim(node && node.name);
+	var remark = trim(node && node.remark);
+
+	if (name !== '' && !isPlaceholderNodeLabel(name))
+		return name;
+
+	if (remark !== '' && !isPlaceholderNodeLabel(remark))
+		return remark;
+
+	return firstNonEmpty([
+		node && node.address,
+		node && node.id
+	], fallback || '');
+}
+
 function parseList(raw) {
 	var value = trim(raw);
 
@@ -256,10 +276,7 @@ return view.extend({
 			activeSubscription.display_name,
 			activeSubscription.provider_name
 		], _('Not selected'));
-		var activeNodeName = firstNonEmpty([
-			activeNode.name,
-			activeNode.remark
-		], _('Not selected'));
+		var activeNodeName = nodeDisplayName(activeNode, _('Not selected'));
 		var content = [];
 
 		this.currentDNS = {

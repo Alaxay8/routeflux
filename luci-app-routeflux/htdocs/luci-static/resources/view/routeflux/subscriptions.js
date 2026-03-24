@@ -22,6 +22,150 @@ function firstNonEmpty(values, fallback) {
 	return fallback || '';
 }
 
+function isPlaceholderNodeLabel(value) {
+	return trim(value).toLowerCase() === 'proxy';
+}
+
+var regionNameFallbacks = {
+	'AT': 'Austria',
+	'AU': 'Australia',
+	'BE': 'Belgium',
+	'BG': 'Bulgaria',
+	'BR': 'Brazil',
+	'CA': 'Canada',
+	'CH': 'Switzerland',
+	'CZ': 'Czechia',
+	'DE': 'Germany',
+	'EE': 'Estonia',
+	'ES': 'Spain',
+	'FI': 'Finland',
+	'FR': 'France',
+	'GB': 'United Kingdom',
+	'HK': 'Hong Kong',
+	'HU': 'Hungary',
+	'IE': 'Ireland',
+	'IN': 'India',
+	'IT': 'Italy',
+	'JP': 'Japan',
+	'KR': 'South Korea',
+	'KZ': 'Kazakhstan',
+	'LT': 'Lithuania',
+	'LV': 'Latvia',
+	'MD': 'Moldova',
+	'NL': 'Netherlands',
+	'NO': 'Norway',
+	'PL': 'Poland',
+	'PT': 'Portugal',
+	'RO': 'Romania',
+	'RS': 'Serbia',
+	'RU': 'Russia',
+	'SE': 'Sweden',
+	'SG': 'Singapore',
+	'SK': 'Slovakia',
+	'TR': 'Turkey',
+	'UA': 'Ukraine',
+	'US': 'United States'
+};
+
+function normalizeRegionCode(value) {
+	var code = trim(value).toUpperCase();
+
+	if (code === 'UK')
+		return 'GB';
+
+	return code;
+}
+
+function regionName(code) {
+	var normalized = normalizeRegionCode(code);
+
+	if (normalized === '')
+		return '';
+
+	try {
+		if (typeof Intl !== 'undefined' && typeof Intl.DisplayNames === 'function') {
+			var displayNames = new Intl.DisplayNames([ navigator.language || 'en' ], { 'type': 'region' });
+			var localized = displayNames.of(normalized);
+
+			if (localized && localized !== normalized)
+				return localized;
+		}
+	}
+	catch (err) {
+	}
+
+	return regionNameFallbacks[normalized] || '';
+}
+
+function inferRegionCodeFromText(value) {
+	var tokens = trim(value).toLowerCase().split(/[^a-z]+/).filter(Boolean);
+
+	for (var i = 0; i < tokens.length; i++) {
+		if (!/^[a-z]{2}$/.test(tokens[i]))
+			continue;
+
+		if (regionName(tokens[i]) !== '')
+			return normalizeRegionCode(tokens[i]);
+	}
+
+	return '';
+}
+
+function inferRegionCodeFromAddress(value) {
+	var host = trim(value).toLowerCase();
+
+	if (host === '')
+		return '';
+
+	var labels = host.split('.').filter(Boolean);
+
+	if (labels.length === 0)
+		return '';
+
+	var firstTokens = labels[0].split(/[^a-z0-9]+/).filter(Boolean);
+	for (var i = 0; i < firstTokens.length; i++) {
+		if (!/^[a-z]{2}$/.test(firstTokens[i]))
+			continue;
+
+		if (regionName(firstTokens[i]) !== '')
+			return normalizeRegionCode(firstTokens[i]);
+	}
+
+	var tld = labels[labels.length - 1];
+	if (/^[a-z]{2}$/.test(tld) && regionName(tld) !== '')
+		return normalizeRegionCode(tld);
+
+	return '';
+}
+
+function nodeDisplayName(node, fallback) {
+	var code = firstNonEmpty([
+		inferRegionCodeFromText(node && node.name),
+		inferRegionCodeFromText(node && node.remark),
+		inferRegionCodeFromAddress(node && node.address)
+	], '');
+
+	if (code !== '') {
+		var localizedRegion = regionName(code);
+		if (localizedRegion !== '')
+			return localizedRegion;
+	}
+
+	var name = trim(node && node.name);
+	var remark = trim(node && node.remark);
+
+	if (name !== '' && !isPlaceholderNodeLabel(name))
+		return name;
+
+	if (remark !== '' && !isPlaceholderNodeLabel(remark))
+		return remark;
+
+	return firstNonEmpty([
+		node && node.address,
+		node && node.id
+	], fallback || '');
+}
+
 function notificationParagraph(message) {
 	return E('p', {}, [ message ]);
 }
@@ -125,6 +269,16 @@ return view.extend({
 		);
 	},
 
+	handleRemoveAll: function(ev) {
+		if (!window.confirm(_('Remove all imported subscriptions? This disconnects the active profile if needed.')))
+			return Promise.resolve();
+
+		return this.execAction(
+			[ 'remove', '--all' ],
+			_('All subscriptions removed.')
+		);
+	},
+
 	handleConnectAuto: function(subscriptionId, ev) {
 		return this.execAction(
 			[ 'connect', '--auto', '--subscription', subscriptionId ],
@@ -147,7 +301,7 @@ return view.extend({
 
 		var rows = nodes.map(L.bind(function(node) {
 			var isActive = subscription.id === activeSubscriptionId && node.id === activeNodeId;
-			var name = firstNonEmpty([ node.name, node.remark, node.id ], node.id);
+			var name = nodeDisplayName(node, node.id);
 			var address = firstNonEmpty([
 				node.address && node.port ? node.address + ':' + node.port : '',
 				node.address
@@ -262,6 +416,7 @@ return view.extend({
 			'.routeflux-subscription-title { font-size:18px; font-weight:600; }',
 			'.routeflux-subscription-actions { display:flex; flex-wrap:wrap; gap:8px; align-items:flex-start; }',
 			'.routeflux-add-grid { display:grid; grid-template-columns:minmax(220px, 320px) 1fr; gap:12px; margin-bottom:12px; }',
+			'.routeflux-add-actions { display:flex; flex-wrap:wrap; gap:10px; }',
 			'.routeflux-add-grid textarea { min-height:140px; width:100%; }',
 			'.routeflux-node-details { margin-top:12px; }',
 			'.routeflux-node-details summary { cursor:pointer; margin-bottom:10px; }'
@@ -269,7 +424,7 @@ return view.extend({
 
 		content.push(E('h2', {}, [ _('RouteFlux - Subscriptions') ]));
 		content.push(E('p', { 'class': 'cbi-section-descr' }, [
-			_('Manage imported subscriptions, add new providers, refresh existing profiles, and connect a specific node or the best node automatically.')
+			_('Manage imported subscriptions, add new providers, refresh existing profiles, remove one or all profiles, and connect a specific node or the best node automatically.')
 		]));
 
 		content.push(E('div', { 'class': 'cbi-section' }, [
@@ -297,10 +452,17 @@ return view.extend({
 					])
 				])
 			]),
-			E('button', {
-				'class': 'cbi-button cbi-button-apply',
-				'click': ui.createHandlerFn(this, 'handleAdd')
-			}, [ _('Add Subscription') ])
+			E('div', { 'class': 'routeflux-add-actions' }, [
+				E('button', {
+					'class': 'cbi-button cbi-button-apply',
+					'click': ui.createHandlerFn(this, 'handleAdd')
+				}, [ _('Add Subscription') ]),
+				E('button', {
+					'class': 'cbi-button cbi-button-negative',
+					'click': ui.createHandlerFn(this, 'handleRemoveAll'),
+					'disabled': subscriptions.length === 0 ? 'disabled' : null
+				}, [ _('Remove All') ])
+			])
 		]));
 
 		if (subscriptions.length === 0) {

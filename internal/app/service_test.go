@@ -663,6 +663,63 @@ func TestRemoveSubscriptionDisconnectsActiveSubscription(t *testing.T) {
 	}
 }
 
+func TestRemoveAllSubscriptionsDisconnectsActiveSubscription(t *testing.T) {
+	t.Parallel()
+
+	store := &memoryStore{
+		settings: domain.DefaultSettings(),
+		state:    domain.DefaultRuntimeState(),
+		subs: []domain.Subscription{
+			{ID: "sub-1", DisplayName: "One"},
+			{ID: "sub-2", DisplayName: "Two"},
+		},
+	}
+	store.settings.AutoMode = true
+	store.settings.Mode = domain.SelectionModeAuto
+	store.state.ActiveSubscriptionID = "sub-2"
+	store.state.ActiveNodeID = "node-2"
+	store.state.Mode = domain.SelectionModeAuto
+	store.state.Connected = true
+
+	runtimeBackend := &recordingBackend{}
+	firewall := &recordingFirewaller{}
+	service := NewService(Dependencies{
+		Store:      store,
+		Backend:    runtimeBackend,
+		Firewaller: firewall,
+	})
+
+	removed, err := service.RemoveAllSubscriptions(context.Background())
+	if err != nil {
+		t.Fatalf("remove all subscriptions: %v", err)
+	}
+
+	if removed != 2 {
+		t.Fatalf("expected to remove 2 subscriptions, got %d", removed)
+	}
+	if runtimeBackend.stopCalls != 1 {
+		t.Fatalf("expected backend stop once, got %d", runtimeBackend.stopCalls)
+	}
+	if firewall.disableCalls != 1 {
+		t.Fatalf("expected firewall disable once, got %d", firewall.disableCalls)
+	}
+	if len(store.subs) != 0 {
+		t.Fatalf("expected no subscriptions left, got %d", len(store.subs))
+	}
+	if store.state.ActiveSubscriptionID != "" || store.state.ActiveNodeID != "" {
+		t.Fatalf("expected active subscription to be cleared, got %+v", store.state)
+	}
+	if store.state.Connected {
+		t.Fatal("expected runtime state to be disconnected")
+	}
+	if store.settings.AutoMode {
+		t.Fatal("expected auto mode to be disabled")
+	}
+	if store.settings.Mode != domain.SelectionModeDisconnected {
+		t.Fatalf("expected settings mode disconnected, got %s", store.settings.Mode)
+	}
+}
+
 type memoryStore struct {
 	subs     []domain.Subscription
 	settings domain.Settings
