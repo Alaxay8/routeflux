@@ -2,10 +2,8 @@ package tui
 
 import (
 	"fmt"
-	"net"
 	"slices"
 	"strings"
-	"unicode"
 
 	"github.com/Alaxay8/routeflux/internal/domain"
 )
@@ -74,10 +72,10 @@ func providerKey(sub domain.Subscription) string {
 
 func providerTitle(sub domain.Subscription) string {
 	if value := strings.TrimSpace(sub.ProviderName); value != "" {
-		return humanizeProviderName(value)
+		return domain.HumanizeProviderName(value)
 	}
 	if value := strings.TrimSpace(sub.DisplayName); value != "" {
-		return humanizeProviderName(value)
+		return domain.HumanizeProviderName(value)
 	}
 	return "Imported VPN"
 }
@@ -106,55 +104,6 @@ func ensureProfileLabels(group *providerGroup) {
 		used[strings.ToLower(label)]++
 		group.Subscriptions[idx].Label = label
 	}
-}
-
-func humanizeProviderName(value string) string {
-	value = strings.TrimSpace(value)
-	if value == "" {
-		return "Imported VPN"
-	}
-
-	if isDomainLike(value) {
-		label := strings.ToLower(strings.Split(value, ".")[0])
-		for _, prefix := range []string{"www-", "www", "sub-", "sub", "api-", "api", "conn"} {
-			if strings.HasPrefix(label, prefix) && len(label) > len(prefix)+2 {
-				label = strings.TrimPrefix(label, prefix)
-				break
-			}
-		}
-		label = strings.NewReplacer("-", " ", "_", " ").Replace(label)
-		label = titleWords(label)
-		if !strings.Contains(strings.ToLower(label), "vpn") {
-			label += " VPN"
-		}
-		return strings.TrimSpace(label)
-	}
-
-	return value
-}
-
-func isDomainLike(value string) bool {
-	host := strings.TrimSpace(value)
-	if strings.Contains(host, "://") {
-		return false
-	}
-	if strings.Contains(host, " ") {
-		return false
-	}
-	return strings.Contains(host, ".") && net.ParseIP(host) == nil
-}
-
-func titleWords(value string) string {
-	parts := strings.Fields(strings.TrimSpace(value))
-	for idx, part := range parts {
-		runes := []rune(strings.ToLower(part))
-		if len(runes) == 0 {
-			continue
-		}
-		runes[0] = unicode.ToUpper(runes[0])
-		parts[idx] = string(runes)
-	}
-	return strings.Join(parts, " ")
 }
 
 func (m model) currentProvider() (providerGroup, bool) {

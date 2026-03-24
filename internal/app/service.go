@@ -4,11 +4,15 @@ import (
 	"context"
 	"crypto/sha1"
 	"encoding/hex"
+	"encoding/json"
 	"fmt"
+	"html"
 	"io"
 	"log/slog"
 	"net/http"
+	"net/http/cookiejar"
 	"net/url"
+	"regexp"
 	"slices"
 	"strings"
 	"time"
@@ -73,15 +77,16 @@ type Dependencies struct {
 const (
 	subscriptionFetchMaxAttempts = 3
 	subscriptionFetchBaseBackoff = 250 * time.Millisecond
+	subscriptionFetchUserAgent   = "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/136.0.0.0 Safari/537.36"
 )
+
+var subscriptionShareLinkPattern = regexp.MustCompile(`(?i)(vless|vmess|trojan|ss)://[^\s"'<>]+`)
+var htmlTitlePattern = regexp.MustCompile(`(?is)<title[^>]*>\s*(.*?)\s*</title>`)
+var htmlH1Pattern = regexp.MustCompile(`(?is)<h1[^>]*>\s*(.*?)\s*</h1>`)
+var htmlTagPattern = regexp.MustCompile(`(?s)<[^>]+>`)
 
 // NewService creates an application service with sensible defaults.
 func NewService(deps Dependencies) *Service {
-	client := deps.HTTPClient
-	if client == nil {
-		client = &http.Client{Timeout: 20 * time.Second}
-	}
-
 	checker := deps.Checker
 	if checker == nil {
 		checker = probe.TCPChecker{Timeout: 5 * time.Second}
@@ -96,7 +101,7 @@ func NewService(deps Dependencies) *Service {
 		store:      deps.Store,
 		backend:    deps.Backend,
 		firewall:   deps.Firewaller,
-		httpClient: client,
+		httpClient: ensureSubscriptionHTTPClient(deps.HTTPClient),
 		checker:    checker,
 		logger:     logger,
 	}
@@ -868,7 +873,8 @@ func (s *Service) fetchSubscriptionOnce(ctx context.Context, rawURL string) (str
 		return "", false, fmt.Errorf("build request: %w", err)
 	}
 	req.Header.Set("Accept", "text/plain, application/json;q=0.9, */*;q=0.8")
-	req.Header.Set("User-Agent", "Mozilla/5.0 (compatible; RouteFlux/1.0; +https://github.com/Alaxay8/routeflux)")
+	req.Header.Set("Accept-Language", "en-US,en;q=0.9")
+	req.Header.Set("User-Agent", subscriptionFetchUserAgent)
 
 	resp, err := s.httpClient.Do(req)
 	if err != nil {
@@ -881,6 +887,11 @@ func (s *Service) fetchSubscriptionOnce(ctx context.Context, rawURL string) (str
 	defer resp.Body.Close()
 
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		body, _ := io.ReadAll(io.LimitReader(resp.Body, 64<<10))
+		message := summarizeSubscriptionResponseBody(body)
+		if message != "" {
+			return "", isTransientSubscriptionStatus(resp.StatusCode), fmt.Errorf("fetch %s: unexpected status %s: %s", rawURL, resp.Status, message)
+		}
 		return "", isTransientSubscriptionStatus(resp.StatusCode), fmt.Errorf("fetch %s: unexpected status %s", rawURL, resp.Status)
 	}
 
@@ -889,7 +900,12 @@ func (s *Service) fetchSubscriptionOnce(ctx context.Context, rawURL string) (str
 		return "", false, fmt.Errorf("read response body: %w", err)
 	}
 
-	return string(body), false, nil
+	content, err := normalizeSubscriptionResponse(rawURL, body)
+	if err != nil {
+		return "", false, err
+	}
+
+	return content, false, nil
 }
 
 func isTransientSubscriptionStatus(code int) bool {
@@ -903,6 +919,181 @@ func isTransientSubscriptionStatus(code int) bool {
 	default:
 		return false
 	}
+}
+
+func ensureSubscriptionHTTPClient(base *http.Client) *http.Client {
+	var client *http.Client
+	if base == nil {
+		client = &http.Client{Timeout: 20 * time.Second}
+	} else {
+		copy := *base
+		client = &copy
+	}
+
+	if client.Jar == nil {
+		if jar, err := cookiejar.New(nil); err == nil {
+			client.Jar = jar
+		}
+	}
+
+	return client
+}
+
+func normalizeSubscriptionResponse(rawURL string, body []byte) (string, error) {
+	trimmed := strings.TrimSpace(string(body))
+	if trimmed == "" {
+		return "", fmt.Errorf("fetch %s: empty response body", rawURL)
+	}
+
+	if isHTMLLike(trimmed) {
+		if links := extractSubscriptionShareLinks(trimmed); len(links) > 0 {
+			return strings.Join(links, "\n"), nil
+		}
+
+		message := summarizeHTMLResponse(trimmed)
+		if message == "" {
+			message = "endpoint returned HTML page instead of subscription data"
+		}
+		return "", fmt.Errorf("fetch %s: %s", rawURL, message)
+	}
+
+	if message := summarizeJSONEndpointError(trimmed); message != "" {
+		return "", fmt.Errorf("fetch %s: %s", rawURL, message)
+	}
+
+	return string(body), nil
+}
+
+func summarizeSubscriptionResponseBody(body []byte) string {
+	trimmed := strings.TrimSpace(string(body))
+	if trimmed == "" {
+		return ""
+	}
+
+	if message := summarizeJSONEndpointError(trimmed); message != "" {
+		return message
+	}
+
+	if message := summarizeHTMLResponse(trimmed); message != "" {
+		return message
+	}
+
+	line := strings.TrimSpace(strings.SplitN(trimmed, "\n", 2)[0])
+	if len(line) > 160 {
+		line = line[:160] + "..."
+	}
+	return line
+}
+
+func summarizeJSONEndpointError(trimmed string) string {
+	if !json.Valid([]byte(trimmed)) || !strings.HasPrefix(trimmed, "{") {
+		return ""
+	}
+
+	var payload map[string]json.RawMessage
+	if err := json.Unmarshal([]byte(trimmed), &payload); err != nil {
+		return ""
+	}
+
+	for _, key := range []string{"outbounds", "protocol", "config", "link"} {
+		if _, ok := payload[key]; ok {
+			return ""
+		}
+	}
+
+	code := jsonStringField(payload, "error")
+	info := firstNonEmpty(
+		jsonStringField(payload, "info"),
+		jsonStringField(payload, "message"),
+		jsonStringField(payload, "detail"),
+	)
+
+	switch {
+	case code != "" && info != "":
+		return fmt.Sprintf("subscription endpoint error %s: %s", code, info)
+	case code != "":
+		return fmt.Sprintf("subscription endpoint error %s", code)
+	case info != "":
+		return fmt.Sprintf("subscription endpoint error: %s", info)
+	default:
+		return ""
+	}
+}
+
+func jsonStringField(payload map[string]json.RawMessage, key string) string {
+	value, ok := payload[key]
+	if !ok {
+		return ""
+	}
+
+	var text string
+	if err := json.Unmarshal(value, &text); err != nil {
+		return ""
+	}
+
+	return strings.TrimSpace(text)
+}
+
+func isHTMLLike(trimmed string) bool {
+	lower := strings.ToLower(trimmed)
+	return strings.HasPrefix(lower, "<!doctype html") ||
+		strings.HasPrefix(lower, "<html") ||
+		(strings.Contains(lower, "<body") && strings.Contains(lower, "</html>"))
+}
+
+func summarizeHTMLResponse(trimmed string) string {
+	if !isHTMLLike(trimmed) {
+		return ""
+	}
+
+	for _, pattern := range []*regexp.Regexp{htmlH1Pattern, htmlTitlePattern} {
+		matches := pattern.FindStringSubmatch(trimmed)
+		if len(matches) < 2 {
+			continue
+		}
+
+		text := cleanHTMLSnippet(matches[1])
+		if text != "" {
+			return text
+		}
+	}
+
+	text := cleanHTMLSnippet(trimmed)
+	if len(text) > 160 {
+		text = text[:160] + "..."
+	}
+
+	return text
+}
+
+func cleanHTMLSnippet(value string) string {
+	value = html.UnescapeString(value)
+	value = htmlTagPattern.ReplaceAllString(value, " ")
+	value = strings.Join(strings.Fields(value), " ")
+	return strings.TrimSpace(value)
+}
+
+func extractSubscriptionShareLinks(value string) []string {
+	matches := subscriptionShareLinkPattern.FindAllString(value, -1)
+	if len(matches) == 0 {
+		return nil
+	}
+
+	out := make([]string, 0, len(matches))
+	seen := make(map[string]struct{}, len(matches))
+	for _, match := range matches {
+		link := html.UnescapeString(strings.TrimSpace(match))
+		if link == "" {
+			continue
+		}
+		if _, ok := seen[link]; ok {
+			continue
+		}
+		seen[link] = struct{}{}
+		out = append(out, link)
+	}
+
+	return out
 }
 
 func (s *Service) subscriptionByID(id string) (domain.Subscription, error) {
@@ -1008,9 +1199,7 @@ func sourceOrURL(sourceType domain.SourceType, req AddSubscriptionRequest) strin
 
 func deriveProviderName(sourceType domain.SourceType, rawURL string) string {
 	if sourceType == domain.SourceTypeURL {
-		if parsed, err := url.Parse(rawURL); err == nil && parsed.Host != "" {
-			return parsed.Host
-		}
+		return domain.ProviderNameFromURL(rawURL)
 	}
 
 	return "Imported Subscription"
@@ -1032,6 +1221,16 @@ func errString(err error) string {
 		return ""
 	}
 	return err.Error()
+}
+
+func firstNonEmpty(values ...string) string {
+	for _, value := range values {
+		if strings.TrimSpace(value) != "" {
+			return strings.TrimSpace(value)
+		}
+	}
+
+	return ""
 }
 
 func parseStringList(raw string) []string {

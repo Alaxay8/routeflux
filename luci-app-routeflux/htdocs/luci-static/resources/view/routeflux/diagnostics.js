@@ -142,10 +142,126 @@ function inferRegionCodeFromAddress(value) {
 	return '';
 }
 
+function isDomainLike(value) {
+	var host = trim(value);
+
+	if (host === '' || host.indexOf('://') >= 0 || host.indexOf(' ') >= 0)
+		return false;
+
+	return host.indexOf('.') >= 0;
+}
+
+function titleWords(value) {
+	var parts = trim(value).toLowerCase().split(/\s+/).filter(Boolean);
+
+	for (var i = 0; i < parts.length; i++)
+		parts[i] = parts[i].charAt(0).toUpperCase() + parts[i].slice(1);
+
+	return parts.join(' ');
+}
+
+function providerDomainStem(value) {
+	var label = trim(value).toLowerCase().replace(/:\d+$/, '');
+	var prefixes = [ 'conn', 'vpn', 'www', 'sub', 'api' ];
+	var parts;
+
+	if (label === '')
+		return '';
+
+	parts = label.split('.').filter(Boolean);
+	if (parts.length >= 2)
+		label = parts[parts.length - 2];
+	else
+		label = parts[0] || label;
+
+	for (var i = 0; i < prefixes.length; i++) {
+		if (label.indexOf(prefixes[i]) === 0 && label.length > prefixes[i].length + 2) {
+			label = label.slice(prefixes[i].length);
+			break;
+		}
+	}
+
+	return trim(label);
+}
+
+function humanizeProviderName(value) {
+	var label = trim(value);
+
+	if (label === '')
+		return _('Imported VPN');
+
+	if (!isDomainLike(label))
+		return label;
+
+	label = providerDomainStem(label);
+	label = titleWords(label.replace(/[-_]+/g, ' '));
+	if (label.toLowerCase().indexOf('vpn') < 0)
+		label += ' VPN';
+
+	return trim(label);
+}
+
+function providerTitle(sub) {
+	return humanizeProviderName(firstNonEmpty([
+		sub && sub.provider_name,
+		sub && sub.display_name,
+		sub && sub.id
+	], _('Imported VPN')));
+}
+
+function buildSubscriptionPresentation(subscriptions) {
+	var groupsByKey = {};
+	var byId = {};
+
+	for (var i = 0; i < subscriptions.length; i++) {
+		var sub = subscriptions[i];
+		var title = providerTitle(sub);
+		var key = title.toLowerCase();
+		var group = groupsByKey[key];
+
+		if (!group) {
+			group = {
+				title: title,
+				count: 0
+			};
+			groupsByKey[key] = group;
+		}
+
+		group.count += 1;
+		byId[trim(sub.id)] = {
+			provider_title: title,
+			profile_label: _('Profile %d').format(group.count)
+		};
+	}
+
+	return byId;
+}
+
+function presentationForSubscription(sub, presentation) {
+	var id = trim(sub && sub.id);
+
+	if (id === '' || !presentation)
+		return null;
+
+	return presentation[id] || null;
+}
+
 function nodeDisplayName(node, fallback) {
+	var name = trim(node && node.name);
+	var remark = trim(node && node.remark);
+	var explicit = '';
+
+	if (name !== '' && !isPlaceholderNodeLabel(name))
+		explicit = name;
+	else if (remark !== '' && !isPlaceholderNodeLabel(remark))
+		explicit = remark;
+
+	if (explicit !== '' && !isDomainLike(explicit))
+		return explicit;
+
 	var code = firstNonEmpty([
-		inferRegionCodeFromText(node && node.name),
-		inferRegionCodeFromText(node && node.remark),
+		inferRegionCodeFromText(explicit),
+		inferRegionCodeFromAddress(explicit),
 		inferRegionCodeFromAddress(node && node.address)
 	], '');
 
@@ -155,16 +271,8 @@ function nodeDisplayName(node, fallback) {
 			return localizedRegion;
 	}
 
-	var name = trim(node && node.name);
-	var remark = trim(node && node.remark);
-
-	if (name !== '' && !isPlaceholderNodeLabel(name))
-		return name;
-
-	if (remark !== '' && !isPlaceholderNodeLabel(remark))
-		return remark;
-
 	return firstNonEmpty([
+		explicit,
 		node && node.address,
 		node && node.id
 	], fallback || '');
@@ -216,9 +324,14 @@ function fileDetails(file) {
 
 return view.extend({
 	load: function() {
-		return this.execJSON([ '--json', 'diagnostics' ]).catch(function(err) {
-			return { __error__: err.message || String(err) };
-		});
+		return Promise.all([
+			this.execJSON([ '--json', 'diagnostics' ]).catch(function(err) {
+				return { __error__: err.message || String(err) };
+			}),
+			this.execJSON([ '--json', 'list', 'subscriptions' ]).catch(function(err) {
+				return { __error__: err.message || String(err) };
+			})
+		]);
 	},
 
 	execJSON: function(argv) {
@@ -286,22 +399,30 @@ return view.extend({
 	},
 
 	render: function(data) {
-		var diagnostics = data || {};
+		var diagnostics = data[0] || {};
+		var subscriptions = Array.isArray(data[1]) ? data[1] : [];
+		var presentation = buildSubscriptionPresentation(subscriptions);
 		var status = diagnostics.status || {};
 		var state = status.state || {};
 		var runtime = diagnostics.runtime || {};
 		var files = diagnostics.files || {};
 		var activeSubscription = status.active_subscription || {};
 		var activeNode = status.active_node || {};
-		var activeProfile = firstNonEmpty([
-			activeSubscription.display_name,
-			activeSubscription.provider_name
-		], _('Not selected'));
+		var activeEntry = presentationForSubscription(activeSubscription, presentation);
+		var activeProvider = trim(activeSubscription.id) !== ''
+			? (activeEntry ? activeEntry.provider_title : providerTitle(activeSubscription))
+			: _('Not selected');
+		var activeProfile = trim(activeSubscription.id) !== ''
+			? (activeEntry ? activeEntry.profile_label : _('Profile 1'))
+			: _('Not selected');
 		var activeNodeName = nodeDisplayName(activeNode, _('Not selected'));
 		var content = [];
 
 		if (diagnostics.__error__)
 			ui.addNotification(null, notificationParagraph(_('Diagnostics error: %s').format(diagnostics.__error__)));
+
+		if (data[1] && data[1].__error__)
+			ui.addNotification(null, notificationParagraph(_('Subscriptions error: %s').format(data[1].__error__)));
 
 		content.push(E('style', { 'type': 'text/css' }, [
 			'.routeflux-overview-grid { display:grid; grid-template-columns:repeat(auto-fit, minmax(220px, 1fr)); gap:12px; margin-bottom:16px; }',
@@ -321,6 +442,7 @@ return view.extend({
 			this.renderCard(_('Effective Mode'), firstNonEmpty([ state.mode ], _('disconnected'))),
 			this.renderCard(_('Backend'), backendLabel(runtime, diagnostics.runtime_error)),
 			this.renderCard(_('Service State'), firstNonEmpty([ runtime.service_state ], _('unknown'))),
+			this.renderCard(_('Active Provider'), activeProvider),
 			this.renderCard(_('Active Profile'), activeProfile),
 			this.renderCard(_('Active Node'), activeNodeName),
 			this.renderCard(_('Last Success'), firstNonEmpty([ state.last_success_at ], _('Never'))),

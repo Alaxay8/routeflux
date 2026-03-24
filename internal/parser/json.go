@@ -43,6 +43,18 @@ type xrayServerSettings struct {
 	} `json:"servers"`
 }
 
+type xrayDirectEndpointSettings struct {
+	Address    string `json:"address"`
+	Port       int    `json:"port"`
+	ID         string `json:"id"`
+	UUID       string `json:"uuid"`
+	Password   string `json:"password"`
+	Method     string `json:"method"`
+	Encryption string `json:"encryption"`
+	Flow       string `json:"flow"`
+	Security   string `json:"security"`
+}
+
 type xrayStreamSettings struct {
 	Network     string `json:"network"`
 	Security    string `json:"security"`
@@ -64,6 +76,13 @@ type xrayStreamSettings struct {
 	GRPCSettings struct {
 		ServiceName string `json:"serviceName"`
 	} `json:"grpcSettings"`
+}
+
+type xrayJSONImportMetadata struct {
+	Remarks string `json:"remarks"`
+	Remark  string `json:"remark"`
+	Name    string `json:"name"`
+	PS      string `json:"ps"`
 }
 
 func tryParseJSONNodes(input, provider string) ([]domain.Node, bool, error) {
@@ -100,10 +119,14 @@ func parseJSONImport(raw json.RawMessage, provider string) ([]domain.Node, error
 		}
 
 		if outbounds, ok := object["outbounds"]; ok {
-			return parseOutboundList(outbounds, provider)
+			label, err := parseJSONImportLabel([]byte(trimmed))
+			if err != nil {
+				return nil, err
+			}
+			return parseOutboundList(outbounds, provider, label)
 		}
 		if protocol, ok := object["protocol"]; ok && len(protocol) > 0 {
-			node, err := parseJSONOutbound([]byte(trimmed), provider)
+			node, err := parseJSONOutbound([]byte(trimmed), provider, "")
 			if err != nil {
 				return nil, err
 			}
@@ -159,7 +182,7 @@ func parseJSONList(raw json.RawMessage, provider string) ([]domain.Node, error) 
 	return nodes, nil
 }
 
-func parseOutboundList(raw json.RawMessage, provider string) ([]domain.Node, error) {
+func parseOutboundList(raw json.RawMessage, provider, defaultLabel string) ([]domain.Node, error) {
 	var outbounds []json.RawMessage
 	if err := json.Unmarshal(raw, &outbounds); err != nil {
 		return nil, fmt.Errorf("decode json outbounds: %w", err)
@@ -167,7 +190,7 @@ func parseOutboundList(raw json.RawMessage, provider string) ([]domain.Node, err
 
 	nodes := make([]domain.Node, 0, len(outbounds))
 	for _, outbound := range outbounds {
-		node, err := parseJSONOutbound(outbound, provider)
+		node, err := parseJSONOutbound(outbound, provider, defaultLabel)
 		if err != nil {
 			if errors.Is(err, errUnsupportedJSONOutbound) {
 				continue
@@ -184,7 +207,16 @@ func parseOutboundList(raw json.RawMessage, provider string) ([]domain.Node, err
 	return nodes, nil
 }
 
-func parseJSONOutbound(raw json.RawMessage, provider string) (domain.Node, error) {
+func parseJSONImportLabel(raw json.RawMessage) (string, error) {
+	var metadata xrayJSONImportMetadata
+	if err := json.Unmarshal(raw, &metadata); err != nil {
+		return "", fmt.Errorf("decode json metadata: %w", err)
+	}
+
+	return firstNonEmpty(metadata.Remarks, metadata.Remark, metadata.Name, metadata.PS), nil
+}
+
+func parseJSONOutbound(raw json.RawMessage, provider, defaultLabel string) (domain.Node, error) {
 	var outbound xrayOutboundJSON
 	if err := json.Unmarshal(raw, &outbound); err != nil {
 		return domain.Node{}, fmt.Errorf("decode outbound: %w", err)
@@ -197,7 +229,7 @@ func parseJSONOutbound(raw json.RawMessage, provider string) (domain.Node, error
 		}
 	}
 
-	name := firstNonEmpty(outbound.Tag, outbound.Remark, outbound.Name)
+	name := firstNonEmpty(defaultLabel, outbound.Remark, outbound.Name, outbound.Tag)
 	extras := map[string]string{}
 	if outbound.Tag != "" {
 		extras["tag"] = outbound.Tag
@@ -208,21 +240,20 @@ func parseJSONOutbound(raw json.RawMessage, provider string) (domain.Node, error
 
 	switch strings.ToLower(outbound.Protocol) {
 	case "vless":
-		var settings xrayVNextSettings
-		if err := json.Unmarshal(outbound.Settings, &settings); err != nil {
+		address, port, user, err := parseJSONVNextEndpoint(outbound.Settings)
+		if err != nil {
 			return domain.Node{}, fmt.Errorf("decode vless settings: %w", err)
 		}
-		if len(settings.VNext) == 0 || len(settings.VNext[0].Users) == 0 {
+		if address == "" || port <= 0 || firstNonEmpty(user.ID, user.UUID) == "" {
 			return domain.Node{}, fmt.Errorf("invalid vless settings")
 		}
-		user := settings.VNext[0].Users[0]
 		node := domain.Node{
 			Name:        name,
 			Remark:      name,
 			Protocol:    domain.ProtocolVLESS,
-			Address:     settings.VNext[0].Address,
-			Port:        settings.VNext[0].Port,
-			UUID:        user.ID,
+			Address:     address,
+			Port:        port,
+			UUID:        firstNonEmpty(user.ID, user.UUID),
 			Encryption:  firstNonEmpty(user.Encryption, "none"),
 			Security:    stream.Security,
 			ServerName:  firstNonEmpty(stream.RealitySettings.ServerName, stream.TLSSettings.ServerName),
@@ -238,21 +269,20 @@ func parseJSONOutbound(raw json.RawMessage, provider string) (domain.Node, error
 		}
 		return normalizeNode(node, provider)
 	case "vmess":
-		var settings xrayVNextSettings
-		if err := json.Unmarshal(outbound.Settings, &settings); err != nil {
+		address, port, user, err := parseJSONVNextEndpoint(outbound.Settings)
+		if err != nil {
 			return domain.Node{}, fmt.Errorf("decode vmess settings: %w", err)
 		}
-		if len(settings.VNext) == 0 || len(settings.VNext[0].Users) == 0 {
+		if address == "" || port <= 0 || firstNonEmpty(user.ID, user.UUID) == "" {
 			return domain.Node{}, fmt.Errorf("invalid vmess settings")
 		}
-		user := settings.VNext[0].Users[0]
 		node := domain.Node{
 			Name:        name,
 			Remark:      name,
 			Protocol:    domain.ProtocolVMess,
-			Address:     settings.VNext[0].Address,
-			Port:        settings.VNext[0].Port,
-			UUID:        user.ID,
+			Address:     address,
+			Port:        port,
+			UUID:        firstNonEmpty(user.ID, user.UUID),
 			Encryption:  firstNonEmpty(user.Security, "auto"),
 			Security:    stream.Security,
 			ServerName:  firstNonEmpty(stream.RealitySettings.ServerName, stream.TLSSettings.ServerName),
@@ -267,14 +297,13 @@ func parseJSONOutbound(raw json.RawMessage, provider string) (domain.Node, error
 		}
 		return normalizeNode(node, provider)
 	case "trojan":
-		var settings xrayServerSettings
-		if err := json.Unmarshal(outbound.Settings, &settings); err != nil {
+		server, err := parseJSONTrojanServer(outbound.Settings)
+		if err != nil {
 			return domain.Node{}, fmt.Errorf("decode trojan settings: %w", err)
 		}
-		if len(settings.Servers) == 0 {
+		if server.Address == "" || server.Port <= 0 || server.Password == "" {
 			return domain.Node{}, fmt.Errorf("invalid trojan settings")
 		}
-		server := settings.Servers[0]
 		node := domain.Node{
 			Name:        name,
 			Remark:      name,
@@ -298,4 +327,48 @@ func parseJSONOutbound(raw json.RawMessage, provider string) (domain.Node, error
 	default:
 		return domain.Node{}, errUnsupportedJSONOutbound
 	}
+}
+
+func parseJSONVNextEndpoint(raw json.RawMessage) (string, int, xrayDirectEndpointSettings, error) {
+	var settings xrayVNextSettings
+	if err := json.Unmarshal(raw, &settings); err != nil {
+		return "", 0, xrayDirectEndpointSettings{}, err
+	}
+	if len(settings.VNext) > 0 && len(settings.VNext[0].Users) > 0 {
+		return settings.VNext[0].Address, settings.VNext[0].Port, xrayDirectEndpointSettings{
+			ID:         settings.VNext[0].Users[0].ID,
+			Encryption: settings.VNext[0].Users[0].Encryption,
+			Flow:       settings.VNext[0].Users[0].Flow,
+			Security:   settings.VNext[0].Users[0].Security,
+		}, nil
+	}
+
+	var direct xrayDirectEndpointSettings
+	if err := json.Unmarshal(raw, &direct); err != nil {
+		return "", 0, xrayDirectEndpointSettings{}, err
+	}
+
+	return direct.Address, direct.Port, direct, nil
+}
+
+func parseJSONTrojanServer(raw json.RawMessage) (xrayDirectEndpointSettings, error) {
+	var settings xrayServerSettings
+	if err := json.Unmarshal(raw, &settings); err != nil {
+		return xrayDirectEndpointSettings{}, err
+	}
+	if len(settings.Servers) > 0 {
+		return xrayDirectEndpointSettings{
+			Address:  settings.Servers[0].Address,
+			Port:     settings.Servers[0].Port,
+			Password: settings.Servers[0].Password,
+			Method:   settings.Servers[0].Method,
+		}, nil
+	}
+
+	var direct xrayDirectEndpointSettings
+	if err := json.Unmarshal(raw, &direct); err != nil {
+		return xrayDirectEndpointSettings{}, err
+	}
+
+	return direct, nil
 }

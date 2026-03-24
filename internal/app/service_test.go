@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 	"time"
 
@@ -120,6 +121,165 @@ func TestAddSubscriptionUsesCompatibleUserAgent(t *testing.T) {
 
 	if len(sub.Nodes) != 1 {
 		t.Fatalf("expected 1 node, got %d", len(sub.Nodes))
+	}
+}
+
+func TestAddSubscriptionRetriesWithCookieJar(t *testing.T) {
+	t.Parallel()
+
+	store := &memoryStore{
+		settings: domain.DefaultSettings(),
+		state:    domain.DefaultRuntimeState(),
+	}
+
+	attempts := 0
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		attempts++
+		if _, err := r.Cookie("routeflux-clearance"); err != nil {
+			http.SetCookie(w, &http.Cookie{
+				Name:  "routeflux-clearance",
+				Value: "ok",
+				Path:  "/",
+			})
+			http.Error(w, "temporary upstream error", http.StatusServiceUnavailable)
+			return
+		}
+
+		fmt.Fprint(w, "vless://11111111-1111-1111-1111-111111111111@node1.example.com:443?encryption=none&security=reality&sni=edge.example.com&fp=chrome&pbk=public-key-1&sid=ab12cd34&type=ws&path=%2Fproxy&host=cdn.example.com#Edge%20Reality")
+	}))
+	t.Cleanup(server.Close)
+
+	service := NewService(Dependencies{
+		Store:      store,
+		HTTPClient: server.Client(),
+	})
+
+	sub, err := service.AddSubscription(context.Background(), AddSubscriptionRequest{
+		URL:  server.URL,
+		Name: "Cookie Test",
+	})
+	if err != nil {
+		t.Fatalf("add subscription: %v", err)
+	}
+
+	if attempts != 2 {
+		t.Fatalf("expected 2 fetch attempts, got %d", attempts)
+	}
+	if len(sub.Nodes) != 1 {
+		t.Fatalf("expected 1 node, got %d", len(sub.Nodes))
+	}
+}
+
+func TestAddSubscriptionReturnsJSONEndpointError(t *testing.T) {
+	t.Parallel()
+
+	store := &memoryStore{
+		settings: domain.DefaultSettings(),
+		state:    domain.DefaultRuntimeState(),
+	}
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		fmt.Fprint(w, `{"error":"USER_NOT_FOUND","info":"User account does not exist."}`)
+	}))
+	t.Cleanup(server.Close)
+
+	service := NewService(Dependencies{
+		Store:      store,
+		HTTPClient: server.Client(),
+	})
+
+	_, err := service.AddSubscription(context.Background(), AddSubscriptionRequest{
+		URL: server.URL,
+	})
+	if err == nil {
+		t.Fatal("expected add subscription to fail")
+	}
+	if got := err.Error(); !strings.Contains(got, "USER_NOT_FOUND") || !strings.Contains(got, "User account does not exist.") {
+		t.Fatalf("unexpected error: %v", err)
+	}
+}
+
+func TestAddSubscriptionReturnsHTMLResponseError(t *testing.T) {
+	t.Parallel()
+
+	store := &memoryStore{
+		settings: domain.DefaultSettings(),
+		state:    domain.DefaultRuntimeState(),
+	}
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/html; charset=utf-8")
+		fmt.Fprint(w, "<html><body><h1>Login required</h1><p>Open the provider portal first.</p></body></html>")
+	}))
+	t.Cleanup(server.Close)
+
+	service := NewService(Dependencies{
+		Store:      store,
+		HTTPClient: server.Client(),
+	})
+
+	_, err := service.AddSubscription(context.Background(), AddSubscriptionRequest{
+		URL: server.URL,
+	})
+	if err == nil {
+		t.Fatal("expected add subscription to fail")
+	}
+	if got := err.Error(); !strings.Contains(got, "Login required") {
+		t.Fatalf("unexpected error: %v", err)
+	}
+}
+
+func TestAddSubscriptionAcceptsDirectVLESSJSONConfig(t *testing.T) {
+	t.Parallel()
+
+	store := &memoryStore{
+		settings: domain.DefaultSettings(),
+		state:    domain.DefaultRuntimeState(),
+	}
+
+	service := NewService(Dependencies{Store: store})
+
+	sub, err := service.AddSubscription(context.Background(), AddSubscriptionRequest{
+		Raw: `{
+		  "outbounds": [
+		    {
+		      "settings": {
+		        "encryption": "none",
+		        "flow": "xtls-rprx-vision",
+		        "port": 8443,
+		        "address": "hungary-edge.example",
+		        "id": "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa"
+		      },
+		      "protocol": "vless",
+		      "tag": "proxy",
+		      "streamSettings": {
+		        "realitySettings": {
+		          "shortId": "testshort01",
+		          "publicKey": "test-public-key",
+		          "serverName": "gateway.example",
+		          "fingerprint": "random"
+		        },
+		        "security": "reality",
+		        "network": "tcp"
+		      }
+		    }
+		  ],
+		  "remarks": "🇭🇺Венгрия"
+		}`,
+	})
+	if err != nil {
+		t.Fatalf("add subscription: %v", err)
+	}
+
+	if len(sub.Nodes) != 1 {
+		t.Fatalf("expected 1 node, got %d", len(sub.Nodes))
+	}
+	if sub.Nodes[0].Name != "🇭🇺Венгрия" {
+		t.Fatalf("unexpected node label: %+v", sub.Nodes[0])
+	}
+	if sub.Nodes[0].Address != "hungary-edge.example" || sub.Nodes[0].Port != 8443 {
+		t.Fatalf("unexpected node endpoint: %+v", sub.Nodes[0])
 	}
 }
 
@@ -615,7 +775,7 @@ func TestRefreshSubscriptionParsesJSONArrayOfConfigs(t *testing.T) {
 		          "network": "tcp",
 		          "security": "reality",
 		          "realitySettings": {
-		            "serverName": "rbc.ru",
+		            "serverName": "gateway-one.example",
 		            "publicKey": "public-key-one",
 		            "shortId": "short-one",
 		            "fingerprint": "random"

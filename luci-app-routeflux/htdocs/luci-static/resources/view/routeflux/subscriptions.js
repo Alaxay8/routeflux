@@ -138,10 +138,128 @@ function inferRegionCodeFromAddress(value) {
 	return '';
 }
 
+function isDomainLike(value) {
+	var host = trim(value);
+
+	if (host === '' || host.indexOf('://') >= 0 || host.indexOf(' ') >= 0)
+		return false;
+
+	return host.indexOf('.') >= 0;
+}
+
+function titleWords(value) {
+	var parts = trim(value).toLowerCase().split(/\s+/).filter(Boolean);
+
+	for (var i = 0; i < parts.length; i++)
+		parts[i] = parts[i].charAt(0).toUpperCase() + parts[i].slice(1);
+
+	return parts.join(' ');
+}
+
+function providerDomainStem(value) {
+	var label = trim(value).toLowerCase().replace(/:\d+$/, '');
+	var prefixes = [ 'conn', 'vpn', 'www', 'sub', 'api' ];
+	var parts;
+
+	if (label === '')
+		return '';
+
+	parts = label.split('.').filter(Boolean);
+	if (parts.length >= 2)
+		label = parts[parts.length - 2];
+	else
+		label = parts[0] || label;
+
+	for (var i = 0; i < prefixes.length; i++) {
+		if (label.indexOf(prefixes[i]) === 0 && label.length > prefixes[i].length + 2) {
+			label = label.slice(prefixes[i].length);
+			break;
+		}
+	}
+
+	return trim(label);
+}
+
+function humanizeProviderName(value) {
+	var label = trim(value);
+
+	if (label === '')
+		return _('Imported VPN');
+
+	if (!isDomainLike(label))
+		return label;
+
+	label = providerDomainStem(label);
+	label = titleWords(label.replace(/[-_]+/g, ' '));
+	if (label.toLowerCase().indexOf('vpn') < 0)
+		label += ' VPN';
+
+	return trim(label);
+}
+
+function providerTitle(sub) {
+	return humanizeProviderName(firstNonEmpty([
+		sub && sub.provider_name,
+		sub && sub.display_name,
+		sub && sub.id
+	], _('Imported VPN')));
+}
+
+function buildSubscriptionPresentation(subscriptions) {
+	var groups = [];
+	var groupsByKey = {};
+	var byId = {};
+
+	for (var i = 0; i < subscriptions.length; i++) {
+		var sub = subscriptions[i];
+		var title = providerTitle(sub);
+		var key = title.toLowerCase();
+		var group = groupsByKey[key];
+
+		if (!group) {
+			group = {
+				key: key,
+				title: title,
+				items: [],
+				total_nodes: 0
+			};
+			groupsByKey[key] = group;
+			groups.push(group);
+		}
+
+		var item = {
+			subscription: sub,
+			provider_title: title,
+			profile_label: _('Profile %d').format(group.items.length + 1)
+		};
+
+		group.items.push(item);
+		group.total_nodes += Array.isArray(sub.nodes) ? sub.nodes.length : 0;
+		byId[trim(sub.id)] = item;
+	}
+
+	return {
+		groups: groups,
+		by_id: byId
+	};
+}
+
 function nodeDisplayName(node, fallback) {
+	var name = trim(node && node.name);
+	var remark = trim(node && node.remark);
+	var explicit = '';
+
+	if (name !== '' && !isPlaceholderNodeLabel(name))
+		explicit = name;
+	else if (remark !== '' && !isPlaceholderNodeLabel(remark))
+		explicit = remark;
+
+	if (explicit !== '' && !isDomainLike(explicit))
+		return explicit;
+
 	var code = firstNonEmpty([
-		inferRegionCodeFromText(node && node.name),
-		inferRegionCodeFromText(node && node.remark),
+		inferRegionCodeFromText(explicit),
+		inferRegionCodeFromAddress(explicit),
 		inferRegionCodeFromAddress(node && node.address)
 	], '');
 
@@ -151,16 +269,8 @@ function nodeDisplayName(node, fallback) {
 			return localizedRegion;
 	}
 
-	var name = trim(node && node.name);
-	var remark = trim(node && node.remark);
-
-	if (name !== '' && !isPlaceholderNodeLabel(name))
-		return name;
-
-	if (remark !== '' && !isPlaceholderNodeLabel(remark))
-		return remark;
-
 	return firstNonEmpty([
+		explicit,
 		node && node.address,
 		node && node.id
 	], fallback || '');
@@ -337,17 +447,16 @@ return view.extend({
 		].concat(rows));
 	},
 
-	renderSubscriptionCard: function(subscription, activeSubscriptionId, activeNodeId) {
-		var displayName = firstNonEmpty([
-			subscription.display_name,
-			subscription.provider_name,
-			subscription.id
-		], subscription.id);
+	renderSubscriptionCard: function(entry, activeSubscriptionId, activeNodeId) {
+		var subscription = entry.subscription;
+		var displayName = entry.profile_label;
+		var providerName = entry.provider_title;
 		var isActive = subscription.id === activeSubscriptionId;
 		var nodesCount = Array.isArray(subscription.nodes) ? subscription.nodes.length : 0;
 		var metaRows = [
 			[ _('ID'), subscription.id ],
-			[ _('Provider'), firstNonEmpty([ subscription.provider_name ], '-') ],
+			[ _('Provider'), providerName ],
+			[ _('Profile'), displayName ],
 			[ _('Source Type'), firstNonEmpty([ subscription.source_type ], '-') ],
 			[ _('Updated'), firstNonEmpty([ subscription.last_updated_at ], _('Never')) ],
 			[ _('Status'), firstNonEmpty([ subscription.parser_status ], _('unknown')) ],
@@ -362,6 +471,8 @@ return view.extend({
 		var headerNodes = [
 			E('div', { 'class': 'routeflux-subscription-title' }, [ displayName ])
 		];
+
+		headerNodes.push(E('div', { 'class': 'routeflux-subscription-provider' }, [ providerName ]));
 
 		if (isActive)
 			headerNodes.push(E('div', { 'style': 'margin-top:6px' }, [ badge(_('Active'), 'notice') ]));
@@ -397,9 +508,25 @@ return view.extend({
 		]);
 	},
 
+	renderProviderGroup: function(group, activeSubscriptionId, activeNodeId) {
+		var description = _('%d profile(s), %d node(s)').format(group.items.length, group.total_nodes);
+		var content = [
+			E('div', { 'class': 'routeflux-provider-group-header' }, [
+				E('div', { 'class': 'routeflux-provider-group-title' }, [ group.title ]),
+				E('div', { 'class': 'routeflux-provider-group-meta' }, [ description ])
+			])
+		];
+
+		for (var i = 0; i < group.items.length; i++)
+			content.push(this.renderSubscriptionCard(group.items[i], activeSubscriptionId, activeNodeId));
+
+		return E('div', { 'class': 'routeflux-provider-group' }, content);
+	},
+
 	render: function(data) {
 		var status = data[0] || {};
 		var subscriptions = Array.isArray(data[1]) ? data[1] : [];
+		var presentation = buildSubscriptionPresentation(subscriptions);
 		var activeSubscriptionId = trim(status.active_subscription && status.active_subscription.id);
 		var activeNodeId = trim(status.active_node && status.active_node.id);
 		var content = [];
@@ -414,12 +541,17 @@ return view.extend({
 			'.routeflux-subscription-card { margin-bottom:16px; }',
 			'.routeflux-subscription-header { display:flex; flex-wrap:wrap; justify-content:space-between; gap:12px; margin-bottom:12px; }',
 			'.routeflux-subscription-title { font-size:18px; font-weight:600; }',
+			'.routeflux-subscription-provider { color:var(--text-color-secondary, #666); margin-top:4px; }',
 			'.routeflux-subscription-actions { display:flex; flex-wrap:wrap; gap:8px; align-items:flex-start; }',
 			'.routeflux-add-grid { display:grid; grid-template-columns:minmax(220px, 320px) 1fr; gap:12px; margin-bottom:12px; }',
 			'.routeflux-add-actions { display:flex; flex-wrap:wrap; gap:10px; }',
 			'.routeflux-add-grid textarea { min-height:140px; width:100%; }',
 			'.routeflux-node-details { margin-top:12px; }',
-			'.routeflux-node-details summary { cursor:pointer; margin-bottom:10px; }'
+			'.routeflux-node-details summary { cursor:pointer; margin-bottom:10px; }',
+			'.routeflux-provider-group { margin-bottom:22px; }',
+			'.routeflux-provider-group-header { display:flex; flex-wrap:wrap; justify-content:space-between; gap:12px; align-items:baseline; margin:12px 0 8px; }',
+			'.routeflux-provider-group-title { font-size:22px; font-weight:600; }',
+			'.routeflux-provider-group-meta { color:var(--text-color-secondary, #666); }'
 		]));
 
 		content.push(E('h2', {}, [ _('RouteFlux - Subscriptions') ]));
@@ -437,7 +569,7 @@ return view.extend({
 							'id': 'routeflux-add-name',
 							'class': 'cbi-input-text',
 							'type': 'text',
-							'placeholder': _('Example: Liberty VPN')
+							'placeholder': _('Optional provider name')
 						})
 					])
 				]),
@@ -472,8 +604,8 @@ return view.extend({
 			return E(content);
 		}
 
-		for (var i = 0; i < subscriptions.length; i++)
-			content.push(this.renderSubscriptionCard(subscriptions[i], activeSubscriptionId, activeNodeId));
+		for (var i = 0; i < presentation.groups.length; i++)
+			content.push(this.renderProviderGroup(presentation.groups[i], activeSubscriptionId, activeNodeId));
 
 		return E(content);
 	},
