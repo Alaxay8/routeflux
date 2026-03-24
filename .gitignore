@@ -1,0 +1,15 @@
+.DS_Store
+.routeflux/
+.env
+.env.*
+*.crt
+*.key
+*.p12
+*.pem
+*.pfx
+
+bin/
+dist/
+
+coverage.out
+coverage-*.out

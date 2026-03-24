@@ -40,18 +40,29 @@ func TestBuildProviderGroupsGroupsSubscriptionsByProvider(t *testing.T) {
 		t.Fatalf("expected 2 provider groups, got %d", len(groups))
 	}
 
-	liberty := groups[0]
-	if liberty.Title != "Atlas VPN" {
-		t.Fatalf("unexpected provider title: %q", liberty.Title)
+	atlas := groups[0]
+	if atlas.Title != "Atlas VPN" {
+		t.Fatalf("unexpected provider title: %q", atlas.Title)
 	}
-	if liberty.TotalNodes != 3 {
-		t.Fatalf("unexpected provider node count: %d", liberty.TotalNodes)
+	if atlas.TotalNodes != 1 {
+		t.Fatalf("unexpected Atlas node count: %d", atlas.TotalNodes)
 	}
-	if len(liberty.Subscriptions) != 2 {
-		t.Fatalf("expected 2 subscriptions for Atlas VPN, got %d", len(liberty.Subscriptions))
+	if len(atlas.Subscriptions) != 1 || atlas.Subscriptions[0].Label != "Main" {
+		t.Fatalf("unexpected Atlas subscriptions: %+v", atlas.Subscriptions)
 	}
-	if liberty.Subscriptions[0].Label != "Bypass" || liberty.Subscriptions[1].Label != "Classic VLESS" {
-		t.Fatalf("unexpected provider labels: %+v", liberty.Subscriptions)
+
+	orion := groups[1]
+	if orion.Title != "Orion VPN" {
+		t.Fatalf("unexpected provider title: %q", orion.Title)
+	}
+	if orion.TotalNodes != 3 {
+		t.Fatalf("unexpected Orion node count: %d", orion.TotalNodes)
+	}
+	if len(orion.Subscriptions) != 2 {
+		t.Fatalf("expected 2 subscriptions for Orion VPN, got %d", len(orion.Subscriptions))
+	}
+	if orion.Subscriptions[0].Label != "Bypass" || orion.Subscriptions[1].Label != "Classic VLESS" {
+		t.Fatalf("unexpected Orion labels: %+v", orion.Subscriptions)
 	}
 }
 

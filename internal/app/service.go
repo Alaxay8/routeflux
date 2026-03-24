@@ -11,7 +11,6 @@ import (
 	"log/slog"
 	"net/http"
 	"net/http/cookiejar"
-	"net/url"
 	"regexp"
 	"slices"
 	"strings"

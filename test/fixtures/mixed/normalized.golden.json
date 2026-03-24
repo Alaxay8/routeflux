@@ -56,7 +56,7 @@
     }
   },
   {
-    "id": "1a6bdab213c4",
+    "id": "5998136d8143",
     "subscription_id": "",
     "name": "Trojan Core",
     "provider_name": "Mixed Provider",
@@ -64,7 +64,7 @@
     "address": "trojan.example.com",
     "port": 443,
     "uuid": "",
-    "password": "super-secret",
+    "password": "demo-password",
     "encryption": "",
     "security": "tls",
     "server_name": "trojan.example.com",

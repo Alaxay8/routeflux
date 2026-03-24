@@ -1,5 +1,0 @@
-Package: routeflux
-Version: 0.1.0
-Architecture: all
-Maintainer: Alexey
-Description: RouteFlux OpenWrt subscription proxy manager with LuCI frontend files
