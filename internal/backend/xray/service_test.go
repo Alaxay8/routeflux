@@ -45,6 +45,22 @@ func TestInitdControllerStatusDetectsRunningProcess(t *testing.T) {
 	}
 }
 
+func TestRuntimeBackendStatusUsesConfigPath(t *testing.T) {
+	t.Parallel()
+
+	script := writeStatusScript(t, "#!/bin/sh\necho 'running'\nexit 0\n")
+	backend := NewRuntimeBackend("/etc/xray/config.json", InitdController{ScriptPath: script})
+
+	status, err := backend.Status(context.Background())
+	if err != nil {
+		t.Fatalf("backend status: %v", err)
+	}
+
+	if status.ConfigPath != "/etc/xray/config.json" {
+		t.Fatalf("unexpected config path: %q", status.ConfigPath)
+	}
+}
+
 func writeStatusScript(t *testing.T, body string) string {
 	t.Helper()
 

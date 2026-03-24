@@ -93,6 +93,8 @@ routeflux connect --subscription sub-1234567890 --node abcdef123456
 routeflux connect --auto --subscription sub-1234567890
 routeflux disconnect
 routeflux status
+routeflux diagnostics
+routeflux logs
 routeflux settings get
 routeflux settings set refresh-interval 1h
 routeflux settings set auto-mode true
@@ -290,7 +292,7 @@ Placeholder screenshots:
 - `dns.transport=dot` is defined in settings but is not applied by the current Xray backend.
 - Transparent router traffic interception is not fully automated in MVP.
 - Simple firewall routing currently supports destination IPv4 targets, source IPv4 hosts, CIDR pools, IPv4 ranges, and the `all` or `*` LAN-wide shortcut. QUIC blocking is host-mode only.
-- A LuCI MVP lives in `luci-app-routeflux` with `Overview`, `Subscriptions`, `Firewall`, `DNS`, and `Settings` pages. Diagnostics is still pending.
+- A LuCI MVP lives in `luci-app-routeflux` with `Overview`, `Subscriptions`, `Firewall`, `DNS`, `Settings`, `Diagnostics`, and `Logs` pages.
 
 ## License
 

@@ -484,6 +484,15 @@ func (s *Service) Status() (StatusSnapshot, error) {
 	return snapshot, nil
 }
 
+// RuntimeStatus returns the current backend runtime status, if a backend is configured.
+func (s *Service) RuntimeStatus(ctx context.Context) (backend.RuntimeStatus, error) {
+	if s.backend == nil {
+		return backend.RuntimeStatus{}, nil
+	}
+
+	return s.backend.Status(ctx)
+}
+
 // GetSettings returns current settings.
 func (s *Service) GetSettings() (domain.Settings, error) {
 	settings, err := s.store.LoadSettings()

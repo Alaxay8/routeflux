@@ -173,6 +173,56 @@ func TestGetSettingsSyncsConnectedRuntimeMode(t *testing.T) {
 	}
 }
 
+func TestRuntimeStatusReturnsBackendStatus(t *testing.T) {
+	t.Parallel()
+
+	store := &memoryStore{
+		settings: domain.DefaultSettings(),
+		state:    domain.DefaultRuntimeState(),
+	}
+	backend := &recordingBackend{
+		status: backend.RuntimeStatus{
+			Running:      true,
+			ConfigPath:   "/etc/xray/config.json",
+			ServiceState: "running",
+		},
+	}
+
+	service := NewService(Dependencies{
+		Store:   store,
+		Backend: backend,
+	})
+
+	status, err := service.RuntimeStatus(context.Background())
+	if err != nil {
+		t.Fatalf("runtime status: %v", err)
+	}
+
+	if !status.Running || status.ServiceState != "running" || status.ConfigPath != "/etc/xray/config.json" {
+		t.Fatalf("unexpected runtime status: %+v", status)
+	}
+}
+
+func TestRuntimeStatusWithoutBackendReturnsZeroValue(t *testing.T) {
+	t.Parallel()
+
+	store := &memoryStore{
+		settings: domain.DefaultSettings(),
+		state:    domain.DefaultRuntimeState(),
+	}
+
+	service := NewService(Dependencies{Store: store})
+
+	status, err := service.RuntimeStatus(context.Background())
+	if err != nil {
+		t.Fatalf("runtime status without backend: %v", err)
+	}
+
+	if status != (backend.RuntimeStatus{}) {
+		t.Fatalf("expected zero runtime status, got %+v", status)
+	}
+}
+
 func TestSetSettingAutoModeTrueSwitchesCurrentConnection(t *testing.T) {
 	t.Parallel()
 

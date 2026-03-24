@@ -90,7 +90,10 @@ func (b RuntimeBackend) Reload(ctx context.Context) error {
 // Status returns the service status if a controller is configured.
 func (b RuntimeBackend) Status(ctx context.Context) (backend.RuntimeStatus, error) {
 	if b.controller == nil {
-		return backend.RuntimeStatus{}, nil
+		return backend.RuntimeStatus{ConfigPath: b.writer.Path}, nil
 	}
-	return b.controller.Status(ctx)
+
+	status, err := b.controller.Status(ctx)
+	status.ConfigPath = b.writer.Path
+	return status, err
 }

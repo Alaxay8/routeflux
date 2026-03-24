@@ -51,5 +51,21 @@
 			"type": "view",
 			"path": "routeflux/settings"
 		}
+	},
+	"admin/services/routeflux/diagnostics": {
+		"title": "Diagnostics",
+		"order": 60,
+		"action": {
+			"type": "view",
+			"path": "routeflux/diagnostics"
+		}
+	},
+	"admin/services/routeflux/logs": {
+		"title": "Logs",
+		"order": 70,
+		"action": {
+			"type": "view",
+			"path": "routeflux/logs"
+		}
 	}
 }
