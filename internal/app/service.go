@@ -3,6 +3,7 @@ package app
 import (
 	"context"
 	"crypto/sha1"
+	"encoding/base64"
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
@@ -11,10 +12,12 @@ import (
 	"log/slog"
 	"net/http"
 	"net/http/cookiejar"
+	"net/url"
 	"regexp"
 	"slices"
 	"strings"
 	"time"
+	"unicode"
 
 	"github.com/Alaxay8/routeflux/internal/backend"
 	"github.com/Alaxay8/routeflux/internal/domain"
@@ -73,10 +76,20 @@ type Dependencies struct {
 	Logger     *slog.Logger
 }
 
+type subscriptionFetchMetadata struct {
+	ProviderName string
+}
+
+type subscriptionFetchResult struct {
+	Content  string
+	Metadata subscriptionFetchMetadata
+}
+
 const (
 	subscriptionFetchMaxAttempts = 3
 	subscriptionFetchBaseBackoff = 250 * time.Millisecond
 	subscriptionFetchUserAgent   = "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/136.0.0.0 Safari/537.36"
+	subscriptionProfileTitleKey  = "Profile-Title"
 )
 
 var subscriptionShareLinkPattern = regexp.MustCompile(`(?i)(vless|vmess|trojan|ss)://[^\s"'<>]+`)
@@ -112,7 +125,7 @@ func (s *Service) AddSubscription(ctx context.Context, req AddSubscriptionReques
 		return domain.Subscription{}, fmt.Errorf("store is not configured")
 	}
 
-	source, sourceType, err := s.resolveSubscriptionSource(ctx, req)
+	source, sourceType, metadata, err := s.resolveSubscriptionSource(ctx, req)
 	if err != nil {
 		return domain.Subscription{}, err
 	}
@@ -122,10 +135,7 @@ func (s *Service) AddSubscription(ctx context.Context, req AddSubscriptionReques
 		return domain.Subscription{}, fmt.Errorf("load settings: %w", err)
 	}
 
-	providerName := strings.TrimSpace(req.Name)
-	if providerName == "" {
-		providerName = deriveProviderName(sourceType, req.URL)
-	}
+	providerName, providerNameSource := resolveProviderName(req.Name, sourceType, req.URL, metadata)
 
 	nodes, err := parser.ParseNodes(source, providerName)
 	if err != nil {
@@ -140,15 +150,16 @@ func (s *Service) AddSubscription(ctx context.Context, req AddSubscriptionReques
 	now := time.Now().UTC()
 	storedSource := sourceOrURL(sourceType, req)
 	sub := domain.Subscription{
-		ID:              stableSubscriptionID(sourceType, storedSource),
-		SourceType:      sourceType,
-		Source:          storedSource,
-		ProviderName:    providerName,
-		DisplayName:     providerName,
-		LastUpdatedAt:   now,
-		RefreshInterval: settings.RefreshInterval,
-		ParserStatus:    "ok",
-		Nodes:           nodes,
+		ID:                 stableSubscriptionID(sourceType, storedSource),
+		SourceType:         sourceType,
+		Source:             storedSource,
+		ProviderName:       providerName,
+		ProviderNameSource: providerNameSource,
+		DisplayName:        providerName,
+		LastUpdatedAt:      now,
+		RefreshInterval:    settings.RefreshInterval,
+		ParserStatus:       "ok",
+		Nodes:              nodes,
 	}
 
 	for idx := range sub.Nodes {
@@ -281,6 +292,7 @@ func (s *Service) RenameSubscription(id, name string) error {
 		if subscriptions[idx].ID == id {
 			subscriptions[idx].DisplayName = name
 			subscriptions[idx].ProviderName = name
+			subscriptions[idx].ProviderNameSource = domain.ProviderNameSourceManual
 			return s.store.SaveSubscriptions(subscriptions)
 		}
 	}
@@ -317,8 +329,9 @@ func (s *Service) RefreshSubscription(ctx context.Context, subscriptionID string
 
 	sub := subscriptions[index]
 	content := sub.Source
+	metadata := subscriptionFetchMetadata{}
 	if sub.SourceType == domain.SourceTypeURL {
-		content, err = s.fetchSubscription(ctx, sub.Source)
+		result, err := s.fetchSubscription(ctx, sub.Source)
 		if err != nil {
 			sub.LastError = err.Error()
 			sub.ParserStatus = "error"
@@ -326,9 +339,12 @@ func (s *Service) RefreshSubscription(ctx context.Context, subscriptionID string
 			_ = s.store.SaveSubscriptions(subscriptions)
 			return domain.Subscription{}, fmt.Errorf("fetch subscription: %w", err)
 		}
+		content = result.Content
+		metadata = result.Metadata
 	}
 
-	nodes, err := parser.ParseNodes(content, sub.ProviderName)
+	providerName, displayName, providerNameSource := refreshedProviderIdentity(sub, metadata)
+	nodes, err := parser.ParseNodes(content, providerName)
 	if err != nil {
 		sub.LastError = err.Error()
 		sub.ParserStatus = "error"
@@ -342,6 +358,9 @@ func (s *Service) RefreshSubscription(ctx context.Context, subscriptionID string
 	}
 
 	sub.Nodes = nodes
+	sub.ProviderName = providerName
+	sub.DisplayName = displayName
+	sub.ProviderNameSource = providerNameSource
 	sub.LastError = ""
 	sub.ParserStatus = "ok"
 	sub.LastUpdatedAt = time.Now().UTC()
@@ -824,28 +843,28 @@ func (s *Service) ApplyDefaultDNS(ctx context.Context) (domain.Settings, error) 
 	return settings, nil
 }
 
-func (s *Service) resolveSubscriptionSource(ctx context.Context, req AddSubscriptionRequest) (string, domain.SourceType, error) {
+func (s *Service) resolveSubscriptionSource(ctx context.Context, req AddSubscriptionRequest) (string, domain.SourceType, subscriptionFetchMetadata, error) {
 	switch {
 	case strings.TrimSpace(req.URL) != "":
-		content, err := s.fetchSubscription(ctx, req.URL)
+		result, err := s.fetchSubscription(ctx, req.URL)
 		if err != nil {
-			return "", "", fmt.Errorf("fetch subscription: %w", err)
+			return "", "", subscriptionFetchMetadata{}, fmt.Errorf("fetch subscription: %w", err)
 		}
-		return content, domain.SourceTypeURL, nil
+		return result.Content, domain.SourceTypeURL, result.Metadata, nil
 	case strings.TrimSpace(req.Raw) != "":
-		return req.Raw, domain.SourceTypeRaw, nil
+		return req.Raw, domain.SourceTypeRaw, subscriptionFetchMetadata{}, nil
 	default:
-		return "", "", fmt.Errorf("either url or raw payload is required")
+		return "", "", subscriptionFetchMetadata{}, fmt.Errorf("either url or raw payload is required")
 	}
 }
 
-func (s *Service) fetchSubscription(ctx context.Context, rawURL string) (string, error) {
+func (s *Service) fetchSubscription(ctx context.Context, rawURL string) (subscriptionFetchResult, error) {
 	var lastErr error
 
 	for attempt := 1; attempt <= subscriptionFetchMaxAttempts; attempt++ {
-		body, retry, err := s.fetchSubscriptionOnce(ctx, rawURL)
+		result, retry, err := s.fetchSubscriptionOnce(ctx, rawURL)
 		if err == nil {
-			return body, nil
+			return result, nil
 		}
 
 		lastErr = err
@@ -858,18 +877,18 @@ func (s *Service) fetchSubscription(ctx context.Context, rawURL string) (string,
 		select {
 		case <-ctx.Done():
 			timer.Stop()
-			return "", fmt.Errorf("fetch %s: %w", rawURL, ctx.Err())
+			return subscriptionFetchResult{}, fmt.Errorf("fetch %s: %w", rawURL, ctx.Err())
 		case <-timer.C:
 		}
 	}
 
-	return "", lastErr
+	return subscriptionFetchResult{}, lastErr
 }
 
-func (s *Service) fetchSubscriptionOnce(ctx context.Context, rawURL string) (string, bool, error) {
+func (s *Service) fetchSubscriptionOnce(ctx context.Context, rawURL string) (subscriptionFetchResult, bool, error) {
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, rawURL, nil)
 	if err != nil {
-		return "", false, fmt.Errorf("build request: %w", err)
+		return subscriptionFetchResult{}, false, fmt.Errorf("build request: %w", err)
 	}
 	req.Header.Set("Accept", "text/plain, application/json;q=0.9, */*;q=0.8")
 	req.Header.Set("Accept-Language", "en-US,en;q=0.9")
@@ -878,10 +897,10 @@ func (s *Service) fetchSubscriptionOnce(ctx context.Context, rawURL string) (str
 	resp, err := s.httpClient.Do(req)
 	if err != nil {
 		if ctx.Err() != nil {
-			return "", false, fmt.Errorf("fetch %s: %w", rawURL, ctx.Err())
+			return subscriptionFetchResult{}, false, fmt.Errorf("fetch %s: %w", rawURL, ctx.Err())
 		}
 
-		return "", true, fmt.Errorf("fetch %s: %w", rawURL, err)
+		return subscriptionFetchResult{}, true, fmt.Errorf("fetch %s: %w", rawURL, err)
 	}
 	defer resp.Body.Close()
 
@@ -889,22 +908,27 @@ func (s *Service) fetchSubscriptionOnce(ctx context.Context, rawURL string) (str
 		body, _ := io.ReadAll(io.LimitReader(resp.Body, 64<<10))
 		message := summarizeSubscriptionResponseBody(body)
 		if message != "" {
-			return "", isTransientSubscriptionStatus(resp.StatusCode), fmt.Errorf("fetch %s: unexpected status %s: %s", rawURL, resp.Status, message)
+			return subscriptionFetchResult{}, isTransientSubscriptionStatus(resp.StatusCode), fmt.Errorf("fetch %s: unexpected status %s: %s", rawURL, resp.Status, message)
 		}
-		return "", isTransientSubscriptionStatus(resp.StatusCode), fmt.Errorf("fetch %s: unexpected status %s", rawURL, resp.Status)
+		return subscriptionFetchResult{}, isTransientSubscriptionStatus(resp.StatusCode), fmt.Errorf("fetch %s: unexpected status %s", rawURL, resp.Status)
 	}
 
 	body, err := io.ReadAll(io.LimitReader(resp.Body, 8<<20))
 	if err != nil {
-		return "", false, fmt.Errorf("read response body: %w", err)
+		return subscriptionFetchResult{}, false, fmt.Errorf("read response body: %w", err)
 	}
 
 	content, err := normalizeSubscriptionResponse(rawURL, body)
 	if err != nil {
-		return "", false, err
+		return subscriptionFetchResult{}, false, err
 	}
 
-	return content, false, nil
+	return subscriptionFetchResult{
+		Content: content,
+		Metadata: subscriptionFetchMetadata{
+			ProviderName: decodeProfileTitle(resp.Header.Get(subscriptionProfileTitleKey)),
+		},
+	}, false, nil
 }
 
 func isTransientSubscriptionStatus(code int) bool {
@@ -1196,12 +1220,201 @@ func sourceOrURL(sourceType domain.SourceType, req AddSubscriptionRequest) strin
 	return req.Raw
 }
 
+func resolveProviderName(reqName string, sourceType domain.SourceType, rawURL string, metadata subscriptionFetchMetadata) (string, domain.ProviderNameSource) {
+	if name := strings.TrimSpace(reqName); name != "" {
+		return name, domain.ProviderNameSourceManual
+	}
+	if name := strings.TrimSpace(metadata.ProviderName); name != "" {
+		return name, domain.ProviderNameSourceHeader
+	}
+	if sourceType == domain.SourceTypeURL {
+		return deriveProviderName(sourceType, rawURL), domain.ProviderNameSourceURL
+	}
+	return "Imported Subscription", domain.ProviderNameSourceDefault
+}
+
 func deriveProviderName(sourceType domain.SourceType, rawURL string) string {
 	if sourceType == domain.SourceTypeURL {
 		return domain.ProviderNameFromURL(rawURL)
 	}
 
 	return "Imported Subscription"
+}
+
+func refreshedProviderIdentity(sub domain.Subscription, metadata subscriptionFetchMetadata) (string, string, domain.ProviderNameSource) {
+	currentName := firstNonEmpty(sub.DisplayName, sub.ProviderName)
+	if name := strings.TrimSpace(metadata.ProviderName); name != "" && canUpgradeLegacyProviderName(sub, currentName) {
+		return name, name, domain.ProviderNameSourceHeader
+	}
+
+	source := effectiveProviderNameSource(sub)
+	if source == domain.ProviderNameSourceManual {
+		return currentName, currentName, source
+	}
+	if name := strings.TrimSpace(metadata.ProviderName); name != "" {
+		return name, name, domain.ProviderNameSourceHeader
+	}
+	if currentName != "" {
+		return currentName, currentName, source
+	}
+	name, resolvedSource := resolveProviderName("", sub.SourceType, sub.Source, metadata)
+	return name, name, resolvedSource
+}
+
+func effectiveProviderNameSource(sub domain.Subscription) domain.ProviderNameSource {
+	if sub.ProviderNameSource != "" {
+		return sub.ProviderNameSource
+	}
+
+	providerName := strings.TrimSpace(sub.ProviderName)
+	displayName := strings.TrimSpace(sub.DisplayName)
+	switch {
+	case providerName == "" && displayName == "":
+		return domain.ProviderNameSourceDefault
+	case providerName == "":
+		providerName = displayName
+	case displayName == "":
+		displayName = providerName
+	}
+
+	if providerName != displayName {
+		return domain.ProviderNameSourceManual
+	}
+
+	derivedName := deriveProviderName(sub.SourceType, sub.Source)
+	switch {
+	case sub.SourceType == domain.SourceTypeURL && providerName == derivedName:
+		return domain.ProviderNameSourceURL
+	case providerName == "Imported Subscription":
+		return domain.ProviderNameSourceDefault
+	default:
+		return domain.ProviderNameSourceManual
+	}
+}
+
+func canUpgradeLegacyProviderName(sub domain.Subscription, currentName string) bool {
+	if strings.TrimSpace(currentName) == "" {
+		return true
+	}
+	if sub.ProviderNameSource != "" {
+		return false
+	}
+
+	normalizedCurrent := normalizeProviderNameToken(currentName)
+	for _, candidate := range legacyAutoProviderNameCandidates(sub) {
+		if normalizeProviderNameToken(candidate) == normalizedCurrent {
+			return true
+		}
+	}
+
+	return false
+}
+
+func legacyAutoProviderNameCandidates(sub domain.Subscription) []string {
+	candidates := make([]string, 0, 4)
+	push := func(value string) {
+		value = strings.TrimSpace(value)
+		if value == "" {
+			return
+		}
+		for _, existing := range candidates {
+			if strings.EqualFold(existing, value) {
+				return
+			}
+		}
+		candidates = append(candidates, value)
+	}
+
+	push(deriveProviderName(sub.SourceType, sub.Source))
+	if sub.SourceType != domain.SourceTypeURL {
+		push("Imported Subscription")
+		return candidates
+	}
+
+	host := subscriptionURLHost(sub.Source)
+	push(host)
+	if host == "" {
+		return candidates
+	}
+
+	parts := strings.Split(strings.ToLower(host), ".")
+	if len(parts) > 0 && parts[0] != "" {
+		push(humanizeLegacyHostLabel(parts[0]))
+	}
+
+	return candidates
+}
+
+func subscriptionURLHost(rawURL string) string {
+	rawURL = strings.TrimSpace(rawURL)
+	if rawURL == "" {
+		return ""
+	}
+	parsed, err := url.Parse(rawURL)
+	if err != nil {
+		return ""
+	}
+	return strings.TrimSpace(parsed.Hostname())
+}
+
+func humanizeLegacyHostLabel(label string) string {
+	label = strings.TrimSpace(label)
+	if label == "" {
+		return ""
+	}
+	label = strings.NewReplacer("-", " ", "_", " ").Replace(label)
+	parts := strings.Fields(label)
+	for idx, part := range parts {
+		runes := []rune(strings.ToLower(part))
+		if len(runes) == 0 {
+			continue
+		}
+		runes[0] = unicode.ToUpper(runes[0])
+		parts[idx] = string(runes)
+	}
+	result := strings.Join(parts, " ")
+	if result == "" {
+		return ""
+	}
+	if !strings.Contains(strings.ToLower(result), "vpn") {
+		result += " VPN"
+	}
+	return result
+}
+
+func normalizeProviderNameToken(value string) string {
+	value = strings.TrimSpace(strings.ToLower(value))
+	value = strings.ReplaceAll(value, "_", " ")
+	value = strings.Join(strings.Fields(value), " ")
+	return value
+}
+
+func decodeProfileTitle(value string) string {
+	value = strings.TrimSpace(value)
+	if value == "" {
+		return ""
+	}
+
+	if !strings.HasPrefix(strings.ToLower(value), "base64:") {
+		return value
+	}
+
+	encoded := strings.TrimSpace(value[len("base64:"):])
+	if encoded == "" {
+		return ""
+	}
+
+	for _, encoding := range []*base64.Encoding{base64.StdEncoding, base64.RawStdEncoding} {
+		decoded, err := encoding.DecodeString(encoded)
+		if err != nil {
+			continue
+		}
+		if title := strings.TrimSpace(string(decoded)); title != "" {
+			return title
+		}
+	}
+
+	return ""
 }
 
 func upsertSubscription(subscriptions []domain.Subscription, next domain.Subscription) []domain.Subscription {
