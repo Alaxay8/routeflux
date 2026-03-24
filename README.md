@@ -51,7 +51,29 @@ If your router does not provide SFTP support, stream the file over SSH:
 ssh root@router 'cat > /tmp/routeflux.new && chmod 0755 /tmp/routeflux.new && mv /tmp/routeflux.new /usr/bin/routeflux' < ./bin/openwrt/routeflux
 ```
 
-5. Install Xray Core later when you want to use `connect`, `disconnect`, or generated runtime config. Ensure the service script exists at `/etc/init.d/xray`, or override it with `ROUTEFLUX_XRAY_SERVICE`.
+5. Optional: install the LuCI frontend files when you want the web interface.
+
+Build a deploy bundle:
+
+```bash
+make package-openwrt
+```
+
+Copy it to the router and extract it at `/`:
+
+```bash
+scp -O ./dist/routeflux_0.1.0_all.tar.gz root@router:/tmp/
+ssh root@router 'tar -xzf /tmp/routeflux_0.1.0_all.tar.gz -C / && rm -f /tmp/luci-indexcache && rm -rf /tmp/luci-modulecache && /etc/init.d/rpcd reload && /etc/init.d/uhttpd reload'
+```
+
+This installs:
+
+- `/usr/bin/routeflux`
+- `/usr/share/luci/menu.d/luci-app-routeflux.json`
+- `/usr/share/rpcd/acl.d/luci-app-routeflux.json`
+- `/www/luci-static/resources/view/routeflux/*.js`
+
+6. Install Xray Core later when you want to use `connect`, `disconnect`, or generated runtime config. Ensure the service script exists at `/etc/init.d/xray`, or override it with `ROUTEFLUX_XRAY_SERVICE`.
 
 ## Usage
 
@@ -268,7 +290,7 @@ Placeholder screenshots:
 - `dns.transport=dot` is defined in settings but is not applied by the current Xray backend.
 - Transparent router traffic interception is not fully automated in MVP.
 - Simple firewall routing currently supports destination IPv4 targets, source IPv4 hosts, CIDR pools, IPv4 ranges, and the `all` or `*` LAN-wide shortcut. QUIC blocking is host-mode only.
-- A LuCI MVP lives in `luci-app-routeflux` with `Overview` and `Subscriptions` pages. The DNS, firewall, and diagnostics pages are still pending.
+- A LuCI MVP lives in `luci-app-routeflux` with `Overview`, `Subscriptions`, `Firewall`, `DNS`, and `Settings` pages. Diagnostics is still pending.
 
 ## License
 

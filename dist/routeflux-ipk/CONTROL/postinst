@@ -1,0 +1,9 @@
+#!/bin/sh
+set -eu
+
+if [ -z "${IPKG_INSTROOT:-}" ]; then
+	rm -f /tmp/luci-indexcache
+	rm -rf /tmp/luci-modulecache
+	/etc/init.d/rpcd reload >/dev/null 2>&1 || true
+	/etc/init.d/uhttpd reload >/dev/null 2>&1 || true
+fi

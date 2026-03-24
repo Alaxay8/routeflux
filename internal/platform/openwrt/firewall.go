@@ -66,7 +66,7 @@ func (m FirewallManager) Apply(ctx context.Context, settings domain.FirewallSett
 // Disable removes the transient RouteFlux nftables table.
 func (m FirewallManager) Disable(ctx context.Context) error {
 	err := m.run(ctx, "delete", "table", "inet", "routeflux")
-	if err != nil && !strings.Contains(err.Error(), "No such file or directory") {
+	if err != nil && !strings.Contains(strings.ToLower(err.Error()), "no such file or directory") {
 		return err
 	}
 	_ = os.Remove(m.RulesPath)

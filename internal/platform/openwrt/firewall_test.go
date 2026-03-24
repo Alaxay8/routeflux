@@ -1,6 +1,9 @@
 package openwrt
 
 import (
+	"context"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -126,5 +129,27 @@ func TestBuildNFTablesRulesForAllSourceHosts(t *testing.T) {
 		if !strings.Contains(rules, want) {
 			t.Fatalf("rules missing %q\n%s", want, rules)
 		}
+	}
+}
+
+func TestFirewallDisableIgnoresMissingNFTBinary(t *testing.T) {
+	t.Parallel()
+
+	rulesPath := filepath.Join(t.TempDir(), "routeflux-firewall.nft")
+	if err := os.WriteFile(rulesPath, []byte("table inet routeflux {}"), 0o644); err != nil {
+		t.Fatalf("write rules file: %v", err)
+	}
+
+	manager := FirewallManager{
+		NFTPath:   filepath.Join(t.TempDir(), "missing-nft"),
+		RulesPath: rulesPath,
+	}
+
+	if err := manager.Disable(context.Background()); err != nil {
+		t.Fatalf("disable firewall: %v", err)
+	}
+
+	if _, err := os.Stat(rulesPath); !os.IsNotExist(err) {
+		t.Fatalf("expected rules file to be removed, stat err=%v", err)
 	}
 }

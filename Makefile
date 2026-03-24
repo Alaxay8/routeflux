@@ -1,7 +1,7 @@
 APP_NAME := routeflux
 BUILD_DIR := bin
 
-.PHONY: build test test-verbose coverage lint build-openwrt fmt
+.PHONY: build test test-verbose coverage lint build-openwrt package-openwrt fmt
 
 build:
 	go build -o $(BUILD_DIR)/$(APP_NAME) ./cmd/routeflux
@@ -30,3 +30,6 @@ fmt:
 
 build-openwrt:
 	./scripts/build-openwrt.sh
+
+package-openwrt: build-openwrt
+	./scripts/package-openwrt.sh
