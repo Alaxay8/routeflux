@@ -78,3 +78,53 @@ func TestConnectManualDisablesFirewallWhenBackendIsNotRunning(t *testing.T) {
 		t.Fatalf("unexpected last failure reason: %q", store.state.LastFailureReason)
 	}
 }
+
+func TestDisconnectDisablesFirewall(t *testing.T) {
+	t.Parallel()
+
+	store := &memoryStore{
+		settings: domain.DefaultSettings(),
+		state: domain.RuntimeState{
+			ActiveSubscriptionID: "sub-1",
+			ActiveNodeID:         "node-1",
+			Mode:                 domain.SelectionModeManual,
+			Connected:            true,
+		},
+	}
+	store.settings.AutoMode = true
+	store.settings.Mode = domain.SelectionModeAuto
+
+	runtimeBackend := &recordingBackend{}
+	firewall := &recordingFirewaller{}
+	service := NewService(Dependencies{
+		Store:      store,
+		Backend:    runtimeBackend,
+		Firewaller: firewall,
+	})
+
+	if err := service.Disconnect(context.Background()); err != nil {
+		t.Fatalf("disconnect: %v", err)
+	}
+
+	if runtimeBackend.stopCalls != 1 {
+		t.Fatalf("expected backend stop once, got %d", runtimeBackend.stopCalls)
+	}
+	if firewall.disableCalls != 1 {
+		t.Fatalf("expected firewall disable once, got %d", firewall.disableCalls)
+	}
+	if store.state.Connected {
+		t.Fatal("expected runtime state to be disconnected")
+	}
+	if store.state.ActiveSubscriptionID != "" || store.state.ActiveNodeID != "" {
+		t.Fatalf("expected active selection to be cleared, got %+v", store.state)
+	}
+	if store.state.Mode != domain.SelectionModeDisconnected {
+		t.Fatalf("expected disconnected mode, got %s", store.state.Mode)
+	}
+	if store.settings.AutoMode {
+		t.Fatal("expected auto mode to be disabled in settings")
+	}
+	if store.settings.Mode != domain.SelectionModeDisconnected {
+		t.Fatalf("expected settings mode disconnected, got %s", store.settings.Mode)
+	}
+}

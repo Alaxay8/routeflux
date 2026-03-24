@@ -499,10 +499,8 @@ func (s *Service) ConnectAuto(ctx context.Context, subscriptionID string) (domai
 
 // Disconnect tears down the current runtime selection.
 func (s *Service) Disconnect(ctx context.Context) error {
-	if s.backend != nil {
-		if err := s.backend.Stop(ctx); err != nil {
-			return fmt.Errorf("stop backend: %w", err)
-		}
+	if err := s.disconnectRuntime(ctx); err != nil {
+		return err
 	}
 
 	state, err := s.store.LoadState()
