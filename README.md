@@ -29,7 +29,7 @@ The current production claim is the CLI and runtime path. The TUI and LuCI front
 Install the current beta release from your computer:
 
 ```bash
-ssh root@router "wget -O /tmp/routeflux-install.sh https://github.com/Alaxay8/routeflux/releases/download/v0.1.3-beta.7/install.sh && sh /tmp/routeflux-install.sh"
+ssh root@router "wget -O /tmp/routeflux-install.sh https://github.com/Alaxay8/routeflux/releases/download/v0.1.3-beta.8/install.sh && sh /tmp/routeflux-install.sh"
 ```
 
 GitHub does not serve prerelease assets from `releases/latest/download`. While RouteFlux is still published as a beta prerelease, use a tag-pinned release URL.
@@ -52,7 +52,7 @@ See [Installation](#installation) and [Usage](#usage).
 1. Fastest path: use the installer from the current beta GitHub release:
 
 ```bash
-ssh root@router "wget -O /tmp/routeflux-install.sh https://github.com/Alaxay8/routeflux/releases/download/v0.1.3-beta.7/install.sh && sh /tmp/routeflux-install.sh"
+ssh root@router "wget -O /tmp/routeflux-install.sh https://github.com/Alaxay8/routeflux/releases/download/v0.1.3-beta.8/install.sh && sh /tmp/routeflux-install.sh"
 ```
 
 If you publish a non-prerelease stable release later, you can switch this command back to `releases/latest/download/install.sh`.
