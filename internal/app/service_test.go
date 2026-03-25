@@ -3,6 +3,8 @@ package app
 import (
 	"context"
 	"fmt"
+	"io"
+	"net"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
@@ -14,6 +16,10 @@ import (
 	"github.com/Alaxay8/routeflux/internal/domain"
 	"github.com/Alaxay8/routeflux/internal/probe"
 )
+
+func writeResponse(w http.ResponseWriter, body string) {
+	_, _ = io.WriteString(w, body)
+}
 
 func TestConfigureFirewallHostsClearsDestinationTargets(t *testing.T) {
 	t.Parallel()
@@ -64,7 +70,7 @@ func TestAddSubscriptionRetriesTransientHTTPStatus(t *testing.T) {
 			return
 		}
 
-		fmt.Fprint(w, "vless://11111111-1111-1111-1111-111111111111@node1.example.com:443?encryption=none&security=reality&sni=edge.example.com&fp=chrome&pbk=public-key-1&sid=ab12cd34&type=ws&path=%2Fproxy&host=cdn.example.com#Edge%20Reality")
+		writeResponse(w, "vless://11111111-1111-1111-1111-111111111111@node1.example.com:443?encryption=none&security=reality&sni=edge.example.com&fp=chrome&pbk=public-key-1&sid=ab12cd34&type=ws&path=%2Fproxy&host=cdn.example.com#Edge%20Reality")
 	}))
 	t.Cleanup(server.Close)
 
@@ -103,7 +109,7 @@ func TestAddSubscriptionUsesCompatibleUserAgent(t *testing.T) {
 			return
 		}
 
-		fmt.Fprint(w, "vless://11111111-1111-1111-1111-111111111111@node1.example.com:443?encryption=none&security=reality&sni=edge.example.com&fp=chrome&pbk=public-key-1&sid=ab12cd34&type=ws&path=%2Fproxy&host=cdn.example.com#Edge%20Reality")
+		writeResponse(w, "vless://11111111-1111-1111-1111-111111111111@node1.example.com:443?encryption=none&security=reality&sni=edge.example.com&fp=chrome&pbk=public-key-1&sid=ab12cd34&type=ws&path=%2Fproxy&host=cdn.example.com#Edge%20Reality")
 	}))
 	t.Cleanup(server.Close)
 
@@ -146,7 +152,7 @@ func TestAddSubscriptionRetriesWithCookieJar(t *testing.T) {
 			return
 		}
 
-		fmt.Fprint(w, "vless://11111111-1111-1111-1111-111111111111@node1.example.com:443?encryption=none&security=reality&sni=edge.example.com&fp=chrome&pbk=public-key-1&sid=ab12cd34&type=ws&path=%2Fproxy&host=cdn.example.com#Edge%20Reality")
+		writeResponse(w, "vless://11111111-1111-1111-1111-111111111111@node1.example.com:443?encryption=none&security=reality&sni=edge.example.com&fp=chrome&pbk=public-key-1&sid=ab12cd34&type=ws&path=%2Fproxy&host=cdn.example.com#Edge%20Reality")
 	}))
 	t.Cleanup(server.Close)
 
@@ -181,7 +187,7 @@ func TestAddSubscriptionUsesProfileTitleHeaderForProviderName(t *testing.T) {
 
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Profile-Title", "base64:RGVtbyBWUE4=")
-		fmt.Fprint(w, "vless://11111111-1111-1111-1111-111111111111@node1.example.com:443?encryption=none&security=reality&sni=edge.example.com&fp=chrome&pbk=public-key-1&sid=ab12cd34&type=ws&path=%2Fproxy&host=cdn.example.com#Edge%20Reality")
+		writeResponse(w, "vless://11111111-1111-1111-1111-111111111111@node1.example.com:443?encryption=none&security=reality&sni=edge.example.com&fp=chrome&pbk=public-key-1&sid=ab12cd34&type=ws&path=%2Fproxy&host=cdn.example.com#Edge%20Reality")
 	}))
 	t.Cleanup(server.Close)
 
@@ -221,7 +227,7 @@ func TestAddSubscriptionKeepsManualProviderNameDespiteProfileTitle(t *testing.T)
 
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Profile-Title", "base64:RGVtbyBWUE4=")
-		fmt.Fprint(w, "vless://11111111-1111-1111-1111-111111111111@node1.example.com:443?encryption=none&security=reality&sni=edge.example.com&fp=chrome&pbk=public-key-1&sid=ab12cd34&type=ws&path=%2Fproxy&host=cdn.example.com#Edge%20Reality")
+		writeResponse(w, "vless://11111111-1111-1111-1111-111111111111@node1.example.com:443?encryption=none&security=reality&sni=edge.example.com&fp=chrome&pbk=public-key-1&sid=ab12cd34&type=ws&path=%2Fproxy&host=cdn.example.com#Edge%20Reality")
 	}))
 	t.Cleanup(server.Close)
 
@@ -246,6 +252,96 @@ func TestAddSubscriptionKeepsManualProviderNameDespiteProfileTitle(t *testing.T)
 	}
 }
 
+func TestAddSubscriptionKeepsDistinctProfilesForSharedURL(t *testing.T) {
+	t.Parallel()
+
+	store := &memoryStore{
+		settings: domain.DefaultSettings(),
+		state:    domain.DefaultRuntimeState(),
+	}
+
+	requests := 0
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		requests++
+		w.Header().Set("Profile-Title", "base64:RGVtbyBWUE4=")
+		switch requests {
+		case 1:
+			writeResponse(w, "vless://11111111-1111-1111-1111-111111111111@node1.example.com:443?encryption=none&security=tls&sni=edge.example.com&type=ws&path=%2Fone&host=cdn.example.com#Profile%201")
+		default:
+			writeResponse(w, "vless://22222222-2222-2222-2222-222222222222@node2.example.com:443?encryption=none&security=tls&sni=edge.example.com&type=ws&path=%2Ftwo&host=cdn.example.com#Profile%202")
+		}
+	}))
+	t.Cleanup(server.Close)
+
+	service := NewService(Dependencies{
+		Store:      store,
+		HTTPClient: server.Client(),
+	})
+
+	first, err := service.AddSubscription(context.Background(), AddSubscriptionRequest{URL: server.URL})
+	if err != nil {
+		t.Fatalf("add first subscription: %v", err)
+	}
+
+	second, err := service.AddSubscription(context.Background(), AddSubscriptionRequest{URL: server.URL})
+	if err != nil {
+		t.Fatalf("add second subscription: %v", err)
+	}
+
+	if first.ID == second.ID {
+		t.Fatalf("expected distinct subscription ids, got %q", first.ID)
+	}
+	if len(store.subs) != 2 {
+		t.Fatalf("expected two stored subscriptions, got %d", len(store.subs))
+	}
+	if store.subs[0].ID != first.ID || store.subs[1].ID != second.ID {
+		t.Fatalf("unexpected stored subscriptions: %+v", store.subs)
+	}
+	if len(store.subs[0].Nodes) != 1 || store.subs[0].Nodes[0].SubscriptionID != first.ID {
+		t.Fatalf("unexpected first subscription nodes: %+v", store.subs[0].Nodes)
+	}
+	if len(store.subs[1].Nodes) != 1 || store.subs[1].Nodes[0].SubscriptionID != second.ID {
+		t.Fatalf("unexpected second subscription nodes: %+v", store.subs[1].Nodes)
+	}
+}
+
+func TestAddSubscriptionReusesIDForEquivalentSharedURL(t *testing.T) {
+	t.Parallel()
+
+	store := &memoryStore{
+		settings: domain.DefaultSettings(),
+		state:    domain.DefaultRuntimeState(),
+	}
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Profile-Title", "base64:RGVtbyBWUE4=")
+		writeResponse(w, "vless://11111111-1111-1111-1111-111111111111@node1.example.com:443?encryption=none&security=tls&sni=edge.example.com&type=ws&path=%2Fone&host=cdn.example.com#Profile%201")
+	}))
+	t.Cleanup(server.Close)
+
+	service := NewService(Dependencies{
+		Store:      store,
+		HTTPClient: server.Client(),
+	})
+
+	first, err := service.AddSubscription(context.Background(), AddSubscriptionRequest{URL: server.URL})
+	if err != nil {
+		t.Fatalf("add first subscription: %v", err)
+	}
+
+	second, err := service.AddSubscription(context.Background(), AddSubscriptionRequest{URL: server.URL})
+	if err != nil {
+		t.Fatalf("add second subscription: %v", err)
+	}
+
+	if first.ID != second.ID {
+		t.Fatalf("expected equivalent shared URL to reuse id, got %q and %q", first.ID, second.ID)
+	}
+	if len(store.subs) != 1 {
+		t.Fatalf("expected one stored subscription, got %d", len(store.subs))
+	}
+}
+
 func TestAddSubscriptionReturnsJSONEndpointError(t *testing.T) {
 	t.Parallel()
 
@@ -256,7 +352,7 @@ func TestAddSubscriptionReturnsJSONEndpointError(t *testing.T) {
 
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
-		fmt.Fprint(w, `{"error":"USER_NOT_FOUND","info":"User account does not exist."}`)
+		writeResponse(w, `{"error":"USER_NOT_FOUND","info":"User account does not exist."}`)
 	}))
 	t.Cleanup(server.Close)
 
@@ -286,7 +382,7 @@ func TestAddSubscriptionReturnsHTMLResponseError(t *testing.T) {
 
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "text/html; charset=utf-8")
-		fmt.Fprint(w, "<html><body><h1>Login required</h1><p>Open the provider portal first.</p></body></html>")
+		writeResponse(w, "<html><body><h1>Login required</h1><p>Open the provider portal first.</p></body></html>")
 	}))
 	t.Cleanup(server.Close)
 
@@ -303,6 +399,42 @@ func TestAddSubscriptionReturnsHTMLResponseError(t *testing.T) {
 	}
 	if got := err.Error(); !strings.Contains(got, "Login required") {
 		t.Fatalf("unexpected error: %v", err)
+	}
+}
+
+func TestAddSubscriptionExtractsHTMLShareLinksWithSpacesInRemark(t *testing.T) {
+	t.Parallel()
+
+	store := &memoryStore{
+		settings: domain.DefaultSettings(),
+		state:    domain.DefaultRuntimeState(),
+	}
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/html; charset=utf-8")
+		writeResponse(w, `<html><body><input readonly value="vless://8b922611-af1c-40c9-9af0-80fd0d782084@snl4.linkey8.ru:8443?security=reality&amp;type=tcp&amp;flow=xtls-rprx-vision&amp;sni=www.vk.com&amp;fp=qq&amp;pbk=wDQjzXYVtjdLkEyXpReh973y4rDIDH6kkX-g-MR7xAg&amp;sid=#🇳🇱 Нидерланды"></body></html>`)
+	}))
+	t.Cleanup(server.Close)
+
+	service := NewService(Dependencies{
+		Store:      store,
+		HTTPClient: server.Client(),
+	})
+
+	sub, err := service.AddSubscription(context.Background(), AddSubscriptionRequest{
+		URL: server.URL,
+	})
+	if err != nil {
+		t.Fatalf("add subscription: %v", err)
+	}
+	if len(sub.Nodes) != 1 {
+		t.Fatalf("expected 1 node, got %d", len(sub.Nodes))
+	}
+	if sub.Nodes[0].Remark != "🇳🇱 Нидерланды" {
+		t.Fatalf("expected full remark from html share link, got %+v", sub.Nodes[0])
+	}
+	if sub.Nodes[0].Name != sub.Nodes[0].Remark {
+		t.Fatalf("expected name to mirror remark, got %+v", sub.Nodes[0])
 	}
 }
 
@@ -364,7 +496,7 @@ func TestRefreshSubscriptionUpdatesLegacyURLDerivedProviderNameFromProfileTitle(
 
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Profile-Title", "base64:RGVtbyBWUE4=")
-		fmt.Fprint(w, `[
+		writeResponse(w, `[
 		  {
 		    "outbounds": [
 		      {
@@ -445,7 +577,7 @@ func TestRefreshSubscriptionDoesNotOverrideManualProviderNameWithProfileTitle(t 
 
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Profile-Title", "base64:RGVtbyBWUE4=")
-		fmt.Fprint(w, `[
+		writeResponse(w, `[
 		  {
 		    "outbounds": [
 		      {
@@ -536,7 +668,7 @@ func TestRefreshSubscriptionUpgradesLegacyKeyVPNNameFromProfileTitle(t *testing.
 
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Profile-Title", "base64:REVNTyBWUE4=")
-		fmt.Fprint(w, `[
+		writeResponse(w, `[
 		  {
 		    "outbounds": [
 		      {
@@ -626,7 +758,7 @@ func TestRefreshSubscriptionNormalizesLegacyRawHostNameWithoutProfileTitle(t *te
 	t.Parallel()
 
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		fmt.Fprint(w, `[
+		writeResponse(w, `[
 		  {
 		    "outbounds": [
 		      {
@@ -836,6 +968,57 @@ func TestGetSettingsSyncsConnectedRuntimeMode(t *testing.T) {
 	}
 	if store.settings.AutoMode {
 		t.Fatal("expected persisted settings to be synced to runtime state")
+	}
+}
+
+func TestConnectManualResolvesNodeAddressBeforeApplyingBackendConfig(t *testing.T) {
+	t.Parallel()
+
+	store := &memoryStore{
+		settings: domain.DefaultSettings(),
+		state:    domain.DefaultRuntimeState(),
+		subs: []domain.Subscription{
+			{
+				ID: "sub-1",
+				Nodes: []domain.Node{
+					{
+						ID:       "node-1",
+						Name:     "Russia",
+						Protocol: domain.ProtocolVLESS,
+						Address:  "ru-sb-01.com",
+						Port:     8443,
+						UUID:     "11111111-1111-1111-1111-111111111111",
+					},
+				},
+			},
+		},
+	}
+
+	runtimeBackend := &recordingBackend{}
+	service := NewService(Dependencies{
+		Store:   store,
+		Backend: runtimeBackend,
+		Resolver: fakeResolver{
+			lookups: map[string][]net.IPAddr{
+				"ru-sb-01.com": {
+					{IP: net.ParseIP("103.113.68.112")},
+				},
+			},
+		},
+	})
+
+	if err := service.ConnectManual(context.Background(), "sub-1", "node-1"); err != nil {
+		t.Fatalf("connect manual: %v", err)
+	}
+
+	if len(runtimeBackend.requests) != 1 {
+		t.Fatalf("expected one backend apply, got %d", len(runtimeBackend.requests))
+	}
+	if got := runtimeBackend.requests[0].Nodes[0].Address; got != "103.113.68.112" {
+		t.Fatalf("expected resolved backend address, got %q", got)
+	}
+	if got := store.subs[0].Nodes[0].Address; got != "ru-sb-01.com" {
+		t.Fatalf("expected stored node address to remain unchanged, got %q", got)
 	}
 }
 
@@ -1446,11 +1629,13 @@ func (s *memoryStore) SaveState(state domain.RuntimeState) error {
 }
 
 type recordingBackend struct {
-	requests   []backend.ConfigRequest
-	stopCalls  int
-	startCalls int
-	status     backend.RuntimeStatus
-	statusErr  error
+	requests    []backend.ConfigRequest
+	stopCalls   int
+	startCalls  int
+	status      backend.RuntimeStatus
+	statuses    []backend.RuntimeStatus
+	statusCalls int
+	statusErr   error
 }
 
 func (b *recordingBackend) GenerateConfig(req backend.ConfigRequest) ([]byte, error) {
@@ -1477,6 +1662,15 @@ func (b *recordingBackend) Status(context.Context) (backend.RuntimeStatus, error
 	if b.statusErr != nil {
 		return backend.RuntimeStatus{}, b.statusErr
 	}
+	if len(b.statuses) > 0 {
+		index := b.statusCalls
+		b.statusCalls++
+		if index >= len(b.statuses) {
+			index = len(b.statuses) - 1
+		}
+		return b.statuses[index], nil
+	}
+	b.statusCalls++
 	if b.status == (backend.RuntimeStatus{}) {
 		return backend.RuntimeStatus{Running: true, ServiceState: "running"}, nil
 	}
@@ -1517,4 +1711,19 @@ func (f fakeChecker) Check(_ context.Context, node domain.Node) probe.Result {
 		Checked: time.Now().UTC(),
 		Err:     fmt.Errorf("missing fake probe result for %s", node.ID),
 	}
+}
+
+type fakeResolver struct {
+	lookups map[string][]net.IPAddr
+	err     error
+}
+
+func (r fakeResolver) LookupIPAddr(_ context.Context, host string) ([]net.IPAddr, error) {
+	if r.err != nil {
+		return nil, r.err
+	}
+	if result, ok := r.lookups[host]; ok {
+		return result, nil
+	}
+	return nil, fmt.Errorf("missing fake resolver result for %s", host)
 }

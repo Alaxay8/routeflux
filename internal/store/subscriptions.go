@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log/slog"
 	"os"
 
 	"github.com/Alaxay8/routeflux/internal/domain"
@@ -11,12 +12,19 @@ import (
 
 // FileStore persists RouteFlux state as JSON files.
 type FileStore struct {
-	paths Paths
+	paths  Paths
+	logger *slog.Logger
 }
 
 // NewFileStore creates a file-backed store rooted at the provided directory.
 func NewFileStore(root string) *FileStore {
 	return &FileStore{paths: NewPaths(root)}
+}
+
+// WithLogger configures an optional logger for recovery warnings.
+func (s *FileStore) WithLogger(logger *slog.Logger) *FileStore {
+	s.logger = logger
+	return s
 }
 
 // SaveSubscriptions persists all subscriptions.
@@ -52,4 +60,10 @@ func readJSONFile(path string, target any) error {
 	}
 
 	return nil
+}
+
+func (s *FileStore) logWarn(msg string, args ...any) {
+	if s != nil && s.logger != nil {
+		s.logger.Warn(msg, args...)
+	}
 }

@@ -1,0 +1,287 @@
+#!/bin/sh
+set -eu
+
+ROUTEFLUX_VERSION="${ROUTEFLUX_VERSION:-__ROUTEFLUX_VERSION__}"
+ROUTEFLUX_SUPPORTED_ARCHES="${ROUTEFLUX_SUPPORTED_ARCHES:-__SUPPORTED_ARCHES__}"
+ROUTEFLUX_REPO_OWNER="${ROUTEFLUX_REPO_OWNER:-Alaxay8}"
+ROUTEFLUX_REPO_NAME="${ROUTEFLUX_REPO_NAME:-routeflux}"
+ROUTEFLUX_RELEASE_BASE_URL="${ROUTEFLUX_RELEASE_BASE_URL:-}"
+ROUTEFLUX_INSTALL_ROOT="${ROUTEFLUX_INSTALL_ROOT:-/}"
+ROUTEFLUX_ARCH_OVERRIDE="${ROUTEFLUX_ARCH:-}"
+ROUTEFLUX_XRAY_BINARY_PATH="${ROUTEFLUX_XRAY_BINARY:-}"
+ROUTEFLUX_XRAY_SERVICE_PATH="${ROUTEFLUX_XRAY_SERVICE:-}"
+ROUTEFLUX_DRY_RUN=0
+
+usage() {
+	printf '%s\n' "RouteFlux OpenWrt installer"
+	printf '%s\n' ""
+	printf '%s\n' "Usage: install.sh [--version <version>] [--arch <arch>] [--base-url <url>] [--install-root <path>] [--dry-run]"
+}
+
+log() {
+	printf '%s\n' "$*"
+}
+
+warn() {
+	printf 'warning: %s\n' "$*" >&2
+}
+
+die() {
+	printf 'error: %s\n' "$*" >&2
+	exit 1
+}
+
+command_exists() {
+	command -v "$1" >/dev/null 2>&1
+}
+
+root_path() {
+	path="$1"
+	if [ "${ROUTEFLUX_INSTALL_ROOT}" = "/" ]; then
+		printf '/%s\n' "${path}"
+		return
+	fi
+
+	printf '%s/%s\n' "${ROUTEFLUX_INSTALL_ROOT%/}" "${path}"
+}
+
+service_path() {
+	if [ "$1" = "xray" ] && [ -n "${ROUTEFLUX_XRAY_SERVICE_PATH}" ]; then
+		printf '%s\n' "${ROUTEFLUX_XRAY_SERVICE_PATH}"
+		return
+	fi
+
+	root_path "etc/init.d/$1"
+}
+
+xray_binary_path() {
+	if [ -n "${ROUTEFLUX_XRAY_BINARY_PATH}" ]; then
+		printf '%s\n' "${ROUTEFLUX_XRAY_BINARY_PATH}"
+		return
+	fi
+
+	root_path "usr/bin/xray"
+}
+
+require_root_if_needed() {
+	if [ "${ROUTEFLUX_INSTALL_ROOT}" = "/" ] && [ "$(id -u)" -ne 0 ]; then
+		die "run this installer as root on the router, or use --install-root for a staging directory"
+	fi
+}
+
+is_supported_arch() {
+	arch="$1"
+	for supported in ${ROUTEFLUX_SUPPORTED_ARCHES}; do
+		if [ "${arch}" = "${supported}" ]; then
+			return 0
+		fi
+	done
+	return 1
+}
+
+list_opkg_architectures() {
+	if ! command_exists opkg; then
+		return 0
+	fi
+
+	opkg print-architecture 2>/dev/null | while read -r kind arch _priority; do
+		if [ "${kind}" != "arch" ]; then
+			continue
+		fi
+		if [ "${arch}" = "all" ] || [ "${arch}" = "noarch" ]; then
+			continue
+		fi
+		printf '%s\n' "${arch}"
+	done
+}
+
+detect_uname_arch() {
+	if ! command_exists uname; then
+		return 0
+	fi
+
+	machine="$(uname -m 2>/dev/null || true)"
+	case "${machine}" in
+		x86_64|amd64)
+			printf 'x86_64\n'
+			;;
+	esac
+}
+
+resolve_arch() {
+	if [ -n "${ROUTEFLUX_ARCH_OVERRIDE}" ]; then
+		printf '%s\n' "${ROUTEFLUX_ARCH_OVERRIDE}"
+		return 0
+	fi
+
+	opkg_arches="$(list_opkg_architectures)"
+	if [ -n "${opkg_arches}" ]; then
+		for candidate in ${opkg_arches}; do
+			if is_supported_arch "${candidate}"; then
+				printf '%s\n' "${candidate}"
+				return 0
+			fi
+		done
+		return 1
+	fi
+
+	for candidate in $(detect_uname_arch); do
+		if is_supported_arch "${candidate}"; then
+			printf '%s\n' "${candidate}"
+			return 0
+		fi
+	done
+
+	return 1
+}
+
+download_file() {
+	url="$1"
+	destination="$2"
+
+	if command_exists wget; then
+		wget -O "${destination}" "${url}"
+		return 0
+	fi
+
+	if command_exists curl; then
+		curl -fsSL -o "${destination}" "${url}"
+		return 0
+	fi
+
+	die "wget or curl is required to download release assets"
+}
+
+run_service_if_present() {
+	name="$1"
+	action="$2"
+	script="$(service_path "${name}")"
+
+	if [ ! -x "${script}" ]; then
+		return 0
+	fi
+
+	"${script}" "${action}" >/dev/null 2>&1 || return 1
+}
+
+xray_is_ready() {
+	[ -x "$(xray_binary_path)" ] && [ -x "$(service_path xray)" ]
+}
+
+while [ "$#" -gt 0 ]; do
+	case "$1" in
+		--version)
+			[ "$#" -ge 2 ] || die "missing value for --version"
+			ROUTEFLUX_VERSION="${2#v}"
+			shift 2
+			;;
+		--arch)
+			[ "$#" -ge 2 ] || die "missing value for --arch"
+			ROUTEFLUX_ARCH_OVERRIDE="$2"
+			shift 2
+			;;
+		--base-url)
+			[ "$#" -ge 2 ] || die "missing value for --base-url"
+			ROUTEFLUX_RELEASE_BASE_URL="$2"
+			shift 2
+			;;
+		--install-root)
+			[ "$#" -ge 2 ] || die "missing value for --install-root"
+			ROUTEFLUX_INSTALL_ROOT="$2"
+			shift 2
+			;;
+		--dry-run)
+			ROUTEFLUX_DRY_RUN=1
+			shift
+			;;
+		-h|--help)
+			usage
+			exit 0
+			;;
+		*)
+			die "unknown argument: $1"
+			;;
+	esac
+done
+
+require_root_if_needed
+
+if [ -z "${ROUTEFLUX_RELEASE_BASE_URL}" ]; then
+	ROUTEFLUX_RELEASE_BASE_URL="https://github.com/${ROUTEFLUX_REPO_OWNER}/${ROUTEFLUX_REPO_NAME}/releases/download/v${ROUTEFLUX_VERSION}"
+fi
+
+resolved_arch="$(resolve_arch || true)"
+if [ -z "${resolved_arch}" ]; then
+	detected=""
+	if command_exists opkg; then
+		detected="$(list_opkg_architectures | tr '\n' ' ' | sed 's/[[:space:]]*$//')"
+	fi
+	if [ -z "${detected}" ]; then
+		detected="$(detect_uname_arch | tr '\n' ' ' | sed 's/[[:space:]]*$//')"
+	fi
+	[ -n "${detected}" ] || detected="unknown"
+	die "unsupported architecture: ${detected}. Supported release arches: ${ROUTEFLUX_SUPPORTED_ARCHES}"
+fi
+
+if ! is_supported_arch "${resolved_arch}"; then
+	die "unsupported architecture: ${resolved_arch}. Supported release arches: ${ROUTEFLUX_SUPPORTED_ARCHES}"
+fi
+
+asset_name="routeflux_${ROUTEFLUX_VERSION}_${resolved_arch}.tar.gz"
+asset_url="${ROUTEFLUX_RELEASE_BASE_URL}/${asset_name}"
+xray_asset_name="xray_${ROUTEFLUX_VERSION}_${resolved_arch}.tar.gz"
+xray_asset_url="${ROUTEFLUX_RELEASE_BASE_URL}/${xray_asset_name}"
+
+log "RouteFlux version: ${ROUTEFLUX_VERSION}"
+log "RouteFlux arch: ${resolved_arch}"
+log "RouteFlux asset: ${asset_url}"
+
+if [ "${ROUTEFLUX_DRY_RUN}" = "1" ]; then
+	exit 0
+fi
+
+command_exists tar || die "tar is required to install release assets"
+
+tmp_dir="${TMPDIR:-/tmp}/routeflux-install.$$"
+asset_path="${tmp_dir}/${asset_name}"
+xray_asset_path="${tmp_dir}/${xray_asset_name}"
+mkdir -p "${tmp_dir}"
+trap 'rm -rf "${tmp_dir}"' EXIT HUP INT TERM
+
+if xray_is_ready; then
+	log "Detected existing Xray runtime"
+else
+	log "Xray runtime not found, installing bundled Xray"
+	log "Xray asset: ${xray_asset_url}"
+	download_file "${xray_asset_url}" "${xray_asset_path}"
+	mkdir -p "${ROUTEFLUX_INSTALL_ROOT}"
+	tar -xzf "${xray_asset_path}" -C "${ROUTEFLUX_INSTALL_ROOT}"
+	xray_service="$(service_path xray)"
+	if [ -f "${xray_service}" ]; then
+		chmod 0755 "${xray_service}" || true
+	fi
+	log "Bundled Xray installed"
+fi
+
+log "Downloading RouteFlux release asset"
+download_file "${asset_url}" "${asset_path}"
+
+log "Extracting files into ${ROUTEFLUX_INSTALL_ROOT}"
+mkdir -p "${ROUTEFLUX_INSTALL_ROOT}"
+tar -xzf "${asset_path}" -C "${ROUTEFLUX_INSTALL_ROOT}"
+
+routeflux_service="$(service_path routeflux)"
+if [ -f "${routeflux_service}" ]; then
+	chmod 0755 "${routeflux_service}" || true
+fi
+
+rm -f "$(root_path "tmp/luci-indexcache")"
+rm -rf "$(root_path "tmp/luci-modulecache")"
+run_service_if_present rpcd reload || true
+run_service_if_present uhttpd reload || true
+run_service_if_present routeflux enable || true
+run_service_if_present routeflux restart || run_service_if_present routeflux start || true
+
+log "RouteFlux installed successfully"
+log "Open LuCI: Services -> RouteFlux"
+log "CLI example: routeflux add https://provider.example/subscription"

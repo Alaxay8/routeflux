@@ -1,7 +1,10 @@
 APP_NAME := routeflux
 BUILD_DIR := bin
+GO_FILES := $(shell find . -type f -name '*.go' -not -path './bin/*' -not -path './dist/*' -not -path './.cache/*')
+VERSION ?= $(shell (git describe --tags --always --dirty 2>/dev/null || printf '0.0.0-dev') | sed 's/^v//')
+PACKAGE_ARCH ?= mipsel_24kc
 
-.PHONY: build test test-verbose coverage lint build-openwrt package-openwrt fmt
+.PHONY: build test test-verbose coverage coverage-runtime lint test-integration build-openwrt build-openwrt-x86_64 package-openwrt package-release fmt
 
 build:
 	go build -o $(BUILD_DIR)/$(APP_NAME) ./cmd/routeflux
@@ -22,7 +25,16 @@ coverage:
 	go test -coverprofile=coverage-store.out ./internal/store
 	go tool cover -func=coverage-store.out
 
+coverage-runtime:
+	./scripts/coverage-runtime.sh
+
 lint:
+	@out="$$(gofmt -l $(GO_FILES))"; \
+	if [ -n "$$out" ]; then \
+		printf '%s\n' "$$out"; \
+		exit 1; \
+	fi
+	go vet ./...
 	go test ./...
 
 fmt:
@@ -31,5 +43,16 @@ fmt:
 build-openwrt:
 	./scripts/build-openwrt.sh
 
+build-openwrt-x86_64:
+	OUTPUT_DIR=bin/openwrt/x86_64 GOARCH=amd64 ./scripts/build-openwrt.sh
+
+test-integration: build-openwrt-x86_64
+	ROUTEFLUX_RUN_OPENWRT_INTEGRATION=1 \
+	ROUTEFLUX_OPENWRT_ROUTEFLUX_BIN=$(CURDIR)/bin/openwrt/x86_64/routeflux \
+	go test -count=1 -v ./test/integration/openwrt
+
 package-openwrt: build-openwrt
-	./scripts/package-openwrt.sh
+	VERSION=$(VERSION) ARCH=$(PACKAGE_ARCH) ./scripts/package-openwrt.sh
+
+package-release:
+	VERSION=$(VERSION) ./scripts/package-release.sh

@@ -38,9 +38,11 @@ type xrayRouting struct {
 }
 
 type xrayRouteRule struct {
-	Type        string `json:"type"`
-	OutboundTag string `json:"outboundTag"`
-	Network     string `json:"network"`
+	Type        string   `json:"type"`
+	OutboundTag string   `json:"outboundTag"`
+	Network     string   `json:"network,omitempty"`
+	Domain      []string `json:"domain,omitempty"`
+	IP          []string `json:"ip,omitempty"`
 }
 
 type xrayCommonOutbound struct {

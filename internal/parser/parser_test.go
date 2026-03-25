@@ -218,6 +218,92 @@ func TestParseXrayJSONConfigSupportsDirectVLESSSettings(t *testing.T) {
 	}
 }
 
+func TestParseXrayJSONDirectProtocolUsesTopLevelRemarksForNameAndRemark(t *testing.T) {
+	t.Parallel()
+
+	input := `{
+	  "remarks": "🇳🇱 Нидерланды",
+	  "protocol": "vless",
+	  "tag": "proxy",
+	  "settings": {
+	    "encryption": "none",
+	    "flow": "xtls-rprx-vision",
+	    "port": 8443,
+	    "address": "snl4.linkey8.ru",
+	    "id": "8b922611-af1c-40c9-9af0-80fd0d782084"
+	  },
+	  "streamSettings": {
+	    "network": "tcp",
+	    "security": "reality",
+	    "realitySettings": {
+	      "serverName": "www.vk.com",
+	      "publicKey": "wDQjzXYVtjdLkEyXpReh973y4rDIDH6kkX-g-MR7xAg",
+	      "shortId": "",
+	      "fingerprint": "qq"
+	    }
+	  }
+	}`
+
+	nodes, err := parser.ParseNodes(input, "Starlink")
+	if err != nil {
+		t.Fatalf("parse nodes: %v", err)
+	}
+	if len(nodes) != 1 {
+		t.Fatalf("expected 1 node, got %d", len(nodes))
+	}
+	if nodes[0].Name != "🇳🇱 Нидерланды" || nodes[0].Remark != "🇳🇱 Нидерланды" {
+		t.Fatalf("expected name and remark to use top-level remarks, got %+v", nodes[0])
+	}
+}
+
+func TestParseXrayJSONWrapperPropagatesTopLevelRemarksIntoNestedConfig(t *testing.T) {
+	t.Parallel()
+
+	input := `{
+	  "remarks": "🇳🇱 Нидерланды",
+	  "config": {
+	    "outbounds": [
+	      {
+	        "protocol": "vless",
+	        "tag": "proxy",
+	        "settings": {
+	          "encryption": "none",
+	          "flow": "xtls-rprx-vision",
+	          "port": 8443,
+	          "address": "snl4.linkey8.ru",
+	          "id": "8b922611-af1c-40c9-9af0-80fd0d782084"
+	        },
+	        "streamSettings": {
+	          "network": "tcp",
+	          "security": "reality",
+	          "realitySettings": {
+	            "serverName": "www.vk.com",
+	            "publicKey": "wDQjzXYVtjdLkEyXpReh973y4rDIDH6kkX-g-MR7xAg",
+	            "shortId": "",
+	            "fingerprint": "qq"
+	          }
+	        }
+	      },
+	      {
+	        "protocol": "freedom",
+	        "tag": "direct"
+	      }
+	    ]
+	  }
+	}`
+
+	nodes, err := parser.ParseNodes(input, "Starlink")
+	if err != nil {
+		t.Fatalf("parse nodes: %v", err)
+	}
+	if len(nodes) != 1 {
+		t.Fatalf("expected 1 node, got %d", len(nodes))
+	}
+	if nodes[0].Name != "🇳🇱 Нидерланды" || nodes[0].Remark != "🇳🇱 Нидерланды" {
+		t.Fatalf("expected wrapper remarks to populate name and remark, got %+v", nodes[0])
+	}
+}
+
 func TestParseJSONArrayOfXrayConfigs(t *testing.T) {
 	t.Parallel()
 

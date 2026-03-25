@@ -6,6 +6,8 @@ import (
 	"log/slog"
 	"net/http"
 	"os"
+	"path/filepath"
+	"strings"
 	"time"
 
 	"github.com/spf13/cobra"
@@ -45,6 +47,7 @@ func newRootCmd() *cobra.Command {
 
 	cmd.AddCommand(
 		newAddCmd(opts),
+		newDaemonCmd(opts),
 		newDiagnosticsCmd(opts),
 		newDNSCmd(opts),
 		newFirewallCmd(opts),
@@ -71,18 +74,31 @@ func (o *rootOptions) initService() error {
 	if root == "" {
 		root = openwrt.RootDir()
 	}
+	configPath := openwrt.XrayConfigPath()
+	if o.rootDir != "" && !openwrt.IsOpenWrt() && os.Getenv("ROUTEFLUX_XRAY_CONFIG") == "" {
+		configPath = filepath.Join(root, "xray-config.json")
+	}
 
-	fileStore := store.NewFileStore(root)
+	bootstrapLogger := newLogger("info")
+	fileStore := store.NewFileStore(root).WithLogger(bootstrapLogger)
+	logLevel := "info"
+	if settings, err := fileStore.LoadSettings(); err == nil {
+		logLevel = settings.LogLevel
+	} else {
+		bootstrapLogger.Warn("load settings for logger level", "path", filepath.Join(root, "settings.json"), "error", err.Error())
+	}
+	logger := newLogger(logLevel)
+	fileStore.WithLogger(logger)
 	controller := openwrt.NewXrayController()
 	firewall := openwrt.NewFirewallManager()
-	var runtimeBackend backend.Backend = xray.NewRuntimeBackend(openwrt.XrayConfigPath(), controller)
+	var runtimeBackend backend.Backend = xray.NewRuntimeBackend(configPath, controller).WithLogger(logger)
 	o.service = app.NewService(app.Dependencies{
 		Store:      fileStore,
 		Backend:    runtimeBackend,
 		Firewaller: firewall,
 		HTTPClient: &http.Client{Timeout: 20 * time.Second},
 		Checker:    probe.TCPChecker{Timeout: 5 * time.Second},
-		Logger:     slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelInfo})),
+		Logger:     logger,
 	})
 
 	return nil
@@ -97,4 +113,21 @@ func printOutput(cmd *cobra.Command, jsonOutput bool, value any, text string) er
 
 	_, err := fmt.Fprintln(cmd.OutOrStdout(), text)
 	return err
+}
+
+func newLogger(rawLevel string) *slog.Logger {
+	return slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: parseSlogLevel(rawLevel)}))
+}
+
+func parseSlogLevel(raw string) slog.Level {
+	switch strings.ToLower(strings.TrimSpace(raw)) {
+	case "debug":
+		return slog.LevelDebug
+	case "warn", "warning":
+		return slog.LevelWarn
+	case "error":
+		return slog.LevelError
+	default:
+		return slog.LevelInfo
+	}
 }

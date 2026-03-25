@@ -116,6 +116,83 @@ func TestBuildProviderGroupsHumanizesDomainProviderNames(t *testing.T) {
 	}
 }
 
+func TestBuildProviderGroupsStripsEmojiFromTUITitlesAndLabels(t *testing.T) {
+	t.Parallel()
+
+	subscriptions := []domain.Subscription{
+		{
+			ID:           "sub-1",
+			ProviderName: "Liberty VPN 🗽",
+			DisplayName:  "🇯🇵 Japan",
+		},
+	}
+
+	groups := buildProviderGroups(subscriptions)
+	if len(groups) != 1 {
+		t.Fatalf("expected 1 provider group, got %d", len(groups))
+	}
+	if groups[0].Title != "Liberty VPN" {
+		t.Fatalf("unexpected provider title: %q", groups[0].Title)
+	}
+	if groups[0].Subscriptions[0].Label != "Japan" {
+		t.Fatalf("unexpected profile label: %q", groups[0].Subscriptions[0].Label)
+	}
+}
+
+func TestRenderNodesStripsEmojiFromNodeNames(t *testing.T) {
+	t.Parallel()
+
+	m := newModel(nil)
+	m.subscriptions = []domain.Subscription{
+		{
+			ID: "sub-1",
+			Nodes: []domain.Node{
+				{
+					ID:         "node-1",
+					Name:       "🇷🇺Россия|Torrent-2",
+					Protocol:   domain.ProtocolVLESS,
+					Transport:  "tcp",
+					Address:    "ru.example.com",
+					Port:       443,
+					Security:   "reality",
+					ServerName: "sni.example.com",
+				},
+			},
+		},
+	}
+	m.providers = buildProviderGroups(m.subscriptions)
+	m.ensureSelection()
+
+	view := renderNodes(m, 8)
+	if strings.Contains(view, "🇷🇺") {
+		t.Fatalf("expected TUI node list to strip emoji, got:\n%s", view)
+	}
+	if !strings.Contains(view, "Россия|Torrent-2") {
+		t.Fatalf("expected sanitized node title, got:\n%s", view)
+	}
+}
+
+func TestRenderStatusStripsEmojiFromActiveNodeNames(t *testing.T) {
+	t.Parallel()
+
+	m := newModel(nil)
+	m.status.State.Mode = domain.SelectionModeManual
+	m.status.State.Connected = true
+	m.status.ActiveNode = &domain.Node{Name: "🇭🇰Гонконг"}
+	m.status.ActiveSubscription = &domain.Subscription{
+		ProviderName: "Liberty VPN 🗽",
+		DisplayName:  "🇭🇰 Profile",
+	}
+
+	view := renderStatus(m)
+	if strings.Contains(view, "🗽") || strings.Contains(view, "🇭🇰") {
+		t.Fatalf("expected status view to strip emoji, got:\n%s", view)
+	}
+	if !strings.Contains(view, "Liberty VPN") || !strings.Contains(view, "Гонконг") {
+		t.Fatalf("expected sanitized status labels, got:\n%s", view)
+	}
+}
+
 func TestRenderProvidersShowsProviderHierarchy(t *testing.T) {
 	t.Parallel()
 

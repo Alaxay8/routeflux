@@ -23,9 +23,8 @@ Xray config generation, file writing, and runtime service control abstractions.
 Workflows for add, refresh, connect, disconnect, auto selection, and background refresh scheduling.
 
 ### Interfaces
-Scriptable Cobra CLI and keyboard-driven Bubble Tea TUI.
+Scriptable Cobra CLI, a background daemon mode for subscription refresh, and keyboard-driven Bubble Tea TUI.
 
 ## Future Extensions
 - sing-box backend implementation behind the same backend interface
-- cron or procd-triggered refresh integration
 - richer router dataplane integration and policy routing helpers

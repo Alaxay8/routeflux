@@ -65,11 +65,21 @@ func (Generator) Generate(req backend.ConfigRequest) ([]byte, error) {
 		},
 		Routing: xrayRouting{
 			DomainStrategy: "AsIs",
-			Rules: []xrayRouteRule{
-				{Type: "field", OutboundTag: "selected", Network: "tcp,udp"},
-			},
+			Rules:          []xrayRouteRule{},
 		},
 	}
+
+	if rule, err := directDNSRouteRule(req.DNS); err != nil {
+		return nil, err
+	} else if rule != nil {
+		cfg.Routing.Rules = append(cfg.Routing.Rules, *rule)
+	}
+
+	cfg.Routing.Rules = append(cfg.Routing.Rules, xrayRouteRule{
+		Type:        "field",
+		OutboundTag: "selected",
+		Network:     "tcp,udp",
+	})
 
 	if req.TransparentProxy {
 		cfg.Inbounds = append(cfg.Inbounds, xrayInbound{
@@ -185,6 +195,42 @@ func buildDNSConfig(settings domain.DNSSettings) (*xrayDNS, error) {
 	return &xrayDNS{Servers: result}, nil
 }
 
+func directDNSRouteRule(settings domain.DNSSettings) (*xrayRouteRule, error) {
+	mode, err := domain.ParseDNSMode(string(settings.Mode))
+	if err != nil {
+		return nil, err
+	}
+	if mode == domain.DNSModeSystem || mode == domain.DNSModeDisabled {
+		return nil, nil
+	}
+
+	transport, err := domain.ParseDNSTransport(string(settings.Transport))
+	if err != nil {
+		return nil, err
+	}
+
+	servers, err := formatDNSServers(settings.Servers, transport)
+	if err != nil {
+		return nil, err
+	}
+	bootstrapServers, err := formatDNSServers(settings.Bootstrap, domain.DNSTransportPlain)
+	if err != nil {
+		return nil, err
+	}
+
+	ips, domains := directDNSDestinations(append(servers, bootstrapServers...))
+	if len(ips) == 0 && len(domains) == 0 {
+		return nil, nil
+	}
+
+	return &xrayRouteRule{
+		Type:        "field",
+		OutboundTag: "direct",
+		Domain:      domains,
+		IP:          ips,
+	}, nil
+}
+
 func formatDNSServers(servers []string, transport domain.DNSTransport) ([]string, error) {
 	cleaned := cleanStringList(servers)
 	if len(cleaned) == 0 {
@@ -256,6 +302,38 @@ func dnsServerHostname(server string) string {
 		return parsed.Hostname()
 	}
 	return ""
+}
+
+func directDNSDestinations(servers []string) ([]string, []string) {
+	seenIPs := make(map[string]struct{}, len(servers))
+	seenDomains := make(map[string]struct{}, len(servers))
+	ips := make([]string, 0, len(servers))
+	domains := make([]string, 0, len(servers))
+
+	for _, server := range servers {
+		host := dnsServerHostname(server)
+		if host == "" {
+			continue
+		}
+
+		if _, err := netip.ParseAddr(host); err == nil {
+			if _, ok := seenIPs[host]; ok {
+				continue
+			}
+			seenIPs[host] = struct{}{}
+			ips = append(ips, host)
+			continue
+		}
+
+		domain := "full:" + host
+		if _, ok := seenDomains[domain]; ok {
+			continue
+		}
+		seenDomains[domain] = struct{}{}
+		domains = append(domains, domain)
+	}
+
+	return ips, domains
 }
 
 func hasScheme(value string) bool {

@@ -67,7 +67,6 @@ func TestDNSExplainCommandOutputsFriendlyGuide(t *testing.T) {
 		"remote: Send all DNS requests to the DNS servers you choose.",
 		"split: Keep local home-network names local",
 		"doh: DNS over HTTPS.",
-		"dot: DNS over TLS.",
 		"RouteFlux default: routeflux dns set default",
 	}
 	for _, want := range wants {

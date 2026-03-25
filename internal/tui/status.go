@@ -23,7 +23,7 @@ func renderStatus(m model) string {
 
 	activeNode := "none"
 	if m.status.ActiveNode != nil {
-		activeNode = m.status.ActiveNode.DisplayName()
+		activeNode = nodeLabel(*m.status.ActiveNode)
 	}
 
 	return fmt.Sprintf(

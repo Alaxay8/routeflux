@@ -157,6 +157,6 @@ func nodeAction(command func(context.Context) (domain.Node, error), prefix strin
 		if err != nil {
 			return actionMsg{err: err}
 		}
-		return actionMsg{message: fmt.Sprintf("%s %s", prefix, node.DisplayName())}
+		return actionMsg{message: fmt.Sprintf("%s %s", prefix, nodeLabel(node))}
 	}
 }

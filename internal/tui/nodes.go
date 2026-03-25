@@ -44,7 +44,7 @@ func renderNodes(m model, maxLines int) string {
 			active = " active"
 		}
 
-		lines = append(lines, fmt.Sprintf("%s %s  %s  %s  latency=%s%s", marker, node.DisplayName(), node.Protocol, node.Transport, latencyText, active))
+		lines = append(lines, fmt.Sprintf("%s %s  %s  %s  latency=%s%s", marker, nodeLabel(node), node.Protocol, node.Transport, latencyText, active))
 		lines = append(lines, m.mutedStyle.Render(fmt.Sprintf("  %s:%d  security=%s sni=%s", node.Address, node.Port, node.Security, node.ServerName)))
 	}
 	if end < len(sub.Nodes) {

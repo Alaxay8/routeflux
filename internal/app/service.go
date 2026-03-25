@@ -10,6 +10,7 @@ import (
 	"html"
 	"io"
 	"log/slog"
+	"net"
 	"net/http"
 	"net/http/cookiejar"
 	"net/url"
@@ -41,6 +42,11 @@ type Firewaller interface {
 	Disable(ctx context.Context) error
 }
 
+// HostResolver resolves node hostnames before backend apply.
+type HostResolver interface {
+	LookupIPAddr(ctx context.Context, host string) ([]net.IPAddr, error)
+}
+
 // AddSubscriptionRequest defines how a subscription is added.
 type AddSubscriptionRequest struct {
 	URL  string
@@ -58,12 +64,15 @@ type StatusSnapshot struct {
 
 // Service orchestrates subscription, health, and backend workflows.
 type Service struct {
-	store      Store
-	backend    backend.Backend
-	firewall   Firewaller
-	httpClient *http.Client
-	checker    probe.Checker
-	logger     *slog.Logger
+	store              Store
+	backend            backend.Backend
+	firewall           Firewaller
+	httpClient         *http.Client
+	checker            probe.Checker
+	logger             *slog.Logger
+	resolver           HostResolver
+	backendReadyChecks int
+	backendReadyDelay  time.Duration
 }
 
 // Dependencies groups the service construction inputs.
@@ -74,6 +83,7 @@ type Dependencies struct {
 	HTTPClient *http.Client
 	Checker    probe.Checker
 	Logger     *slog.Logger
+	Resolver   HostResolver
 }
 
 type subscriptionFetchMetadata struct {
@@ -90,9 +100,11 @@ const (
 	subscriptionFetchBaseBackoff = 250 * time.Millisecond
 	subscriptionFetchUserAgent   = "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/136.0.0.0 Safari/537.36"
 	subscriptionProfileTitleKey  = "Profile-Title"
+	backendReadyMaxChecks        = 8
+	backendReadyCheckDelay       = 250 * time.Millisecond
 )
 
-var subscriptionShareLinkPattern = regexp.MustCompile(`(?i)(vless|vmess|trojan|ss)://[^\s"'<>]+`)
+var subscriptionShareLinkPattern = regexp.MustCompile(`(?i)(vless|vmess|trojan|ss)://[^"'<>]+`)
 var htmlTitlePattern = regexp.MustCompile(`(?is)<title[^>]*>\s*(.*?)\s*</title>`)
 var htmlH1Pattern = regexp.MustCompile(`(?is)<h1[^>]*>\s*(.*?)\s*</h1>`)
 var htmlTagPattern = regexp.MustCompile(`(?s)<[^>]+>`)
@@ -109,18 +121,32 @@ func NewService(deps Dependencies) *Service {
 		logger = slog.New(slog.NewTextHandler(io.Discard, nil))
 	}
 
+	resolver := deps.Resolver
+	if resolver == nil {
+		resolver = net.DefaultResolver
+	}
+
 	return &Service{
-		store:      deps.Store,
-		backend:    deps.Backend,
-		firewall:   deps.Firewaller,
-		httpClient: ensureSubscriptionHTTPClient(deps.HTTPClient),
-		checker:    checker,
-		logger:     logger,
+		store:              deps.Store,
+		backend:            deps.Backend,
+		firewall:           deps.Firewaller,
+		httpClient:         ensureSubscriptionHTTPClient(deps.HTTPClient),
+		checker:            checker,
+		logger:             logger,
+		resolver:           resolver,
+		backendReadyChecks: backendReadyMaxChecks,
+		backendReadyDelay:  backendReadyCheckDelay,
 	}
 }
 
 // AddSubscription adds a new subscription and parses its nodes.
 func (s *Service) AddSubscription(ctx context.Context, req AddSubscriptionRequest) (domain.Subscription, error) {
+	return runStoreWriteLockedResult(s, func() (domain.Subscription, error) {
+		return s.addSubscription(ctx, req)
+	})
+}
+
+func (s *Service) addSubscription(ctx context.Context, req AddSubscriptionRequest) (domain.Subscription, error) {
 	if s.store == nil {
 		return domain.Subscription{}, fmt.Errorf("store is not configured")
 	}
@@ -150,7 +176,6 @@ func (s *Service) AddSubscription(ctx context.Context, req AddSubscriptionReques
 	now := time.Now().UTC()
 	storedSource := sourceOrURL(sourceType, req)
 	sub := domain.Subscription{
-		ID:                 stableSubscriptionID(sourceType, storedSource),
 		SourceType:         sourceType,
 		Source:             storedSource,
 		ProviderName:       providerName,
@@ -162,6 +187,7 @@ func (s *Service) AddSubscription(ctx context.Context, req AddSubscriptionReques
 		Nodes:              nodes,
 	}
 
+	sub.ID = resolveAddSubscriptionID(subscriptions, sub)
 	for idx := range sub.Nodes {
 		sub.Nodes[idx].SubscriptionID = sub.ID
 	}
@@ -173,6 +199,9 @@ func (s *Service) AddSubscription(ctx context.Context, req AddSubscriptionReques
 
 	state, err := s.store.LoadState()
 	if err == nil {
+		if state.LastRefreshAt == nil {
+			state.LastRefreshAt = make(map[string]time.Time)
+		}
 		state.LastRefreshAt[sub.ID] = now
 		_ = s.store.SaveState(state)
 	}
@@ -182,6 +211,12 @@ func (s *Service) AddSubscription(ctx context.Context, req AddSubscriptionReques
 
 // RemoveSubscription removes a stored subscription and disconnects if it was active.
 func (s *Service) RemoveSubscription(ctx context.Context, id string) error {
+	return runStoreWriteLocked(s, func() error {
+		return s.removeSubscription(ctx, id)
+	})
+}
+
+func (s *Service) removeSubscription(ctx context.Context, id string) error {
 	subscriptions, err := s.store.LoadSubscriptions()
 	if err != nil {
 		return fmt.Errorf("load subscriptions: %w", err)
@@ -214,6 +249,12 @@ func (s *Service) RemoveSubscription(ctx context.Context, id string) error {
 
 // RemoveAllSubscriptions removes all stored subscriptions and disconnects if one is active.
 func (s *Service) RemoveAllSubscriptions(ctx context.Context) (int, error) {
+	return runStoreWriteLockedResult(s, func() (int, error) {
+		return s.removeAllSubscriptions(ctx)
+	})
+}
+
+func (s *Service) removeAllSubscriptions(ctx context.Context) (int, error) {
 	subscriptions, err := s.store.LoadSubscriptions()
 	if err != nil {
 		return 0, fmt.Errorf("load subscriptions: %w", err)
@@ -283,6 +324,12 @@ func (s *Service) persistDisconnectedState(state domain.RuntimeState) error {
 
 // RenameSubscription updates the display name of a stored subscription.
 func (s *Service) RenameSubscription(id, name string) error {
+	return runStoreWriteLocked(s, func() error {
+		return s.renameSubscription(id, name)
+	})
+}
+
+func (s *Service) renameSubscription(id, name string) error {
 	subscriptions, err := s.store.LoadSubscriptions()
 	if err != nil {
 		return fmt.Errorf("load subscriptions: %w", err)
@@ -317,6 +364,12 @@ func (s *Service) ListNodes(subscriptionID string) ([]domain.Node, error) {
 
 // RefreshSubscription reloads and reparses a subscription.
 func (s *Service) RefreshSubscription(ctx context.Context, subscriptionID string) (domain.Subscription, error) {
+	return runStoreWriteLockedResult(s, func() (domain.Subscription, error) {
+		return s.refreshSubscription(ctx, subscriptionID)
+	})
+}
+
+func (s *Service) refreshSubscription(ctx context.Context, subscriptionID string) (domain.Subscription, error) {
 	subscriptions, err := s.store.LoadSubscriptions()
 	if err != nil {
 		return domain.Subscription{}, fmt.Errorf("load subscriptions: %w", err)
@@ -371,6 +424,9 @@ func (s *Service) RefreshSubscription(ctx context.Context, subscriptionID string
 
 	state, err := s.store.LoadState()
 	if err == nil {
+		if state.LastRefreshAt == nil {
+			state.LastRefreshAt = make(map[string]time.Time)
+		}
 		state.LastRefreshAt[sub.ID] = sub.LastUpdatedAt
 		_ = s.store.SaveState(state)
 	}
@@ -380,6 +436,12 @@ func (s *Service) RefreshSubscription(ctx context.Context, subscriptionID string
 
 // RefreshAll refreshes every stored subscription.
 func (s *Service) RefreshAll(ctx context.Context) ([]domain.Subscription, error) {
+	return runStoreWriteLockedResult(s, func() ([]domain.Subscription, error) {
+		return s.refreshAll(ctx)
+	})
+}
+
+func (s *Service) refreshAll(ctx context.Context) ([]domain.Subscription, error) {
 	subscriptions, err := s.store.LoadSubscriptions()
 	if err != nil {
 		return nil, fmt.Errorf("load subscriptions: %w", err)
@@ -387,7 +449,7 @@ func (s *Service) RefreshAll(ctx context.Context) ([]domain.Subscription, error)
 
 	updated := make([]domain.Subscription, 0, len(subscriptions))
 	for _, sub := range subscriptions {
-		refreshed, err := s.RefreshSubscription(ctx, sub.ID)
+		refreshed, err := s.refreshSubscription(ctx, sub.ID)
 		if err != nil {
 			return updated, err
 		}
@@ -399,6 +461,12 @@ func (s *Service) RefreshAll(ctx context.Context) ([]domain.Subscription, error)
 
 // ConnectManual pins a subscription and node and applies the backend config.
 func (s *Service) ConnectManual(ctx context.Context, subscriptionID, nodeID string) error {
+	return runStoreWriteLocked(s, func() error {
+		return s.connectManual(ctx, subscriptionID, nodeID)
+	})
+}
+
+func (s *Service) connectManual(ctx context.Context, subscriptionID, nodeID string) error {
 	sub, err := s.subscriptionByID(subscriptionID)
 	if err != nil {
 		return err
@@ -409,6 +477,7 @@ func (s *Service) ConnectManual(ctx context.Context, subscriptionID, nodeID stri
 		return fmt.Errorf("node %q not found in subscription %q", nodeID, subscriptionID)
 	}
 
+	s.logInfo("manual connect requested", "subscription", sub.ID, "node", node.ID)
 	if err := s.applyNodeSelection(ctx, sub, node, domain.SelectionModeManual); err != nil {
 		return err
 	}
@@ -420,15 +489,23 @@ func (s *Service) ConnectManual(ctx context.Context, subscriptionID, nodeID stri
 		_ = s.store.SaveSettings(settings)
 	}
 
+	s.logInfo("manual connect succeeded", "subscription", sub.ID, "node", node.ID)
 	return nil
 }
 
 // ConnectAuto probes the selected subscription and applies the best available node.
 func (s *Service) ConnectAuto(ctx context.Context, subscriptionID string) (domain.Node, error) {
+	return runStoreWriteLockedResult(s, func() (domain.Node, error) {
+		return s.connectAuto(ctx, subscriptionID)
+	})
+}
+
+func (s *Service) connectAuto(ctx context.Context, subscriptionID string) (domain.Node, error) {
 	sub, err := s.subscriptionByID(subscriptionID)
 	if err != nil {
 		return domain.Node{}, err
 	}
+	s.logInfo("auto selection requested", "subscription", sub.ID)
 
 	state, err := s.store.LoadState()
 	if err != nil {
@@ -446,9 +523,10 @@ func (s *Service) ConnectAuto(ctx context.Context, subscriptionID string) (domai
 	}
 	current := state.Health[state.ActiveNodeID]
 	candidate := state.Health[bestNode.ID]
-	shouldSwitch, _ := probe.ShouldSwitch(current, candidate, time.Now().UTC(), state.LastSwitchAt, probe.DefaultSwitchPolicy())
+	shouldSwitch, switchReason := probe.ShouldSwitch(current, candidate, time.Now().UTC(), state.LastSwitchAt, probe.DefaultSwitchPolicy())
 	if state.ActiveNodeID == "" {
 		shouldSwitch = true
+		switchReason = "no current node"
 	}
 
 	selectedNode := bestNode
@@ -459,6 +537,16 @@ func (s *Service) ConnectAuto(ctx context.Context, subscriptionID string) (domai
 			switched = false
 		}
 	}
+	s.logInfo(
+		"auto selection decision",
+		"subscription", sub.ID,
+		"current_node", state.ActiveNodeID,
+		"candidate_node", bestNode.ID,
+		"selected_node", selectedNode.ID,
+		"switch", switched,
+		"reason", switchReason,
+		"candidate_score", bestScore.Score,
+	)
 
 	if err := s.applyNodeSelection(ctx, sub, selectedNode, domain.SelectionModeAuto); err != nil {
 		return domain.Node{}, err
@@ -494,15 +582,20 @@ func (s *Service) ConnectAuto(ctx context.Context, subscriptionID string) (domai
 		_ = s.store.SaveSettings(settings)
 	}
 
+	s.logInfo("auto connect succeeded", "subscription", sub.ID, "node", selectedNode.ID)
 	return selectedNode, nil
 }
 
 // Disconnect tears down the current runtime selection.
 func (s *Service) Disconnect(ctx context.Context) error {
-	if s.backend != nil {
-		if err := s.backend.Stop(ctx); err != nil {
-			return fmt.Errorf("stop backend: %w", err)
-		}
+	return runStoreWriteLocked(s, func() error {
+		return s.disconnect(ctx)
+	})
+}
+
+func (s *Service) disconnect(ctx context.Context) error {
+	if err := s.disconnectRuntime(ctx); err != nil {
+		return err
 	}
 
 	state, err := s.store.LoadState()
@@ -568,8 +661,21 @@ func (s *Service) RuntimeStatus(ctx context.Context) (backend.RuntimeStatus, err
 	return s.backend.Status(ctx)
 }
 
+// RestoreRuntime reapplies a persisted active connection during daemon startup.
+func (s *Service) RestoreRuntime(ctx context.Context) error {
+	return runStoreWriteLocked(s, func() error {
+		return s.restoreRuntime(ctx)
+	})
+}
+
 // GetSettings returns current settings.
 func (s *Service) GetSettings() (domain.Settings, error) {
+	return runStoreWriteLockedResult(s, func() (domain.Settings, error) {
+		return s.getSettings()
+	})
+}
+
+func (s *Service) getSettings() (domain.Settings, error) {
 	settings, err := s.store.LoadSettings()
 	if err != nil {
 		return domain.Settings{}, fmt.Errorf("load settings: %w", err)
@@ -589,6 +695,40 @@ func (s *Service) GetSettings() (domain.Settings, error) {
 	return settings, nil
 }
 
+func (s *Service) restoreRuntime(ctx context.Context) error {
+	state, err := s.store.LoadState()
+	if err != nil {
+		return fmt.Errorf("load state: %w", err)
+	}
+
+	if !state.Connected || state.ActiveSubscriptionID == "" || state.ActiveNodeID == "" {
+		if s.firewall != nil {
+			if err := s.firewall.Disable(ctx); err != nil {
+				return fmt.Errorf("disable firewall: %w", err)
+			}
+		}
+		return nil
+	}
+
+	s.logInfo("restore runtime start", "subscription", state.ActiveSubscriptionID, "node", state.ActiveNodeID, "mode", state.Mode)
+	if err := s.reapplyCurrentConnection(ctx); err != nil {
+		reason := fmt.Sprintf("restore runtime: %v", err)
+		s.logWarn("restore runtime failed", "subscription", state.ActiveSubscriptionID, "node", state.ActiveNodeID, "error", err.Error())
+		if persistErr := s.persistRestoreFailure(ctx, reason); persistErr != nil {
+			return fmt.Errorf("%s: %v", reason, persistErr)
+		}
+		return fmt.Errorf(reason)
+	}
+
+	settings, err := s.store.LoadSettings()
+	if err == nil && syncSettingsToRuntime(&settings, state) {
+		_ = s.store.SaveSettings(settings)
+	}
+
+	s.logInfo("restore runtime succeeded", "subscription", state.ActiveSubscriptionID, "node", state.ActiveNodeID, "mode", state.Mode)
+	return nil
+}
+
 // GetFirewallSettings returns the transparent proxy routing settings.
 func (s *Service) GetFirewallSettings() (domain.FirewallSettings, error) {
 	settings, err := s.store.LoadSettings()
@@ -601,6 +741,12 @@ func (s *Service) GetFirewallSettings() (domain.FirewallSettings, error) {
 
 // ConfigureFirewall updates firewall targets and enabled state.
 func (s *Service) ConfigureFirewall(ctx context.Context, targets []string, enabled bool, port int) (domain.FirewallSettings, error) {
+	return runStoreWriteLockedResult(s, func() (domain.FirewallSettings, error) {
+		return s.configureFirewall(ctx, targets, enabled, port)
+	})
+}
+
+func (s *Service) configureFirewall(ctx context.Context, targets []string, enabled bool, port int) (domain.FirewallSettings, error) {
 	settings, err := s.store.LoadSettings()
 	if err != nil {
 		return domain.FirewallSettings{}, fmt.Errorf("load settings: %w", err)
@@ -626,6 +772,12 @@ func (s *Service) ConfigureFirewall(ctx context.Context, targets []string, enabl
 
 // ConfigureFirewallHosts routes all TCP traffic from selected client IPs through the transparent proxy.
 func (s *Service) ConfigureFirewallHosts(ctx context.Context, sources []string, enabled bool, port int) (domain.FirewallSettings, error) {
+	return runStoreWriteLockedResult(s, func() (domain.FirewallSettings, error) {
+		return s.configureFirewallHosts(ctx, sources, enabled, port)
+	})
+}
+
+func (s *Service) configureFirewallHosts(ctx context.Context, sources []string, enabled bool, port int) (domain.FirewallSettings, error) {
 	settings, err := s.store.LoadSettings()
 	if err != nil {
 		return domain.FirewallSettings{}, fmt.Errorf("load settings: %w", err)
@@ -651,6 +803,12 @@ func (s *Service) ConfigureFirewallHosts(ctx context.Context, sources []string, 
 
 // UpdateFirewallPort changes the transparent redirect port and reapplies the active rules.
 func (s *Service) UpdateFirewallPort(ctx context.Context, port int) (domain.FirewallSettings, error) {
+	return runStoreWriteLockedResult(s, func() (domain.FirewallSettings, error) {
+		return s.updateFirewallPort(ctx, port)
+	})
+}
+
+func (s *Service) updateFirewallPort(ctx context.Context, port int) (domain.FirewallSettings, error) {
 	if port <= 0 {
 		return domain.FirewallSettings{}, fmt.Errorf("transparent port must be greater than zero")
 	}
@@ -674,6 +832,12 @@ func (s *Service) UpdateFirewallPort(ctx context.Context, port int) (domain.Fire
 
 // UpdateFirewallBlockQUIC enables or disables QUIC blocking for source-host routing.
 func (s *Service) UpdateFirewallBlockQUIC(ctx context.Context, enabled bool) (domain.FirewallSettings, error) {
+	return runStoreWriteLockedResult(s, func() (domain.FirewallSettings, error) {
+		return s.updateFirewallBlockQUIC(ctx, enabled)
+	})
+}
+
+func (s *Service) updateFirewallBlockQUIC(ctx context.Context, enabled bool) (domain.FirewallSettings, error) {
 	settings, err := s.store.LoadSettings()
 	if err != nil {
 		return domain.FirewallSettings{}, fmt.Errorf("load settings: %w", err)
@@ -693,6 +857,12 @@ func (s *Service) UpdateFirewallBlockQUIC(ctx context.Context, enabled bool) (do
 
 // DisableFirewall disables transparent proxy routing.
 func (s *Service) DisableFirewall(ctx context.Context) (domain.FirewallSettings, error) {
+	return runStoreWriteLockedResult(s, func() (domain.FirewallSettings, error) {
+		return s.disableFirewall(ctx)
+	})
+}
+
+func (s *Service) disableFirewall(ctx context.Context) (domain.FirewallSettings, error) {
 	settings, err := s.store.LoadSettings()
 	if err != nil {
 		return domain.FirewallSettings{}, fmt.Errorf("load settings: %w", err)
@@ -714,6 +884,12 @@ func (s *Service) DisableFirewall(ctx context.Context) (domain.FirewallSettings,
 
 // SetSetting updates a single setting key.
 func (s *Service) SetSetting(key, value string) (domain.Settings, error) {
+	return runStoreWriteLockedResult(s, func() (domain.Settings, error) {
+		return s.setSetting(key, value)
+	})
+}
+
+func (s *Service) setSetting(key, value string) (domain.Settings, error) {
 	settings, err := s.store.LoadSettings()
 	if err != nil {
 		return domain.Settings{}, fmt.Errorf("load settings: %w", err)
@@ -751,7 +927,7 @@ func (s *Service) SetSetting(key, value string) (domain.Settings, error) {
 		state, stateErr := s.store.LoadState()
 		if enableAuto {
 			if stateErr == nil && state.Connected && state.ActiveSubscriptionID != "" {
-				if _, err := s.ConnectAuto(context.Background(), state.ActiveSubscriptionID); err != nil {
+				if _, err := s.connectAuto(context.Background(), state.ActiveSubscriptionID); err != nil {
 					return domain.Settings{}, err
 				}
 				return s.store.LoadSettings()
@@ -765,7 +941,7 @@ func (s *Service) SetSetting(key, value string) (domain.Settings, error) {
 				state.Mode == domain.SelectionModeAuto &&
 				state.ActiveSubscriptionID != "" &&
 				state.ActiveNodeID != "" {
-				if err := s.ConnectManual(context.Background(), state.ActiveSubscriptionID, state.ActiveNodeID); err != nil {
+				if err := s.connectManual(context.Background(), state.ActiveSubscriptionID, state.ActiveNodeID); err != nil {
 					return domain.Settings{}, err
 				}
 				return s.store.LoadSettings()
@@ -826,6 +1002,12 @@ func (s *Service) SetSetting(key, value string) (domain.Settings, error) {
 
 // ApplyDefaultDNS replaces current DNS settings with the RouteFlux recommended profile.
 func (s *Service) ApplyDefaultDNS(ctx context.Context) (domain.Settings, error) {
+	return runStoreWriteLockedResult(s, func() (domain.Settings, error) {
+		return s.applyDefaultDNS(ctx)
+	})
+}
+
+func (s *Service) applyDefaultDNS(ctx context.Context) (domain.Settings, error) {
 	settings, err := s.store.LoadSettings()
 	if err != nil {
 		return domain.Settings{}, fmt.Errorf("load settings: %w", err)
@@ -1140,11 +1322,17 @@ func (s *Service) applyNodeSelection(ctx context.Context, sub domain.Subscriptio
 		return fmt.Errorf("load settings: %w", err)
 	}
 
+	resolvedNode, err := s.resolveNodeAddress(ctx, node)
+	if err != nil {
+		return fmt.Errorf("resolve node address: %w", err)
+	}
+
 	if s.backend != nil {
+		s.logInfo("apply backend config", "subscription", sub.ID, "node", node.ID, "mode", mode, "resolved_address", resolvedNode.Address)
 		if err := s.backend.ApplyConfig(ctx, backend.ConfigRequest{
 			Mode:             mode,
-			Nodes:            []domain.Node{node},
-			SelectedNodeID:   node.ID,
+			Nodes:            []domain.Node{resolvedNode},
+			SelectedNodeID:   resolvedNode.ID,
 			LogLevel:         settings.LogLevel,
 			DNS:              settings.DNS,
 			SOCKSPort:        10808,
@@ -1152,6 +1340,7 @@ func (s *Service) applyNodeSelection(ctx context.Context, sub domain.Subscriptio
 			TransparentProxy: settings.Firewall.Enabled && (len(settings.Firewall.TargetCIDRs) > 0 || len(settings.Firewall.SourceCIDRs) > 0),
 			TransparentPort:  settings.Firewall.TransparentPort,
 		}); err != nil {
+			s.logWarn("apply backend config failed", "subscription", sub.ID, "node", node.ID, "mode", mode, "error", err.Error())
 			_ = s.markConnectionFailed(ctx, sub.ID, node.ID, mode, fmt.Sprintf("apply backend config: %v", err))
 			return fmt.Errorf("apply backend config: %w", err)
 		}
@@ -1162,13 +1351,19 @@ func (s *Service) applyNodeSelection(ctx context.Context, sub domain.Subscriptio
 
 	if s.firewall != nil {
 		if settings.Firewall.Enabled && (len(settings.Firewall.TargetCIDRs) > 0 || len(settings.Firewall.SourceCIDRs) > 0) {
+			s.logInfo("apply firewall rules", "subscription", sub.ID, "node", node.ID, "targets", settings.Firewall.TargetCIDRs, "hosts", settings.Firewall.SourceCIDRs)
 			if err := s.firewall.Apply(ctx, settings.Firewall); err != nil {
+				s.logWarn("apply firewall failed", "subscription", sub.ID, "node", node.ID, "error", err.Error())
 				_ = s.markConnectionFailed(ctx, sub.ID, node.ID, mode, fmt.Sprintf("apply firewall: %v", err))
 				return fmt.Errorf("apply firewall: %w", err)
 			}
+			s.logInfo("firewall rules applied", "subscription", sub.ID, "node", node.ID)
 		} else if err := s.firewall.Disable(ctx); err != nil {
+			s.logWarn("disable firewall failed", "subscription", sub.ID, "node", node.ID, "error", err.Error())
 			_ = s.markConnectionFailed(ctx, sub.ID, node.ID, mode, fmt.Sprintf("disable firewall: %v", err))
 			return fmt.Errorf("disable firewall: %w", err)
+		} else {
+			s.logInfo("firewall rules disabled", "subscription", sub.ID, "node", node.ID)
 		}
 	}
 
@@ -1193,6 +1388,35 @@ func (s *Service) applyNodeSelection(ctx context.Context, sub domain.Subscriptio
 	return nil
 }
 
+func (s *Service) resolveNodeAddress(ctx context.Context, node domain.Node) (domain.Node, error) {
+	if net.ParseIP(strings.TrimSpace(node.Address)) != nil {
+		return node, nil
+	}
+	if s.resolver == nil {
+		return node, nil
+	}
+
+	addrs, err := s.resolver.LookupIPAddr(ctx, node.Address)
+	if err != nil {
+		s.logger.Debug("resolve node address fallback", "host", node.Address, "error", err)
+		return node, nil
+	}
+
+	for _, addr := range addrs {
+		if ipv4 := addr.IP.To4(); ipv4 != nil {
+			node.Address = ipv4.String()
+			return node, nil
+		}
+	}
+	if len(addrs) == 0 {
+		s.logger.Debug("resolve node address returned no addresses", "host", node.Address)
+		return node, nil
+	}
+
+	node.Address = addrs[0].IP.String()
+	return node, nil
+}
+
 func (s *Service) probeSubscription(ctx context.Context, sub domain.Subscription, health map[string]domain.NodeHealth) []probe.Result {
 	results := make([]probe.Result, 0, len(sub.Nodes))
 	for _, node := range sub.Nodes {
@@ -1202,6 +1426,7 @@ func (s *Service) probeSubscription(ctx context.Context, sub domain.Subscription
 		updated.Score = probe.CalculateScore(updated, probe.DefaultScoreConfig()).Score
 		health[node.ID] = updated
 		result.Health = updated
+		s.logDebug("probe result", "subscription", sub.ID, "node", node.ID, "healthy", result.Healthy, "latency", result.Latency, "error", errString(result.Err))
 		results = append(results, result)
 	}
 
@@ -1211,6 +1436,69 @@ func (s *Service) probeSubscription(ctx context.Context, sub domain.Subscription
 func stableSubscriptionID(sourceType domain.SourceType, source string) string {
 	sum := sha1.Sum([]byte(string(sourceType) + "|" + source))
 	return "sub-" + hex.EncodeToString(sum[:])[:10]
+}
+
+func resolveAddSubscriptionID(subscriptions []domain.Subscription, next domain.Subscription) string {
+	signature := subscriptionSignature(next)
+	for _, existing := range subscriptions {
+		if existing.SourceType != next.SourceType || strings.TrimSpace(existing.Source) != strings.TrimSpace(next.Source) {
+			continue
+		}
+		if subscriptionSignature(existing) == signature {
+			return existing.ID
+		}
+	}
+
+	baseID := stableSubscriptionID(next.SourceType, next.Source)
+	if !subscriptionIDExists(subscriptions, baseID) {
+		return baseID
+	}
+
+	candidate := stableSubscriptionID(next.SourceType, next.Source+"|"+signature)
+	if !subscriptionIDExists(subscriptions, candidate) {
+		return candidate
+	}
+
+	for attempt := 2; ; attempt++ {
+		candidate = stableSubscriptionID(next.SourceType, fmt.Sprintf("%s|%s|%d", next.Source, signature, attempt))
+		if !subscriptionIDExists(subscriptions, candidate) {
+			return candidate
+		}
+	}
+}
+
+func subscriptionIDExists(subscriptions []domain.Subscription, id string) bool {
+	return slices.ContainsFunc(subscriptions, func(sub domain.Subscription) bool {
+		return sub.ID == id
+	})
+}
+
+func subscriptionSignature(sub domain.Subscription) string {
+	nodes := make([]domain.Node, len(sub.Nodes))
+	copy(nodes, sub.Nodes)
+	for idx := range nodes {
+		nodes[idx].SubscriptionID = ""
+	}
+
+	payload, err := json.Marshal(struct {
+		SourceType   domain.SourceType `json:"source_type"`
+		Source       string            `json:"source"`
+		ProviderName string            `json:"provider_name"`
+		DisplayName  string            `json:"display_name"`
+		Nodes        []domain.Node     `json:"nodes"`
+	}{
+		SourceType:   sub.SourceType,
+		Source:       strings.TrimSpace(sub.Source),
+		ProviderName: strings.TrimSpace(sub.ProviderName),
+		DisplayName:  strings.TrimSpace(sub.DisplayName),
+		Nodes:        nodes,
+	})
+	if err != nil {
+		return stableSubscriptionID(sub.SourceType, strings.TrimSpace(sub.Source)+"|"+strings.TrimSpace(sub.ProviderName)+"|"+strings.TrimSpace(sub.DisplayName))
+	}
+
+	sum := sha1.Sum(payload)
+	return hex.EncodeToString(sum[:])
 }
 
 func sourceOrURL(sourceType domain.SourceType, req AddSubscriptionRequest) string {
@@ -1520,12 +1808,14 @@ func (s *Service) ensureBackendRunning(ctx context.Context, subscriptionID, node
 		return nil
 	}
 
-	status, err := s.backend.Status(ctx)
+	status, err := s.waitForBackendRunning(ctx, subscriptionID, nodeID, mode)
 	if err != nil {
+		s.logWarn("backend status check failed", "subscription", subscriptionID, "node", nodeID, "mode", mode, "error", err.Error())
 		_ = s.markConnectionFailed(ctx, subscriptionID, nodeID, mode, fmt.Sprintf("backend status check failed: %v", err))
 		return fmt.Errorf("check backend status: %w", err)
 	}
 	if status.Running {
+		s.logInfo("backend running confirmed", "subscription", subscriptionID, "node", nodeID, "mode", mode, "service_state", status.ServiceState)
 		return nil
 	}
 
@@ -1533,8 +1823,76 @@ func (s *Service) ensureBackendRunning(ctx context.Context, subscriptionID, node
 	if strings.TrimSpace(status.ServiceState) != "" && status.ServiceState != "unknown" {
 		reason = fmt.Sprintf("backend is not running (%s)", status.ServiceState)
 	}
+	s.logWarn("backend reported not running", "subscription", subscriptionID, "node", nodeID, "mode", mode, "service_state", status.ServiceState)
 	_ = s.markConnectionFailed(ctx, subscriptionID, nodeID, mode, reason)
 	return fmt.Errorf(reason)
+}
+
+func (s *Service) waitForBackendRunning(ctx context.Context, subscriptionID, nodeID string, mode domain.SelectionMode) (backend.RuntimeStatus, error) {
+	checks := s.backendReadyChecks
+	if checks < 1 {
+		checks = 1
+	}
+
+	var last backend.RuntimeStatus
+	for attempt := 1; attempt <= checks; attempt++ {
+		status, err := s.backend.Status(ctx)
+		if err != nil {
+			return backend.RuntimeStatus{}, err
+		}
+		last = status
+		if status.Running {
+			return status, nil
+		}
+		if !backendStateMayStillBeStarting(status.ServiceState) || attempt == checks {
+			return status, nil
+		}
+
+		s.logInfo(
+			"backend not ready yet",
+			"subscription", subscriptionID,
+			"node", nodeID,
+			"mode", mode,
+			"service_state", status.ServiceState,
+			"attempt", attempt,
+		)
+
+		if err := sleepWithContext(ctx, s.backendReadyDelay); err != nil {
+			return backend.RuntimeStatus{}, err
+		}
+	}
+
+	return last, nil
+}
+
+func backendStateMayStillBeStarting(serviceState string) bool {
+	normalized := strings.ToLower(strings.TrimSpace(serviceState))
+	switch {
+	case normalized == "", normalized == "unknown":
+		return true
+	case strings.Contains(normalized, "starting"):
+		return true
+	case strings.Contains(normalized, "no instances"):
+		return true
+	default:
+		return false
+	}
+}
+
+func sleepWithContext(ctx context.Context, d time.Duration) error {
+	if d <= 0 {
+		return ctx.Err()
+	}
+
+	timer := time.NewTimer(d)
+	defer timer.Stop()
+
+	select {
+	case <-ctx.Done():
+		return ctx.Err()
+	case <-timer.C:
+		return nil
+	}
 }
 
 func (s *Service) markConnectionFailed(ctx context.Context, subscriptionID, nodeID string, mode domain.SelectionMode, reason string) error {
@@ -1559,5 +1917,58 @@ func (s *Service) markConnectionFailed(ctx context.Context, subscriptionID, node
 		return fmt.Errorf("save state after backend failure: %w", err)
 	}
 
+	s.logWarn("connection marked failed", "subscription", subscriptionID, "node", nodeID, "mode", mode, "reason", reason)
 	return nil
+}
+
+func (s *Service) persistRestoreFailure(ctx context.Context, reason string) error {
+	if s.firewall != nil {
+		if err := s.firewall.Disable(ctx); err != nil {
+			return fmt.Errorf("disable firewall after restore failure: %w", err)
+		}
+	}
+
+	state, err := s.store.LoadState()
+	if err != nil {
+		return fmt.Errorf("load state after restore failure: %w", err)
+	}
+
+	state.ActiveSubscriptionID = ""
+	state.ActiveNodeID = ""
+	state.Mode = domain.SelectionModeDisconnected
+	state.Connected = false
+	state.LastFailureReason = reason
+	if err := s.store.SaveState(state); err != nil {
+		return fmt.Errorf("save state after restore failure: %w", err)
+	}
+
+	settings, err := s.store.LoadSettings()
+	if err == nil {
+		settings.AutoMode = false
+		settings.Mode = domain.SelectionModeDisconnected
+		if saveErr := s.store.SaveSettings(settings); saveErr != nil {
+			return fmt.Errorf("save settings after restore failure: %w", saveErr)
+		}
+	}
+
+	s.logWarn("restore failure persisted", "reason", reason)
+	return nil
+}
+
+func (s *Service) logDebug(msg string, args ...any) {
+	if s.logger != nil {
+		s.logger.Debug(msg, args...)
+	}
+}
+
+func (s *Service) logInfo(msg string, args ...any) {
+	if s.logger != nil {
+		s.logger.Info(msg, args...)
+	}
+}
+
+func (s *Service) logWarn(msg string, args ...any) {
+	if s.logger != nil {
+		s.logger.Warn(msg, args...)
+	}
 }

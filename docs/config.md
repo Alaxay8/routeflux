@@ -20,7 +20,7 @@ Local development paths:
 - `latency_threshold`: minimum improvement required to switch healthy nodes
 - `auto_mode`: whether auto selection is enabled
 - `mode`: current selection mode
-- `log_level`: backend and app log verbosity
+- `log_level`: backend and app log verbosity (`debug`, `info`, `warn`, or `error` at startup)
 
 ## State
 Runtime state keeps:
@@ -31,3 +31,9 @@ Runtime state keeps:
 - node health telemetry
 - last switch time
 - last success and failure data
+
+## Upgrade And Recovery
+- RouteFlux preserves `/etc/routeflux` during in-place upgrades.
+- Missing or older state/settings schema versions are upgraded to the current schema during load.
+- Malformed `settings.json` or `state.json` is renamed to `*.corrupt-<UTC>.json`, replaced with a fresh canonical file, and reported through the logger as a recovery warning.
+- Future schema versions are not downgraded automatically and remain a hard error.
