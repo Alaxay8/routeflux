@@ -24,7 +24,7 @@ func TestPackageOpenWrtFallsBackToTarWhenBSDTarMissing(t *testing.T) {
 	writeFile(t, filepath.Join(repoDir, "luci-app-routeflux", "htdocs", "luci-static", "resources", "view", "routeflux", "overview.js"), "'use strict';\n", 0o644)
 
 	toolDir := t.TempDir()
-	for _, name := range []string{"basename", "cat", "chmod", "cp", "date", "dirname", "find", "mkdir", "rm", "sort", "tar", "tr", "wc"} {
+	for _, name := range []string{"basename", "cat", "chmod", "cp", "date", "dirname", "find", "gzip", "mkdir", "rm", "sort", "tar", "tr", "wc"} {
 		target, err := exec.LookPath(name)
 		if err != nil {
 			t.Fatalf("find %s: %v", name, err)
