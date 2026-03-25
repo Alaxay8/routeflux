@@ -26,11 +26,13 @@ The current production claim is the CLI and runtime path. The TUI and LuCI front
 
 ## Quick Start
 
-Install the latest OpenWrt release from your computer:
+Install the current beta release from your computer:
 
 ```bash
-ssh root@router "wget -O /tmp/routeflux-install.sh https://github.com/Alaxay8/routeflux/releases/latest/download/install.sh && sh /tmp/routeflux-install.sh"
+ssh root@router "wget -O /tmp/routeflux-install.sh https://github.com/Alaxay8/routeflux/releases/download/v0.1.3-beta.7/install.sh && sh /tmp/routeflux-install.sh"
 ```
+
+GitHub does not serve prerelease assets from `releases/latest/download`. While RouteFlux is still published as a beta prerelease, use a tag-pinned release URL.
 
 Current easy-install release assets are provided for:
 
@@ -47,11 +49,13 @@ See [Installation](#installation) and [Usage](#usage).
 
 ## Installation
 
-1. Fastest path: use the installer from the latest GitHub release:
+1. Fastest path: use the installer from the current beta GitHub release:
 
 ```bash
-ssh root@router "wget -O /tmp/routeflux-install.sh https://github.com/Alaxay8/routeflux/releases/latest/download/install.sh && sh /tmp/routeflux-install.sh"
+ssh root@router "wget -O /tmp/routeflux-install.sh https://github.com/Alaxay8/routeflux/releases/download/v0.1.3-beta.7/install.sh && sh /tmp/routeflux-install.sh"
 ```
+
+If you publish a non-prerelease stable release later, you can switch this command back to `releases/latest/download/install.sh`.
 
 2. For local builds, install Go `1.22` or later.
 3. Use OpenWrt or ImmortalWrt with `nftables` available. OpenWrt `22.03+` is the practical baseline for the current firewall integration.
