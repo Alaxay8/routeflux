@@ -3,6 +3,7 @@ package app
 import (
 	"context"
 	"fmt"
+	"io"
 	"net"
 	"net/http"
 	"net/http/httptest"
@@ -15,6 +16,10 @@ import (
 	"github.com/Alaxay8/routeflux/internal/domain"
 	"github.com/Alaxay8/routeflux/internal/probe"
 )
+
+func writeResponse(w http.ResponseWriter, body string) {
+	_, _ = io.WriteString(w, body)
+}
 
 func TestConfigureFirewallHostsClearsDestinationTargets(t *testing.T) {
 	t.Parallel()
@@ -65,7 +70,7 @@ func TestAddSubscriptionRetriesTransientHTTPStatus(t *testing.T) {
 			return
 		}
 
-		fmt.Fprint(w, "vless://11111111-1111-1111-1111-111111111111@node1.example.com:443?encryption=none&security=reality&sni=edge.example.com&fp=chrome&pbk=public-key-1&sid=ab12cd34&type=ws&path=%2Fproxy&host=cdn.example.com#Edge%20Reality")
+		writeResponse(w, "vless://11111111-1111-1111-1111-111111111111@node1.example.com:443?encryption=none&security=reality&sni=edge.example.com&fp=chrome&pbk=public-key-1&sid=ab12cd34&type=ws&path=%2Fproxy&host=cdn.example.com#Edge%20Reality")
 	}))
 	t.Cleanup(server.Close)
 
@@ -104,7 +109,7 @@ func TestAddSubscriptionUsesCompatibleUserAgent(t *testing.T) {
 			return
 		}
 
-		fmt.Fprint(w, "vless://11111111-1111-1111-1111-111111111111@node1.example.com:443?encryption=none&security=reality&sni=edge.example.com&fp=chrome&pbk=public-key-1&sid=ab12cd34&type=ws&path=%2Fproxy&host=cdn.example.com#Edge%20Reality")
+		writeResponse(w, "vless://11111111-1111-1111-1111-111111111111@node1.example.com:443?encryption=none&security=reality&sni=edge.example.com&fp=chrome&pbk=public-key-1&sid=ab12cd34&type=ws&path=%2Fproxy&host=cdn.example.com#Edge%20Reality")
 	}))
 	t.Cleanup(server.Close)
 
@@ -147,7 +152,7 @@ func TestAddSubscriptionRetriesWithCookieJar(t *testing.T) {
 			return
 		}
 
-		fmt.Fprint(w, "vless://11111111-1111-1111-1111-111111111111@node1.example.com:443?encryption=none&security=reality&sni=edge.example.com&fp=chrome&pbk=public-key-1&sid=ab12cd34&type=ws&path=%2Fproxy&host=cdn.example.com#Edge%20Reality")
+		writeResponse(w, "vless://11111111-1111-1111-1111-111111111111@node1.example.com:443?encryption=none&security=reality&sni=edge.example.com&fp=chrome&pbk=public-key-1&sid=ab12cd34&type=ws&path=%2Fproxy&host=cdn.example.com#Edge%20Reality")
 	}))
 	t.Cleanup(server.Close)
 
@@ -182,7 +187,7 @@ func TestAddSubscriptionUsesProfileTitleHeaderForProviderName(t *testing.T) {
 
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Profile-Title", "base64:RGVtbyBWUE4=")
-		fmt.Fprint(w, "vless://11111111-1111-1111-1111-111111111111@node1.example.com:443?encryption=none&security=reality&sni=edge.example.com&fp=chrome&pbk=public-key-1&sid=ab12cd34&type=ws&path=%2Fproxy&host=cdn.example.com#Edge%20Reality")
+		writeResponse(w, "vless://11111111-1111-1111-1111-111111111111@node1.example.com:443?encryption=none&security=reality&sni=edge.example.com&fp=chrome&pbk=public-key-1&sid=ab12cd34&type=ws&path=%2Fproxy&host=cdn.example.com#Edge%20Reality")
 	}))
 	t.Cleanup(server.Close)
 
@@ -222,7 +227,7 @@ func TestAddSubscriptionKeepsManualProviderNameDespiteProfileTitle(t *testing.T)
 
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Profile-Title", "base64:RGVtbyBWUE4=")
-		fmt.Fprint(w, "vless://11111111-1111-1111-1111-111111111111@node1.example.com:443?encryption=none&security=reality&sni=edge.example.com&fp=chrome&pbk=public-key-1&sid=ab12cd34&type=ws&path=%2Fproxy&host=cdn.example.com#Edge%20Reality")
+		writeResponse(w, "vless://11111111-1111-1111-1111-111111111111@node1.example.com:443?encryption=none&security=reality&sni=edge.example.com&fp=chrome&pbk=public-key-1&sid=ab12cd34&type=ws&path=%2Fproxy&host=cdn.example.com#Edge%20Reality")
 	}))
 	t.Cleanup(server.Close)
 
@@ -261,9 +266,9 @@ func TestAddSubscriptionKeepsDistinctProfilesForSharedURL(t *testing.T) {
 		w.Header().Set("Profile-Title", "base64:RGVtbyBWUE4=")
 		switch requests {
 		case 1:
-			fmt.Fprint(w, "vless://11111111-1111-1111-1111-111111111111@node1.example.com:443?encryption=none&security=tls&sni=edge.example.com&type=ws&path=%2Fone&host=cdn.example.com#Profile%201")
+			writeResponse(w, "vless://11111111-1111-1111-1111-111111111111@node1.example.com:443?encryption=none&security=tls&sni=edge.example.com&type=ws&path=%2Fone&host=cdn.example.com#Profile%201")
 		default:
-			fmt.Fprint(w, "vless://22222222-2222-2222-2222-222222222222@node2.example.com:443?encryption=none&security=tls&sni=edge.example.com&type=ws&path=%2Ftwo&host=cdn.example.com#Profile%202")
+			writeResponse(w, "vless://22222222-2222-2222-2222-222222222222@node2.example.com:443?encryption=none&security=tls&sni=edge.example.com&type=ws&path=%2Ftwo&host=cdn.example.com#Profile%202")
 		}
 	}))
 	t.Cleanup(server.Close)
@@ -310,7 +315,7 @@ func TestAddSubscriptionReusesIDForEquivalentSharedURL(t *testing.T) {
 
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Profile-Title", "base64:RGVtbyBWUE4=")
-		fmt.Fprint(w, "vless://11111111-1111-1111-1111-111111111111@node1.example.com:443?encryption=none&security=tls&sni=edge.example.com&type=ws&path=%2Fone&host=cdn.example.com#Profile%201")
+		writeResponse(w, "vless://11111111-1111-1111-1111-111111111111@node1.example.com:443?encryption=none&security=tls&sni=edge.example.com&type=ws&path=%2Fone&host=cdn.example.com#Profile%201")
 	}))
 	t.Cleanup(server.Close)
 
@@ -347,7 +352,7 @@ func TestAddSubscriptionReturnsJSONEndpointError(t *testing.T) {
 
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
-		fmt.Fprint(w, `{"error":"USER_NOT_FOUND","info":"User account does not exist."}`)
+		writeResponse(w, `{"error":"USER_NOT_FOUND","info":"User account does not exist."}`)
 	}))
 	t.Cleanup(server.Close)
 
@@ -377,7 +382,7 @@ func TestAddSubscriptionReturnsHTMLResponseError(t *testing.T) {
 
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "text/html; charset=utf-8")
-		fmt.Fprint(w, "<html><body><h1>Login required</h1><p>Open the provider portal first.</p></body></html>")
+		writeResponse(w, "<html><body><h1>Login required</h1><p>Open the provider portal first.</p></body></html>")
 	}))
 	t.Cleanup(server.Close)
 
@@ -407,7 +412,7 @@ func TestAddSubscriptionExtractsHTMLShareLinksWithSpacesInRemark(t *testing.T) {
 
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "text/html; charset=utf-8")
-		fmt.Fprint(w, `<html><body><input readonly value="vless://8b922611-af1c-40c9-9af0-80fd0d782084@snl4.linkey8.ru:8443?security=reality&amp;type=tcp&amp;flow=xtls-rprx-vision&amp;sni=www.vk.com&amp;fp=qq&amp;pbk=wDQjzXYVtjdLkEyXpReh973y4rDIDH6kkX-g-MR7xAg&amp;sid=#🇳🇱 Нидерланды"></body></html>`)
+		writeResponse(w, `<html><body><input readonly value="vless://8b922611-af1c-40c9-9af0-80fd0d782084@snl4.linkey8.ru:8443?security=reality&amp;type=tcp&amp;flow=xtls-rprx-vision&amp;sni=www.vk.com&amp;fp=qq&amp;pbk=wDQjzXYVtjdLkEyXpReh973y4rDIDH6kkX-g-MR7xAg&amp;sid=#🇳🇱 Нидерланды"></body></html>`)
 	}))
 	t.Cleanup(server.Close)
 
@@ -491,7 +496,7 @@ func TestRefreshSubscriptionUpdatesLegacyURLDerivedProviderNameFromProfileTitle(
 
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Profile-Title", "base64:RGVtbyBWUE4=")
-		fmt.Fprint(w, `[
+		writeResponse(w, `[
 		  {
 		    "outbounds": [
 		      {
@@ -572,7 +577,7 @@ func TestRefreshSubscriptionDoesNotOverrideManualProviderNameWithProfileTitle(t 
 
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Profile-Title", "base64:RGVtbyBWUE4=")
-		fmt.Fprint(w, `[
+		writeResponse(w, `[
 		  {
 		    "outbounds": [
 		      {
@@ -663,7 +668,7 @@ func TestRefreshSubscriptionUpgradesLegacyKeyVPNNameFromProfileTitle(t *testing.
 
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Profile-Title", "base64:REVNTyBWUE4=")
-		fmt.Fprint(w, `[
+		writeResponse(w, `[
 		  {
 		    "outbounds": [
 		      {
@@ -753,7 +758,7 @@ func TestRefreshSubscriptionNormalizesLegacyRawHostNameWithoutProfileTitle(t *te
 	t.Parallel()
 
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		fmt.Fprint(w, `[
+		writeResponse(w, `[
 		  {
 		    "outbounds": [
 		      {
