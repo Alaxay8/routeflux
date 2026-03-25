@@ -21,6 +21,7 @@ func TestPackageOpenWrtFallsBackToTarWhenBSDTarMissing(t *testing.T) {
 	writeExecutable(t, filepath.Join(repoDir, "openwrt", "root", "etc", "init.d", "routeflux"), "#!/bin/sh\nexit 0\n")
 	writeFile(t, filepath.Join(repoDir, "luci-app-routeflux", "root", "usr", "share", "luci", "menu.d", "luci-app-routeflux.json"), "{}\n", 0o644)
 	writeFile(t, filepath.Join(repoDir, "luci-app-routeflux", "root", "usr", "share", "rpcd", "acl.d", "luci-app-routeflux.json"), "{}\n", 0o644)
+	writeFile(t, filepath.Join(repoDir, "luci-app-routeflux", "htdocs", "luci-static", "resources", "routeflux", "ui.js"), "'use strict';\n", 0o644)
 	writeFile(t, filepath.Join(repoDir, "luci-app-routeflux", "htdocs", "luci-static", "resources", "view", "routeflux", "overview.js"), "'use strict';\n", 0o644)
 
 	toolDir := t.TempDir()
@@ -52,6 +53,9 @@ func TestPackageOpenWrtFallsBackToTarWhenBSDTarMissing(t *testing.T) {
 	}
 	if _, err := os.Stat(filepath.Join(repoDir, "dist", "routeflux_1.2.3_x86_64.tar.gz")); err != nil {
 		t.Fatalf("expected tarball artifact: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(repoDir, "dist", "routeflux-ipk", "data", "www", "luci-static", "resources", "routeflux", "ui.js")); err != nil {
+		t.Fatalf("expected shared routeflux ui helper in package data: %v", err)
 	}
 }
 

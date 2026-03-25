@@ -2,6 +2,8 @@
 'require view';
 'require fs';
 'require ui';
+'require dom';
+'require routeflux.ui as routefluxUI';
 
 var routefluxBinary = '/usr/bin/routeflux';
 
@@ -291,6 +293,10 @@ function badge(text, extraClass) {
 
 return view.extend({
 	load: function() {
+		return this.requestPageData();
+	},
+
+	requestPageData: function() {
 		return Promise.all([
 			this.execJSON([ '--json', 'status' ]).catch(function(err) {
 				return { __error__: err.message || String(err) };
@@ -321,8 +327,16 @@ return view.extend({
 		});
 	},
 
+	refreshPageContent: function() {
+		return this.requestPageData().then(L.bind(function(data) {
+			var root = document.querySelector('#routeflux-subscriptions-root');
+			if (root)
+				dom.content(root, this.renderPageContent(data));
+		}, this));
+	},
+
 	execAction: function(argv, successMessage) {
-		return fs.exec(routefluxBinary, argv).then(function(res) {
+		return fs.exec(routefluxBinary, argv).then(L.bind(function(res) {
 			var stderr = trim(res.stderr);
 			var stdout = trim(res.stdout);
 
@@ -330,12 +344,10 @@ return view.extend({
 				throw new Error(stderr || stdout || _('RouteFlux command failed.'));
 
 			ui.addNotification(null, notificationParagraph(stdout || successMessage), 'info');
-			window.setTimeout(function() {
-				window.location.reload();
-			}, 350);
-
-			return res;
-		}).catch(function(err) {
+			return this.refreshPageContent().then(function() {
+				return res;
+			});
+		}, this)).catch(function(err) {
 			ui.addNotification(null, notificationParagraph(err.message || String(err)));
 			throw err;
 		});
@@ -458,7 +470,7 @@ return view.extend({
 			[ _('Provider'), providerName ],
 			[ _('Profile'), displayName ],
 			[ _('Source Type'), firstNonEmpty([ subscription.source_type ], '-') ],
-			[ _('Updated'), firstNonEmpty([ subscription.last_updated_at ], _('Never')) ],
+			[ _('Updated'), routefluxUI.formatTimestamp(subscription.last_updated_at) || _('Never') ],
 			[ _('Status'), firstNonEmpty([ subscription.parser_status ], _('unknown')) ],
 			[ _('Nodes'), String(nodesCount) ]
 		].map(function(item) {
@@ -523,7 +535,7 @@ return view.extend({
 		return E('div', { 'class': 'routeflux-provider-group' }, content);
 	},
 
-	render: function(data) {
+	renderPageContent: function(data) {
 		var status = data[0] || {};
 		var subscriptions = Array.isArray(data[1]) ? data[1] : [];
 		var presentation = buildSubscriptionPresentation(subscriptions);
@@ -601,13 +613,17 @@ return view.extend({
 			content.push(E('div', { 'class': 'cbi-section' }, [
 				E('p', {}, [ _('No subscriptions imported yet.') ])
 			]));
-			return E(content);
+			return content;
 		}
 
 		for (var i = 0; i < presentation.groups.length; i++)
 			content.push(this.renderProviderGroup(presentation.groups[i], activeSubscriptionId, activeNodeId));
 
-		return E(content);
+		return content;
+	},
+
+	render: function(data) {
+		return E('div', { 'id': 'routeflux-subscriptions-root' }, this.renderPageContent(data));
 	},
 
 	handleSave: null,

@@ -38,6 +38,7 @@ mkdir -p \
 	"${DATA_DIR}/etc/init.d" \
 	"${DATA_DIR}/usr/share/luci/menu.d" \
 	"${DATA_DIR}/usr/share/rpcd/acl.d" \
+	"${DATA_DIR}/www/luci-static/resources/routeflux" \
 	"${DATA_DIR}/www/luci-static/resources/view/routeflux" \
 	"${CONTROL_DIR}" \
 	"${WORK_DIR}"
@@ -49,6 +50,8 @@ cp "${ROOT_DIR}/luci-app-routeflux/root/usr/share/luci/menu.d/luci-app-routeflux
 	"${DATA_DIR}/usr/share/luci/menu.d/luci-app-routeflux.json"
 cp "${ROOT_DIR}/luci-app-routeflux/root/usr/share/rpcd/acl.d/luci-app-routeflux.json" \
 	"${DATA_DIR}/usr/share/rpcd/acl.d/luci-app-routeflux.json"
+cp "${ROOT_DIR}/luci-app-routeflux/htdocs/luci-static/resources/routeflux/"*.js \
+	"${DATA_DIR}/www/luci-static/resources/routeflux/"
 cp "${ROOT_DIR}/luci-app-routeflux/htdocs/luci-static/resources/view/routeflux/"*.js \
 	"${DATA_DIR}/www/luci-static/resources/view/routeflux/"
 

@@ -2,6 +2,7 @@
 'require view';
 'require fs';
 'require ui';
+'require routeflux.ui as routefluxUI';
 
 var routefluxBinary = '/usr/bin/routeflux';
 var commonLogLevels = [ 'debug', 'info', 'warning', 'error' ];
@@ -395,11 +396,8 @@ return view.extend({
 		});
 	},
 
-	renderCard: function(label, value) {
-		return E('div', { 'class': 'routeflux-card' }, [
-			E('div', { 'class': 'routeflux-card-label' }, [ label ]),
-			E('div', { 'class': 'routeflux-card-value' }, [ value || '-' ])
-		]);
+	renderCard: function(label, value, options) {
+		return routefluxUI.renderSummaryCard(label, value, options);
 	},
 
 	handleSaveSettings: function(ev) {
@@ -482,11 +480,8 @@ return view.extend({
 		if (data[2] && data[2].__error__)
 			ui.addNotification(null, notificationParagraph(_('Subscriptions error: %s').format(data[2].__error__)));
 
+		content.push(routefluxUI.renderSharedStyles());
 		content.push(E('style', { 'type': 'text/css' }, [
-			'.routeflux-overview-grid { display:grid; grid-template-columns:repeat(auto-fit, minmax(220px, 1fr)); gap:12px; margin-bottom:16px; }',
-			'.routeflux-card { border:1px solid var(--border-color-medium, #d9d9d9); border-radius:6px; padding:12px 14px; background:var(--background-color-primary, #fff); }',
-			'.routeflux-card-label { color:var(--text-color-secondary, #666); font-size:12px; margin-bottom:4px; text-transform:uppercase; letter-spacing:.04em; }',
-			'.routeflux-card-value { font-size:16px; font-weight:600; word-break:break-word; }',
 			'.routeflux-settings-grid { display:grid; grid-template-columns:repeat(auto-fit, minmax(260px, 1fr)); gap:12px; margin-bottom:12px; }',
 			'.routeflux-settings-actions { display:flex; flex-wrap:wrap; gap:10px; }'
 		]));
@@ -497,7 +492,10 @@ return view.extend({
 		]));
 
 		content.push(E('div', { 'class': 'routeflux-overview-grid' }, [
-			this.renderCard(_('Connection'), connected ? _('Connected') : _('Disconnected')),
+			this.renderCard(_('Connection'), connected ? _('Connected') : _('Disconnected'), {
+				'tone': routefluxUI.statusTone(connected),
+				'primary': true
+			}),
 			this.renderCard(_('Effective Mode'), modeLabel(state.mode)),
 			this.renderCard(_('Auto Mode'), boolLabel(settings.auto_mode)),
 			this.renderCard(_('Log Level'), firstNonEmpty([ settings.log_level ], 'info')),

@@ -2,6 +2,8 @@
 'require view';
 'require fs';
 'require ui';
+'require dom';
+'require routeflux.ui as routefluxUI';
 
 var routefluxBinary = '/usr/bin/routeflux';
 
@@ -289,6 +291,10 @@ function notificationParagraph(message) {
 
 return view.extend({
 	load: function() {
+		return this.requestPageData();
+	},
+
+	requestPageData: function() {
 		return Promise.all([
 			this.execJSON([ '--json', 'status' ]).catch(function(err) {
 				return { __error__: err.message || String(err) };
@@ -319,8 +325,16 @@ return view.extend({
 		});
 	},
 
+	refreshPageContent: function() {
+		return this.requestPageData().then(L.bind(function(data) {
+			var root = document.querySelector('#routeflux-overview-root');
+			if (root)
+				dom.content(root, this.renderPageContent(data));
+		}, this));
+	},
+
 	execAction: function(argv, successMessage) {
-		return fs.exec(routefluxBinary, argv).then(function(res) {
+		return fs.exec(routefluxBinary, argv).then(L.bind(function(res) {
 			var stderr = trim(res.stderr);
 			var stdout = trim(res.stdout);
 
@@ -328,12 +342,10 @@ return view.extend({
 				throw new Error(stderr || stdout || _('RouteFlux command failed.'));
 
 			ui.addNotification(null, notificationParagraph(stdout || successMessage), 'info');
-			window.setTimeout(function() {
-				window.location.reload();
-			}, 350);
-
-			return res;
-		}).catch(function(err) {
+			return this.refreshPageContent().then(function() {
+				return res;
+			});
+		}, this)).catch(function(err) {
 			ui.addNotification(null, notificationParagraph(err.message || String(err)));
 			throw err;
 		});
@@ -370,11 +382,12 @@ return view.extend({
 		);
 	},
 
-	renderCard: function(label, value) {
-		return E('div', { 'class': 'routeflux-card' }, [
-			E('div', { 'class': 'routeflux-card-label' }, [ label ]),
-			E('div', { 'class': 'routeflux-card-value' }, [ value || _('Not selected') ])
-		]);
+	renderCard: function(label, value, options) {
+		var settings = options || {};
+
+		settings.fallback = settings.fallback != null ? settings.fallback : _('Not selected');
+
+		return routefluxUI.renderSummaryCard(label, value, settings);
 	},
 
 	renderSubscriptionsTable: function(subscriptions, presentation) {
@@ -391,7 +404,7 @@ return view.extend({
 			return E('tr', { 'class': 'tr' }, [
 				E('td', { 'class': 'td' }, [ name ]),
 				E('td', { 'class': 'td' }, [ String(nodes) ]),
-				E('td', { 'class': 'td' }, [ trim(sub.last_updated_at) || _('Never') ]),
+				E('td', { 'class': 'td' }, [ routefluxUI.formatTimestamp(sub.last_updated_at) || _('Never') ]),
 				E('td', { 'class': 'td' }, [ trim(sub.parser_status) || _('unknown') ])
 			]);
 		});
@@ -406,7 +419,7 @@ return view.extend({
 		].concat(rows));
 	},
 
-	render: function(data) {
+	renderPageContent: function(data) {
 		var status = data[0] || {};
 		var subscriptions = Array.isArray(data[1]) ? data[1] : [];
 		var presentation = buildSubscriptionPresentation(subscriptions);
@@ -461,11 +474,8 @@ return view.extend({
 		});
 
 		var content = [
+			routefluxUI.renderSharedStyles(),
 			E('style', { 'type': 'text/css' }, [
-				'.routeflux-overview-grid { display:grid; grid-template-columns:repeat(auto-fit, minmax(220px, 1fr)); gap:12px; margin-bottom:16px; }',
-				'.routeflux-card { border:1px solid var(--border-color-medium, #d9d9d9); border-radius:6px; padding:12px 14px; background:var(--background-color-primary, #fff); }',
-				'.routeflux-card-label { color:var(--text-color-secondary, #666); font-size:12px; margin-bottom:4px; text-transform:uppercase; letter-spacing:.04em; }',
-				'.routeflux-card-value { font-size:16px; font-weight:600; word-break:break-word; }',
 				'.routeflux-actions { display:flex; flex-wrap:wrap; gap:10px; align-items:flex-end; margin-bottom:16px; }',
 				'.routeflux-actions > * { margin:0; }',
 				'.routeflux-actions select { min-width:260px; }'
@@ -475,14 +485,17 @@ return view.extend({
 				_('RouteFlux overview for the current connection state, active profile, and the most common control actions.')
 			]),
 			E('div', { 'class': 'routeflux-overview-grid' }, [
-				this.renderCard(_('State'), connected ? _('Connected') : _('Disconnected')),
+				this.renderCard(_('State'), connected ? _('Connected') : _('Disconnected'), {
+					'tone': routefluxUI.statusTone(connected),
+					'primary': true
+				}),
 				this.renderCard(_('Mode'), firstNonEmpty([ status.state && status.state.mode ], _('disconnected'))),
 				this.renderCard(_('Provider'), provider),
 				this.renderCard(_('Profile'), profile),
 				this.renderCard(_('Node'), nodeName),
 				this.renderCard(_('DNS'), firstNonEmpty([ dns.mode ], _('system'))),
 				this.renderCard(_('Firewall'), firewallMode),
-				this.renderCard(_('Last Refresh'), firstNonEmpty([ activeSubscription.last_updated_at ], _('Never')))
+				this.renderCard(_('Last Refresh'), routefluxUI.formatTimestamp(activeSubscription.last_updated_at) || _('Never'))
 			]),
 			E('div', { 'class': 'cbi-section' }, [
 				E('h3', {}, [ _('Actions') ]),
@@ -526,7 +539,11 @@ return view.extend({
 			]));
 		}
 
-		return E(content);
+		return content;
+	},
+
+	render: function(data) {
+		return E('div', { 'id': 'routeflux-overview-root' }, this.renderPageContent(data));
 	},
 
 	handleSave: null,

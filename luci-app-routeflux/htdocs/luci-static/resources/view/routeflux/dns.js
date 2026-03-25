@@ -2,6 +2,7 @@
 'require view';
 'require fs';
 'require ui';
+'require routeflux.ui as routefluxUI';
 
 var routefluxBinary = '/usr/bin/routeflux';
 var defaultDNSProfile = {
@@ -452,11 +453,8 @@ return view.extend({
 		});
 	},
 
-	renderCard: function(label, value) {
-		return E('div', { 'class': 'routeflux-card' }, [
-			E('div', { 'class': 'routeflux-card-label' }, [ label ]),
-			E('div', { 'class': 'routeflux-card-value' }, [ value || '-' ])
-		]);
+	renderCard: function(label, value, options) {
+		return routefluxUI.renderSummaryCard(label, value, options);
 	},
 
 	handleSaveSettings: function(ev) {
@@ -539,11 +537,8 @@ return view.extend({
 		if (data[3] && data[3].__error__)
 			ui.addNotification(null, notificationParagraph(_('DNS help error: %s').format(data[3].__error__)));
 
+		content.push(routefluxUI.renderSharedStyles());
 		content.push(E('style', { 'type': 'text/css' }, [
-			'.routeflux-overview-grid { display:grid; grid-template-columns:repeat(auto-fit, minmax(220px, 1fr)); gap:12px; margin-bottom:16px; }',
-			'.routeflux-card { border:1px solid var(--border-color-medium, #d9d9d9); border-radius:6px; padding:12px 14px; background:var(--background-color-primary, #fff); }',
-			'.routeflux-card-label { color:var(--text-color-secondary, #666); font-size:12px; margin-bottom:4px; text-transform:uppercase; letter-spacing:.04em; }',
-			'.routeflux-card-value { font-size:16px; font-weight:600; word-break:break-word; }',
 			'.routeflux-dns-grid { display:grid; grid-template-columns:repeat(auto-fit, minmax(260px, 1fr)); gap:12px; margin-bottom:12px; }',
 			'.routeflux-dns-grid textarea { min-height:100px; width:100%; }',
 			'.routeflux-dns-actions { display:flex; flex-wrap:wrap; gap:10px; }',
@@ -556,7 +551,10 @@ return view.extend({
 		]));
 
 		content.push(E('div', { 'class': 'routeflux-overview-grid' }, [
-			this.renderCard(_('Connection'), connected ? _('Connected') : _('Disconnected')),
+			this.renderCard(_('Connection'), connected ? _('Connected') : _('Disconnected'), {
+				'tone': routefluxUI.statusTone(connected),
+				'primary': true
+			}),
 			this.renderCard(_('Mode'), modeSummary(dns.mode)),
 			this.renderCard(_('Transport'), transportSummary(dns.transport)),
 			this.renderCard(_('DNS Profile'), profile),
