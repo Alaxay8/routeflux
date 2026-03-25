@@ -88,8 +88,20 @@ create_tarball() {
 	(
 		cd "${src_dir}"
 		entries="$(find . -mindepth 1 -maxdepth 1 -print | LC_ALL=C sort)"
-		# shellcheck disable=SC2086
-		COPYFILE_DISABLE=1 bsdtar --format ustar --uid 0 --gid 0 --uname root --gname root -czf "${out_file}" ${entries}
+		if command -v bsdtar >/dev/null 2>&1; then
+			# shellcheck disable=SC2086
+			COPYFILE_DISABLE=1 bsdtar --format ustar --uid 0 --gid 0 --uname root --gname root -czf "${out_file}" ${entries}
+			return
+		fi
+
+		if command -v tar >/dev/null 2>&1; then
+			# shellcheck disable=SC2086
+			COPYFILE_DISABLE=1 tar --format=ustar --owner=0 --group=0 --numeric-owner -czf "${out_file}" ${entries}
+			return
+		fi
+
+		printf 'neither bsdtar nor tar is available\n' >&2
+		exit 1
 	)
 }
 
