@@ -108,6 +108,8 @@ func TestRestoreRuntimeFailureDisconnectsState(t *testing.T) {
 		Backend:    runtimeBackend,
 		Firewaller: firewall,
 	})
+	service.backendReadyChecks = 2
+	service.backendReadyDelay = 0
 
 	err := service.RestoreRuntime(context.Background())
 	if err == nil {

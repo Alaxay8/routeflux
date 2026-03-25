@@ -64,13 +64,15 @@ type StatusSnapshot struct {
 
 // Service orchestrates subscription, health, and backend workflows.
 type Service struct {
-	store      Store
-	backend    backend.Backend
-	firewall   Firewaller
-	httpClient *http.Client
-	checker    probe.Checker
-	logger     *slog.Logger
-	resolver   HostResolver
+	store              Store
+	backend            backend.Backend
+	firewall           Firewaller
+	httpClient         *http.Client
+	checker            probe.Checker
+	logger             *slog.Logger
+	resolver           HostResolver
+	backendReadyChecks int
+	backendReadyDelay  time.Duration
 }
 
 // Dependencies groups the service construction inputs.
@@ -98,6 +100,8 @@ const (
 	subscriptionFetchBaseBackoff = 250 * time.Millisecond
 	subscriptionFetchUserAgent   = "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/136.0.0.0 Safari/537.36"
 	subscriptionProfileTitleKey  = "Profile-Title"
+	backendReadyMaxChecks        = 8
+	backendReadyCheckDelay       = 250 * time.Millisecond
 )
 
 var subscriptionShareLinkPattern = regexp.MustCompile(`(?i)(vless|vmess|trojan|ss)://[^"'<>]+`)
@@ -123,13 +127,15 @@ func NewService(deps Dependencies) *Service {
 	}
 
 	return &Service{
-		store:      deps.Store,
-		backend:    deps.Backend,
-		firewall:   deps.Firewaller,
-		httpClient: ensureSubscriptionHTTPClient(deps.HTTPClient),
-		checker:    checker,
-		logger:     logger,
-		resolver:   resolver,
+		store:              deps.Store,
+		backend:            deps.Backend,
+		firewall:           deps.Firewaller,
+		httpClient:         ensureSubscriptionHTTPClient(deps.HTTPClient),
+		checker:            checker,
+		logger:             logger,
+		resolver:           resolver,
+		backendReadyChecks: backendReadyMaxChecks,
+		backendReadyDelay:  backendReadyCheckDelay,
 	}
 }
 
@@ -1802,7 +1808,7 @@ func (s *Service) ensureBackendRunning(ctx context.Context, subscriptionID, node
 		return nil
 	}
 
-	status, err := s.backend.Status(ctx)
+	status, err := s.waitForBackendRunning(ctx, subscriptionID, nodeID, mode)
 	if err != nil {
 		s.logWarn("backend status check failed", "subscription", subscriptionID, "node", nodeID, "mode", mode, "error", err.Error())
 		_ = s.markConnectionFailed(ctx, subscriptionID, nodeID, mode, fmt.Sprintf("backend status check failed: %v", err))
@@ -1820,6 +1826,73 @@ func (s *Service) ensureBackendRunning(ctx context.Context, subscriptionID, node
 	s.logWarn("backend reported not running", "subscription", subscriptionID, "node", nodeID, "mode", mode, "service_state", status.ServiceState)
 	_ = s.markConnectionFailed(ctx, subscriptionID, nodeID, mode, reason)
 	return fmt.Errorf(reason)
+}
+
+func (s *Service) waitForBackendRunning(ctx context.Context, subscriptionID, nodeID string, mode domain.SelectionMode) (backend.RuntimeStatus, error) {
+	checks := s.backendReadyChecks
+	if checks < 1 {
+		checks = 1
+	}
+
+	var last backend.RuntimeStatus
+	for attempt := 1; attempt <= checks; attempt++ {
+		status, err := s.backend.Status(ctx)
+		if err != nil {
+			return backend.RuntimeStatus{}, err
+		}
+		last = status
+		if status.Running {
+			return status, nil
+		}
+		if !backendStateMayStillBeStarting(status.ServiceState) || attempt == checks {
+			return status, nil
+		}
+
+		s.logInfo(
+			"backend not ready yet",
+			"subscription", subscriptionID,
+			"node", nodeID,
+			"mode", mode,
+			"service_state", status.ServiceState,
+			"attempt", attempt,
+		)
+
+		if err := sleepWithContext(ctx, s.backendReadyDelay); err != nil {
+			return backend.RuntimeStatus{}, err
+		}
+	}
+
+	return last, nil
+}
+
+func backendStateMayStillBeStarting(serviceState string) bool {
+	normalized := strings.ToLower(strings.TrimSpace(serviceState))
+	switch {
+	case normalized == "", normalized == "unknown":
+		return true
+	case strings.Contains(normalized, "starting"):
+		return true
+	case strings.Contains(normalized, "no instances"):
+		return true
+	default:
+		return false
+	}
+}
+
+func sleepWithContext(ctx context.Context, d time.Duration) error {
+	if d <= 0 {
+		return ctx.Err()
+	}
+
+	timer := time.NewTimer(d)
+	defer timer.Stop()
+
+	select {
+	case <-ctx.Done():
+		return ctx.Err()
+	case <-timer.C:
+		return nil
+	}
 }
 
 func (s *Service) markConnectionFailed(ctx context.Context, subscriptionID, nodeID string, mode domain.SelectionMode, reason string) error {

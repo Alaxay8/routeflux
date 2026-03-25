@@ -47,6 +47,8 @@ func TestConnectManualDisablesFirewallWhenBackendIsNotRunning(t *testing.T) {
 		Backend:    runtimeBackend,
 		Firewaller: firewall,
 	})
+	service.backendReadyChecks = 2
+	service.backendReadyDelay = 0
 
 	err := service.ConnectManual(context.Background(), "sub-1", "node-1")
 	if err == nil {
@@ -76,6 +78,68 @@ func TestConnectManualDisablesFirewallWhenBackendIsNotRunning(t *testing.T) {
 	}
 	if !strings.Contains(store.state.LastFailureReason, "backend is not running") {
 		t.Fatalf("unexpected last failure reason: %q", store.state.LastFailureReason)
+	}
+}
+
+func TestConnectManualWaitsForBackendToReachRunningState(t *testing.T) {
+	t.Parallel()
+
+	store := &memoryStore{
+		settings: domain.DefaultSettings(),
+		state:    domain.DefaultRuntimeState(),
+		subs: []domain.Subscription{
+			{
+				ID: "sub-1",
+				Nodes: []domain.Node{
+					{
+						ID:       "node-1",
+						Name:     "Germany",
+						Protocol: domain.ProtocolVLESS,
+						Address:  "de.example.com",
+						Port:     443,
+						UUID:     "11111111-1111-1111-1111-111111111111",
+					},
+				},
+			},
+		},
+	}
+
+	runtimeBackend := &recordingBackend{
+		statuses: []backend.RuntimeStatus{
+			{
+				Running:      false,
+				ServiceState: "active with no instances",
+			},
+			{
+				Running:      true,
+				ServiceState: "running",
+			},
+		},
+	}
+	firewall := &recordingFirewaller{}
+	service := NewService(Dependencies{
+		Store:      store,
+		Backend:    runtimeBackend,
+		Firewaller: firewall,
+	})
+	service.backendReadyChecks = 2
+	service.backendReadyDelay = 0
+
+	if err := service.ConnectManual(context.Background(), "sub-1", "node-1"); err != nil {
+		t.Fatalf("connect manual: %v", err)
+	}
+
+	if runtimeBackend.statusCalls != 2 {
+		t.Fatalf("expected two backend status checks, got %d", runtimeBackend.statusCalls)
+	}
+	if !store.state.Connected {
+		t.Fatal("expected runtime state to be connected")
+	}
+	if store.state.LastFailureReason != "" {
+		t.Fatalf("unexpected failure reason: %q", store.state.LastFailureReason)
+	}
+	if firewall.disableCalls != 1 {
+		t.Fatalf("expected firewall disable once for disabled firewall settings, got %d", firewall.disableCalls)
 	}
 }
 

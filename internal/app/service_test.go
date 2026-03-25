@@ -1629,11 +1629,13 @@ func (s *memoryStore) SaveState(state domain.RuntimeState) error {
 }
 
 type recordingBackend struct {
-	requests   []backend.ConfigRequest
-	stopCalls  int
-	startCalls int
-	status     backend.RuntimeStatus
-	statusErr  error
+	requests    []backend.ConfigRequest
+	stopCalls   int
+	startCalls  int
+	status      backend.RuntimeStatus
+	statuses    []backend.RuntimeStatus
+	statusCalls int
+	statusErr   error
 }
 
 func (b *recordingBackend) GenerateConfig(req backend.ConfigRequest) ([]byte, error) {
@@ -1660,6 +1662,15 @@ func (b *recordingBackend) Status(context.Context) (backend.RuntimeStatus, error
 	if b.statusErr != nil {
 		return backend.RuntimeStatus{}, b.statusErr
 	}
+	if len(b.statuses) > 0 {
+		index := b.statusCalls
+		b.statusCalls++
+		if index >= len(b.statuses) {
+			index = len(b.statuses) - 1
+		}
+		return b.statuses[index], nil
+	}
+	b.statusCalls++
 	if b.status == (backend.RuntimeStatus{}) {
 		return backend.RuntimeStatus{Running: true, ServiceState: "running"}, nil
 	}
