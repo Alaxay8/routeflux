@@ -31,6 +31,7 @@ const (
 	xrayRemoteConfigDir        = "/etc/xray"
 	consoleLoginPrompt         = "login:"
 	consoleRootPrompt          = "root@"
+	openWrtBootTimeout         = 10 * time.Minute
 	sshRetryDelay              = 2 * time.Second
 	sshRetryAttempts           = 5
 )
@@ -194,7 +195,7 @@ func (h *openWRTHarness) Start(ctx context.Context) error {
 		return fmt.Errorf("start qemu: %w", err)
 	}
 
-	bootCtx, cancel := context.WithTimeout(ctx, 5*time.Minute)
+	bootCtx, cancel := context.WithTimeout(ctx, openWrtBootTimeout)
 	defer cancel()
 
 	if err := h.console.WaitForAny(bootCtx, 0, consoleLoginPrompt, consoleRootPrompt, "Please press Enter to activate this console."); err != nil {
