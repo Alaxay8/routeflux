@@ -45,6 +45,38 @@ func TestInitdControllerStatusDetectsRunningProcess(t *testing.T) {
 	}
 }
 
+func TestInitdControllerStatusTreatsUnknownAsNotRunning(t *testing.T) {
+	t.Parallel()
+
+	script := writeStatusScript(t, "#!/bin/sh\necho 'unknown'\nexit 0\n")
+	controller := InitdController{ScriptPath: script}
+
+	status, err := controller.Status(context.Background())
+	if err != nil {
+		t.Fatalf("status: %v", err)
+	}
+
+	if status.Running {
+		t.Fatal("expected unknown status to be reported as not running")
+	}
+}
+
+func TestInitdControllerStatusTreatsUnrecognizedOutputAsNotRunning(t *testing.T) {
+	t.Parallel()
+
+	script := writeStatusScript(t, "#!/bin/sh\necho 'mystery state'\nexit 0\n")
+	controller := InitdController{ScriptPath: script}
+
+	status, err := controller.Status(context.Background())
+	if err != nil {
+		t.Fatalf("status: %v", err)
+	}
+
+	if status.Running {
+		t.Fatal("expected unrecognized status to be reported as not running")
+	}
+}
+
 func TestRuntimeBackendStatusUsesConfigPath(t *testing.T) {
 	t.Parallel()
 

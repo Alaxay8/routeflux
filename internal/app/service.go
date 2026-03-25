@@ -471,6 +471,7 @@ func (s *Service) connectManual(ctx context.Context, subscriptionID, nodeID stri
 		return fmt.Errorf("node %q not found in subscription %q", nodeID, subscriptionID)
 	}
 
+	s.logInfo("manual connect requested", "subscription", sub.ID, "node", node.ID)
 	if err := s.applyNodeSelection(ctx, sub, node, domain.SelectionModeManual); err != nil {
 		return err
 	}
@@ -482,6 +483,7 @@ func (s *Service) connectManual(ctx context.Context, subscriptionID, nodeID stri
 		_ = s.store.SaveSettings(settings)
 	}
 
+	s.logInfo("manual connect succeeded", "subscription", sub.ID, "node", node.ID)
 	return nil
 }
 
@@ -497,6 +499,7 @@ func (s *Service) connectAuto(ctx context.Context, subscriptionID string) (domai
 	if err != nil {
 		return domain.Node{}, err
 	}
+	s.logInfo("auto selection requested", "subscription", sub.ID)
 
 	state, err := s.store.LoadState()
 	if err != nil {
@@ -514,9 +517,10 @@ func (s *Service) connectAuto(ctx context.Context, subscriptionID string) (domai
 	}
 	current := state.Health[state.ActiveNodeID]
 	candidate := state.Health[bestNode.ID]
-	shouldSwitch, _ := probe.ShouldSwitch(current, candidate, time.Now().UTC(), state.LastSwitchAt, probe.DefaultSwitchPolicy())
+	shouldSwitch, switchReason := probe.ShouldSwitch(current, candidate, time.Now().UTC(), state.LastSwitchAt, probe.DefaultSwitchPolicy())
 	if state.ActiveNodeID == "" {
 		shouldSwitch = true
+		switchReason = "no current node"
 	}
 
 	selectedNode := bestNode
@@ -527,6 +531,16 @@ func (s *Service) connectAuto(ctx context.Context, subscriptionID string) (domai
 			switched = false
 		}
 	}
+	s.logInfo(
+		"auto selection decision",
+		"subscription", sub.ID,
+		"current_node", state.ActiveNodeID,
+		"candidate_node", bestNode.ID,
+		"selected_node", selectedNode.ID,
+		"switch", switched,
+		"reason", switchReason,
+		"candidate_score", bestScore.Score,
+	)
 
 	if err := s.applyNodeSelection(ctx, sub, selectedNode, domain.SelectionModeAuto); err != nil {
 		return domain.Node{}, err
@@ -562,6 +576,7 @@ func (s *Service) connectAuto(ctx context.Context, subscriptionID string) (domai
 		_ = s.store.SaveSettings(settings)
 	}
 
+	s.logInfo("auto connect succeeded", "subscription", sub.ID, "node", selectedNode.ID)
 	return selectedNode, nil
 }
 
@@ -640,6 +655,13 @@ func (s *Service) RuntimeStatus(ctx context.Context) (backend.RuntimeStatus, err
 	return s.backend.Status(ctx)
 }
 
+// RestoreRuntime reapplies a persisted active connection during daemon startup.
+func (s *Service) RestoreRuntime(ctx context.Context) error {
+	return runStoreWriteLocked(s, func() error {
+		return s.restoreRuntime(ctx)
+	})
+}
+
 // GetSettings returns current settings.
 func (s *Service) GetSettings() (domain.Settings, error) {
 	return runStoreWriteLockedResult(s, func() (domain.Settings, error) {
@@ -665,6 +687,40 @@ func (s *Service) getSettings() (domain.Settings, error) {
 	}
 
 	return settings, nil
+}
+
+func (s *Service) restoreRuntime(ctx context.Context) error {
+	state, err := s.store.LoadState()
+	if err != nil {
+		return fmt.Errorf("load state: %w", err)
+	}
+
+	if !state.Connected || state.ActiveSubscriptionID == "" || state.ActiveNodeID == "" {
+		if s.firewall != nil {
+			if err := s.firewall.Disable(ctx); err != nil {
+				return fmt.Errorf("disable firewall: %w", err)
+			}
+		}
+		return nil
+	}
+
+	s.logInfo("restore runtime start", "subscription", state.ActiveSubscriptionID, "node", state.ActiveNodeID, "mode", state.Mode)
+	if err := s.reapplyCurrentConnection(ctx); err != nil {
+		reason := fmt.Sprintf("restore runtime: %v", err)
+		s.logWarn("restore runtime failed", "subscription", state.ActiveSubscriptionID, "node", state.ActiveNodeID, "error", err.Error())
+		if persistErr := s.persistRestoreFailure(ctx, reason); persistErr != nil {
+			return fmt.Errorf("%s: %v", reason, persistErr)
+		}
+		return fmt.Errorf(reason)
+	}
+
+	settings, err := s.store.LoadSettings()
+	if err == nil && syncSettingsToRuntime(&settings, state) {
+		_ = s.store.SaveSettings(settings)
+	}
+
+	s.logInfo("restore runtime succeeded", "subscription", state.ActiveSubscriptionID, "node", state.ActiveNodeID, "mode", state.Mode)
+	return nil
 }
 
 // GetFirewallSettings returns the transparent proxy routing settings.
@@ -1266,6 +1322,7 @@ func (s *Service) applyNodeSelection(ctx context.Context, sub domain.Subscriptio
 	}
 
 	if s.backend != nil {
+		s.logInfo("apply backend config", "subscription", sub.ID, "node", node.ID, "mode", mode, "resolved_address", resolvedNode.Address)
 		if err := s.backend.ApplyConfig(ctx, backend.ConfigRequest{
 			Mode:             mode,
 			Nodes:            []domain.Node{resolvedNode},
@@ -1277,6 +1334,7 @@ func (s *Service) applyNodeSelection(ctx context.Context, sub domain.Subscriptio
 			TransparentProxy: settings.Firewall.Enabled && (len(settings.Firewall.TargetCIDRs) > 0 || len(settings.Firewall.SourceCIDRs) > 0),
 			TransparentPort:  settings.Firewall.TransparentPort,
 		}); err != nil {
+			s.logWarn("apply backend config failed", "subscription", sub.ID, "node", node.ID, "mode", mode, "error", err.Error())
 			_ = s.markConnectionFailed(ctx, sub.ID, node.ID, mode, fmt.Sprintf("apply backend config: %v", err))
 			return fmt.Errorf("apply backend config: %w", err)
 		}
@@ -1287,13 +1345,19 @@ func (s *Service) applyNodeSelection(ctx context.Context, sub domain.Subscriptio
 
 	if s.firewall != nil {
 		if settings.Firewall.Enabled && (len(settings.Firewall.TargetCIDRs) > 0 || len(settings.Firewall.SourceCIDRs) > 0) {
+			s.logInfo("apply firewall rules", "subscription", sub.ID, "node", node.ID, "targets", settings.Firewall.TargetCIDRs, "hosts", settings.Firewall.SourceCIDRs)
 			if err := s.firewall.Apply(ctx, settings.Firewall); err != nil {
+				s.logWarn("apply firewall failed", "subscription", sub.ID, "node", node.ID, "error", err.Error())
 				_ = s.markConnectionFailed(ctx, sub.ID, node.ID, mode, fmt.Sprintf("apply firewall: %v", err))
 				return fmt.Errorf("apply firewall: %w", err)
 			}
+			s.logInfo("firewall rules applied", "subscription", sub.ID, "node", node.ID)
 		} else if err := s.firewall.Disable(ctx); err != nil {
+			s.logWarn("disable firewall failed", "subscription", sub.ID, "node", node.ID, "error", err.Error())
 			_ = s.markConnectionFailed(ctx, sub.ID, node.ID, mode, fmt.Sprintf("disable firewall: %v", err))
 			return fmt.Errorf("disable firewall: %w", err)
+		} else {
+			s.logInfo("firewall rules disabled", "subscription", sub.ID, "node", node.ID)
 		}
 	}
 
@@ -1356,6 +1420,7 @@ func (s *Service) probeSubscription(ctx context.Context, sub domain.Subscription
 		updated.Score = probe.CalculateScore(updated, probe.DefaultScoreConfig()).Score
 		health[node.ID] = updated
 		result.Health = updated
+		s.logDebug("probe result", "subscription", sub.ID, "node", node.ID, "healthy", result.Healthy, "latency", result.Latency, "error", errString(result.Err))
 		results = append(results, result)
 	}
 
@@ -1739,10 +1804,12 @@ func (s *Service) ensureBackendRunning(ctx context.Context, subscriptionID, node
 
 	status, err := s.backend.Status(ctx)
 	if err != nil {
+		s.logWarn("backend status check failed", "subscription", subscriptionID, "node", nodeID, "mode", mode, "error", err.Error())
 		_ = s.markConnectionFailed(ctx, subscriptionID, nodeID, mode, fmt.Sprintf("backend status check failed: %v", err))
 		return fmt.Errorf("check backend status: %w", err)
 	}
 	if status.Running {
+		s.logInfo("backend running confirmed", "subscription", subscriptionID, "node", nodeID, "mode", mode, "service_state", status.ServiceState)
 		return nil
 	}
 
@@ -1750,6 +1817,7 @@ func (s *Service) ensureBackendRunning(ctx context.Context, subscriptionID, node
 	if strings.TrimSpace(status.ServiceState) != "" && status.ServiceState != "unknown" {
 		reason = fmt.Sprintf("backend is not running (%s)", status.ServiceState)
 	}
+	s.logWarn("backend reported not running", "subscription", subscriptionID, "node", nodeID, "mode", mode, "service_state", status.ServiceState)
 	_ = s.markConnectionFailed(ctx, subscriptionID, nodeID, mode, reason)
 	return fmt.Errorf(reason)
 }
@@ -1776,5 +1844,58 @@ func (s *Service) markConnectionFailed(ctx context.Context, subscriptionID, node
 		return fmt.Errorf("save state after backend failure: %w", err)
 	}
 
+	s.logWarn("connection marked failed", "subscription", subscriptionID, "node", nodeID, "mode", mode, "reason", reason)
 	return nil
+}
+
+func (s *Service) persistRestoreFailure(ctx context.Context, reason string) error {
+	if s.firewall != nil {
+		if err := s.firewall.Disable(ctx); err != nil {
+			return fmt.Errorf("disable firewall after restore failure: %w", err)
+		}
+	}
+
+	state, err := s.store.LoadState()
+	if err != nil {
+		return fmt.Errorf("load state after restore failure: %w", err)
+	}
+
+	state.ActiveSubscriptionID = ""
+	state.ActiveNodeID = ""
+	state.Mode = domain.SelectionModeDisconnected
+	state.Connected = false
+	state.LastFailureReason = reason
+	if err := s.store.SaveState(state); err != nil {
+		return fmt.Errorf("save state after restore failure: %w", err)
+	}
+
+	settings, err := s.store.LoadSettings()
+	if err == nil {
+		settings.AutoMode = false
+		settings.Mode = domain.SelectionModeDisconnected
+		if saveErr := s.store.SaveSettings(settings); saveErr != nil {
+			return fmt.Errorf("save settings after restore failure: %w", saveErr)
+		}
+	}
+
+	s.logWarn("restore failure persisted", "reason", reason)
+	return nil
+}
+
+func (s *Service) logDebug(msg string, args ...any) {
+	if s.logger != nil {
+		s.logger.Debug(msg, args...)
+	}
+}
+
+func (s *Service) logInfo(msg string, args ...any) {
+	if s.logger != nil {
+		s.logger.Info(msg, args...)
+	}
+}
+
+func (s *Service) logWarn(msg string, args ...any) {
+	if s.logger != nil {
+		s.logger.Warn(msg, args...)
+	}
 }

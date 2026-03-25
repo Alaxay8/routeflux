@@ -8,6 +8,8 @@ RouteFlux is a lightweight OpenWrt-native Go application for managing Xray and V
 
 RouteFlux imports subscription URLs, raw `vless://`, `vmess://`, and `trojan://` links, plus valid 3x-ui or Xray JSON configs. It normalizes supported proxy outbounds into one node model, stores local state safely, and generates runtime configuration for Xray on OpenWrt and compatible forks such as ImmortalWrt.
 
+The current production claim is the CLI and runtime path. The TUI and LuCI frontend remain MVP or experimental surfaces while the router runtime, persisted state, and OpenWrt backend path are hardened first.
+
 ## Features
 
 - Import proxy subscriptions from a URL, raw share link, stdin, or valid 3x-ui/Xray JSON.
@@ -15,11 +17,12 @@ RouteFlux imports subscription URLs, raw `vless://`, `vmess://`, and `trojan://`
 - Normalize supported 3x-ui/Xray proxy outbounds into RouteFlux nodes.
 - Add, list, refresh, connect, disconnect, remove one subscription, or remove all subscriptions from the CLI or TUI.
 - Select nodes manually or use automatic best-node selection with health checks and anti-flap logic.
-- Generate Xray runtime config and reload the OpenWrt `init.d` service.
+- Validate candidate Xray configs with `xray -test`, keep a last-known-good backup, and safely reload the OpenWrt `init.d` service.
 - Configure simple nftables-based routing for selected destination IPs, CIDRs, ranges, or LAN hosts.
 - Manage DNS behavior through a dedicated `routeflux dns` command instead of mixing it into general settings.
 - Start with a sensible DNS default profile: split DNS, DoH to Cloudflare, and local `.lan` names kept on local DNS.
 - Persist subscriptions, settings, runtime state, and telemetry with atomic JSON writes.
+- Restore the last active runtime selection during daemon startup after reboot when persisted state is valid.
 
 ## Quick Start
 
@@ -37,6 +40,12 @@ See [Installation](#installation) and [Usage](#usage).
 
 ```bash
 make build-openwrt
+```
+
+Build the x86_64 OpenWrt test binary used by the QEMU integration suite:
+
+```bash
+make build-openwrt-x86_64
 ```
 
 4. Copy the binary to the router. On many OpenWrt devices, `scp -O` works more reliably than default SFTP mode:
@@ -61,14 +70,19 @@ make package-openwrt
 
 This creates:
 
-- `dist/routeflux_0.1.0_mipsel_24kc.ipk`
-- `dist/routeflux_0.1.0_mipsel_24kc.tar.gz`
+```bash
+VERSION="$(git describe --tags --always --dirty | sed 's/^v//')"
+```
+
+- `dist/routeflux_${VERSION}_mipsel_24kc.ipk`
+- `dist/routeflux_${VERSION}_mipsel_24kc.tar.gz`
 
 For a reliable manual install, copy the tarball to the router and extract it at `/`:
 
 ```bash
-scp -O ./dist/routeflux_0.1.0_mipsel_24kc.tar.gz root@router:/tmp/
-ssh root@router 'tar -xzf /tmp/routeflux_0.1.0_mipsel_24kc.tar.gz -C / && rm -f /tmp/luci-indexcache && rm -rf /tmp/luci-modulecache && /etc/init.d/rpcd reload && /etc/init.d/uhttpd reload'
+VERSION="$(git describe --tags --always --dirty | sed 's/^v//')"
+scp -O "./dist/routeflux_${VERSION}_mipsel_24kc.tar.gz" root@router:/tmp/
+ssh root@router "tar -xzf /tmp/routeflux_${VERSION}_mipsel_24kc.tar.gz -C / && rm -f /tmp/luci-indexcache && rm -rf /tmp/luci-modulecache && /etc/init.d/rpcd reload && /etc/init.d/uhttpd reload"
 ```
 
 This installs:
@@ -197,6 +211,7 @@ Important environment variables:
 - `ROUTEFLUX_ROOT`: override the state directory.
 - `ROUTEFLUX_XRAY_CONFIG`: override the generated Xray config path.
 - `ROUTEFLUX_XRAY_SERVICE`: override the Xray service control script.
+- `ROUTEFLUX_XRAY_BINARY`: override the Xray binary used for `xray -test`.
 - `ROUTEFLUX_FIREWALL_RULES`: override the generated nftables rules file path.
 
 Persisted files:
@@ -241,8 +256,8 @@ Build and test locally:
 
 ```bash
 make fmt
-make test
-make coverage
+make lint
+make coverage-runtime
 make build
 ```
 
@@ -250,7 +265,16 @@ Cross-build for OpenWrt:
 
 ```bash
 make build-openwrt
+make build-openwrt-x86_64
 ```
+
+Run the OpenWrt/QEMU integration suite:
+
+```bash
+make test-integration
+```
+
+OpenWrt package filenames use the current Git tag or `git describe` version without the leading `v`.
 
 Project notes:
 
@@ -273,7 +297,7 @@ The codebase is split into domain, parser, store, probe, backend, app, CLI, and 
 
 ## TUI
 
-The MVP TUI is keyboard-driven and focuses on provider-first navigation:
+The TUI is still an MVP surface. It is keyboard-driven and focuses on provider-first navigation:
 
 - `j` / `k`: move between VPN services
 - `h` / `l`: move between profiles inside the selected service
@@ -296,7 +320,7 @@ Placeholder screenshots:
 2. Copy the binary to the router. If you install manually instead of installing the `.ipk`, also copy `openwrt/root/etc/init.d/routeflux` to `/etc/init.d/routeflux` and make it executable.
 3. Create `/etc/routeflux` if it does not exist.
 4. Install Xray only when you want to connect traffic, and verify that `/etc/init.d/xray` can `reload`, `start`, and `stop`.
-5. Enable the RouteFlux background refresh service when you want automatic subscription refresh:
+5. Enable the RouteFlux background refresh service when you want automatic subscription refresh and reboot-time runtime restore:
 
 ```bash
 /etc/init.d/routeflux enable
@@ -314,7 +338,26 @@ Placeholder screenshots:
 - Transparent router traffic interception is not fully automated in MVP.
 - Automatic subscription refresh requires the RouteFlux daemon or OpenWrt `/etc/init.d/routeflux` service to be running.
 - Simple firewall routing currently supports destination IPv4 targets, source IPv4 hosts, CIDR pools, IPv4 ranges, and the `all` or `*` LAN-wide shortcut. QUIC blocking is host-mode only.
-- A LuCI MVP lives in `luci-app-routeflux` with `Overview`, `Subscriptions`, `Firewall`, `DNS`, `Settings`, `Diagnostics`, and `Logs` pages.
+- The CLI and runtime path are the supported production surface today.
+- The TUI and LuCI frontend remain MVP or experimental surfaces. A LuCI MVP lives in `luci-app-routeflux` with `Overview`, `Subscriptions`, `Firewall`, `DNS`, `Settings`, `Diagnostics`, and `Logs` pages.
+
+## Support Matrix
+
+- Supported production surface: CLI and runtime path.
+- Experimental surfaces: TUI and LuCI.
+- Supported router family: OpenWrt and compatible forks such as ImmortalWrt.
+- Practical runtime baseline: OpenWrt `22.03+` with `nftables` available.
+- Runtime dependency: Xray service script available at `/etc/init.d/xray` unless overridden.
+- Firewall scope: IPv4 targets, IPv4 source hosts, IPv4 CIDRs, IPv4 ranges, and the `all` or `*` LAN shortcut.
+- DNS scope: `plain` and `doh` are supported today; `dot` remains reserved for a future backend.
+
+## Upgrade Policy
+
+- In-place upgrades must preserve `/etc/routeflux`.
+- Settings and state files with missing or older schema versions are upgraded on load to the current schema.
+- Malformed `settings.json` or `state.json` is backed up to `*.corrupt-<UTC>.json`, then replaced with a fresh canonical file so startup can continue safely.
+- Future schema versions are rejected and require a newer RouteFlux build or a manual migration path.
+- OpenWrt package and tarball versions are derived from the current Git tag or `git describe` output without the leading `v`.
 
 ## License
 

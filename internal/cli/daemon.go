@@ -25,20 +25,26 @@ func newDaemonCmd(opts *rootOptions) *cobra.Command {
 				return fmt.Errorf("scheduler tick must be greater than zero")
 			}
 
-			scheduler := app.NewScheduler(opts.service)
-			scheduler.SetTick(tick)
-
-			if once {
-				scheduler.RunOnce(cmd.Context())
-				return nil
-			}
-
 			ctx := cmd.Context()
 			if ctx == nil {
 				ctx = context.Background()
 			}
 			ctx, stop := signal.NotifyContext(ctx, os.Interrupt, syscall.SIGTERM)
 			defer stop()
+
+			if err := opts.service.RestoreRuntime(ctx); err != nil {
+				if _, writeErr := fmt.Fprintf(cmd.ErrOrStderr(), "restore runtime: %v\n", err); writeErr != nil {
+					return writeErr
+				}
+			}
+
+			scheduler := app.NewScheduler(opts.service)
+			scheduler.SetTick(tick)
+
+			if once {
+				scheduler.RunOnce(ctx)
+				return nil
+			}
 
 			scheduler.Start(ctx)
 			<-ctx.Done()

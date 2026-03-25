@@ -73,7 +73,7 @@ func statusOutputLooksRunning(output string) bool {
 	normalized := strings.ToLower(strings.TrimSpace(output))
 	switch {
 	case normalized == "", normalized == "unknown":
-		return true
+		return false
 	case strings.Contains(normalized, "no instances"):
 		return false
 	case strings.Contains(normalized, "inactive"):
@@ -87,6 +87,6 @@ func statusOutputLooksRunning(output string) bool {
 	case strings.Contains(normalized, "active"):
 		return true
 	default:
-		return true
+		return false
 	}
 }

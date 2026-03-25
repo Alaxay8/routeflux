@@ -2,33 +2,39 @@ package store
 
 import (
 	"errors"
+	"fmt"
 	"os"
-	"time"
 
 	"github.com/Alaxay8/routeflux/internal/domain"
 )
 
 // SaveState persists runtime state.
 func (s *FileStore) SaveState(state domain.RuntimeState) error {
+	state.SchemaVersion = domain.DefaultRuntimeState().SchemaVersion
 	return AtomicWriteJSON(s.paths.StatePath, state)
 }
 
 // LoadState loads persisted runtime state or returns the default state.
 func (s *FileStore) LoadState() (domain.RuntimeState, error) {
-	state := domain.DefaultRuntimeState()
-	if err := readJSONFile(s.paths.StatePath, &state); err != nil {
-		if errors.Is(err, os.ErrNotExist) {
-			return domain.DefaultRuntimeState(), nil
+	defaults := domain.DefaultRuntimeState()
+	data, err := os.ReadFile(s.paths.StatePath)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return defaults, nil
 		}
 		return domain.RuntimeState{}, err
 	}
 
-	if state.LastRefreshAt == nil {
-		state.LastRefreshAt = make(map[string]time.Time)
+	state, err := decodeState(data, s.paths.StatePath)
+	if err == nil {
+		return state, nil
 	}
-	if state.Health == nil {
-		state.Health = make(map[string]domain.NodeHealth)
+	if errors.Is(err, ErrUnsupportedStateSchema) {
+		return domain.RuntimeState{}, err
+	}
+	if _, recoverErr := s.recoverCorruptJSON(s.paths.StatePath, defaults, err); recoverErr != nil {
+		return domain.RuntimeState{}, fmt.Errorf("recover state: %w", recoverErr)
 	}
 
-	return state, nil
+	return defaults, nil
 }

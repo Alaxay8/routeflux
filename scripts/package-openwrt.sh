@@ -2,13 +2,31 @@
 set -eu
 
 PKG_DIR="${PKG_DIR:-dist/routeflux-ipk}"
-VERSION="${VERSION:-0.1.0}"
 ARCH="${ARCH:-mipsel_24kc}"
 ROOT_DIR="$(CDPATH= cd -- "$(dirname "$0")/.." && pwd)"
 DATA_DIR="${PKG_DIR}/data"
 CONTROL_DIR="${PKG_DIR}/control"
 WORK_DIR="${PKG_DIR}/work"
 PACKAGE_NAME="${PACKAGE_NAME:-routeflux}"
+
+resolve_version() {
+	if [ -n "${VERSION:-}" ]; then
+		printf '%s\n' "${VERSION#v}"
+		return
+	fi
+
+	if command -v git >/dev/null 2>&1; then
+		version="$(git -C "${ROOT_DIR}" describe --tags --always --dirty 2>/dev/null || true)"
+		if [ -n "${version}" ]; then
+			printf '%s\n' "${version#v}"
+			return
+		fi
+	fi
+
+	printf '0.0.0-dev\n'
+}
+
+VERSION="$(resolve_version)"
 IPK_PATH="${ROOT_DIR}/dist/${PACKAGE_NAME}_${VERSION}_${ARCH}.ipk"
 TARBALL_PATH="${ROOT_DIR}/dist/${PACKAGE_NAME}_${VERSION}_${ARCH}.tar.gz"
 
