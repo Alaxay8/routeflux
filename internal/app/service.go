@@ -10,6 +10,7 @@ import (
 	"html"
 	"io"
 	"log/slog"
+	"net"
 	"net/http"
 	"net/http/cookiejar"
 	"net/url"
@@ -41,6 +42,11 @@ type Firewaller interface {
 	Disable(ctx context.Context) error
 }
 
+// HostResolver resolves node hostnames before backend apply.
+type HostResolver interface {
+	LookupIPAddr(ctx context.Context, host string) ([]net.IPAddr, error)
+}
+
 // AddSubscriptionRequest defines how a subscription is added.
 type AddSubscriptionRequest struct {
 	URL  string
@@ -64,6 +70,7 @@ type Service struct {
 	httpClient *http.Client
 	checker    probe.Checker
 	logger     *slog.Logger
+	resolver   HostResolver
 }
 
 // Dependencies groups the service construction inputs.
@@ -74,6 +81,7 @@ type Dependencies struct {
 	HTTPClient *http.Client
 	Checker    probe.Checker
 	Logger     *slog.Logger
+	Resolver   HostResolver
 }
 
 type subscriptionFetchMetadata struct {
@@ -92,7 +100,7 @@ const (
 	subscriptionProfileTitleKey  = "Profile-Title"
 )
 
-var subscriptionShareLinkPattern = regexp.MustCompile(`(?i)(vless|vmess|trojan|ss)://[^\s"'<>]+`)
+var subscriptionShareLinkPattern = regexp.MustCompile(`(?i)(vless|vmess|trojan|ss)://[^"'<>]+`)
 var htmlTitlePattern = regexp.MustCompile(`(?is)<title[^>]*>\s*(.*?)\s*</title>`)
 var htmlH1Pattern = regexp.MustCompile(`(?is)<h1[^>]*>\s*(.*?)\s*</h1>`)
 var htmlTagPattern = regexp.MustCompile(`(?s)<[^>]+>`)
@@ -109,6 +117,11 @@ func NewService(deps Dependencies) *Service {
 		logger = slog.New(slog.NewTextHandler(io.Discard, nil))
 	}
 
+	resolver := deps.Resolver
+	if resolver == nil {
+		resolver = net.DefaultResolver
+	}
+
 	return &Service{
 		store:      deps.Store,
 		backend:    deps.Backend,
@@ -116,6 +129,7 @@ func NewService(deps Dependencies) *Service {
 		httpClient: ensureSubscriptionHTTPClient(deps.HTTPClient),
 		checker:    checker,
 		logger:     logger,
+		resolver:   resolver,
 	}
 }
 
@@ -156,7 +170,6 @@ func (s *Service) addSubscription(ctx context.Context, req AddSubscriptionReques
 	now := time.Now().UTC()
 	storedSource := sourceOrURL(sourceType, req)
 	sub := domain.Subscription{
-		ID:                 stableSubscriptionID(sourceType, storedSource),
 		SourceType:         sourceType,
 		Source:             storedSource,
 		ProviderName:       providerName,
@@ -168,6 +181,7 @@ func (s *Service) addSubscription(ctx context.Context, req AddSubscriptionReques
 		Nodes:              nodes,
 	}
 
+	sub.ID = resolveAddSubscriptionID(subscriptions, sub)
 	for idx := range sub.Nodes {
 		sub.Nodes[idx].SubscriptionID = sub.ID
 	}
@@ -1246,11 +1260,16 @@ func (s *Service) applyNodeSelection(ctx context.Context, sub domain.Subscriptio
 		return fmt.Errorf("load settings: %w", err)
 	}
 
+	resolvedNode, err := s.resolveNodeAddress(ctx, node)
+	if err != nil {
+		return fmt.Errorf("resolve node address: %w", err)
+	}
+
 	if s.backend != nil {
 		if err := s.backend.ApplyConfig(ctx, backend.ConfigRequest{
 			Mode:             mode,
-			Nodes:            []domain.Node{node},
-			SelectedNodeID:   node.ID,
+			Nodes:            []domain.Node{resolvedNode},
+			SelectedNodeID:   resolvedNode.ID,
 			LogLevel:         settings.LogLevel,
 			DNS:              settings.DNS,
 			SOCKSPort:        10808,
@@ -1299,6 +1318,35 @@ func (s *Service) applyNodeSelection(ctx context.Context, sub domain.Subscriptio
 	return nil
 }
 
+func (s *Service) resolveNodeAddress(ctx context.Context, node domain.Node) (domain.Node, error) {
+	if net.ParseIP(strings.TrimSpace(node.Address)) != nil {
+		return node, nil
+	}
+	if s.resolver == nil {
+		return node, nil
+	}
+
+	addrs, err := s.resolver.LookupIPAddr(ctx, node.Address)
+	if err != nil {
+		s.logger.Debug("resolve node address fallback", "host", node.Address, "error", err)
+		return node, nil
+	}
+
+	for _, addr := range addrs {
+		if ipv4 := addr.IP.To4(); ipv4 != nil {
+			node.Address = ipv4.String()
+			return node, nil
+		}
+	}
+	if len(addrs) == 0 {
+		s.logger.Debug("resolve node address returned no addresses", "host", node.Address)
+		return node, nil
+	}
+
+	node.Address = addrs[0].IP.String()
+	return node, nil
+}
+
 func (s *Service) probeSubscription(ctx context.Context, sub domain.Subscription, health map[string]domain.NodeHealth) []probe.Result {
 	results := make([]probe.Result, 0, len(sub.Nodes))
 	for _, node := range sub.Nodes {
@@ -1317,6 +1365,69 @@ func (s *Service) probeSubscription(ctx context.Context, sub domain.Subscription
 func stableSubscriptionID(sourceType domain.SourceType, source string) string {
 	sum := sha1.Sum([]byte(string(sourceType) + "|" + source))
 	return "sub-" + hex.EncodeToString(sum[:])[:10]
+}
+
+func resolveAddSubscriptionID(subscriptions []domain.Subscription, next domain.Subscription) string {
+	signature := subscriptionSignature(next)
+	for _, existing := range subscriptions {
+		if existing.SourceType != next.SourceType || strings.TrimSpace(existing.Source) != strings.TrimSpace(next.Source) {
+			continue
+		}
+		if subscriptionSignature(existing) == signature {
+			return existing.ID
+		}
+	}
+
+	baseID := stableSubscriptionID(next.SourceType, next.Source)
+	if !subscriptionIDExists(subscriptions, baseID) {
+		return baseID
+	}
+
+	candidate := stableSubscriptionID(next.SourceType, next.Source+"|"+signature)
+	if !subscriptionIDExists(subscriptions, candidate) {
+		return candidate
+	}
+
+	for attempt := 2; ; attempt++ {
+		candidate = stableSubscriptionID(next.SourceType, fmt.Sprintf("%s|%s|%d", next.Source, signature, attempt))
+		if !subscriptionIDExists(subscriptions, candidate) {
+			return candidate
+		}
+	}
+}
+
+func subscriptionIDExists(subscriptions []domain.Subscription, id string) bool {
+	return slices.ContainsFunc(subscriptions, func(sub domain.Subscription) bool {
+		return sub.ID == id
+	})
+}
+
+func subscriptionSignature(sub domain.Subscription) string {
+	nodes := make([]domain.Node, len(sub.Nodes))
+	copy(nodes, sub.Nodes)
+	for idx := range nodes {
+		nodes[idx].SubscriptionID = ""
+	}
+
+	payload, err := json.Marshal(struct {
+		SourceType   domain.SourceType `json:"source_type"`
+		Source       string            `json:"source"`
+		ProviderName string            `json:"provider_name"`
+		DisplayName  string            `json:"display_name"`
+		Nodes        []domain.Node     `json:"nodes"`
+	}{
+		SourceType:   sub.SourceType,
+		Source:       strings.TrimSpace(sub.Source),
+		ProviderName: strings.TrimSpace(sub.ProviderName),
+		DisplayName:  strings.TrimSpace(sub.DisplayName),
+		Nodes:        nodes,
+	})
+	if err != nil {
+		return stableSubscriptionID(sub.SourceType, strings.TrimSpace(sub.Source)+"|"+strings.TrimSpace(sub.ProviderName)+"|"+strings.TrimSpace(sub.DisplayName))
+	}
+
+	sum := sha1.Sum(payload)
+	return hex.EncodeToString(sum[:])
 }
 
 func sourceOrURL(sourceType domain.SourceType, req AddSubscriptionRequest) string {

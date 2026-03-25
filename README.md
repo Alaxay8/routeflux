@@ -6,12 +6,12 @@
 
 RouteFlux is a lightweight OpenWrt-native Go application for managing Xray and V2Ray-compatible proxy subscriptions on routers and edge devices. It is designed for people who want an OpenWrt proxy manager for VLESS, VMess, Trojan, 3x-ui, Xray, router-based proxy routing, and subscription handling without hand-editing Xray JSON.
 
-RouteFlux imports subscription URLs, raw `vless://`, `vmess://`, `trojan://`, and `ss://` links, plus valid 3x-ui or Xray JSON configs. It normalizes supported proxy outbounds into one node model, stores local state safely, and generates runtime configuration for Xray on OpenWrt and compatible forks such as ImmortalWrt.
+RouteFlux imports subscription URLs, raw `vless://`, `vmess://`, and `trojan://` links, plus valid 3x-ui or Xray JSON configs. It normalizes supported proxy outbounds into one node model, stores local state safely, and generates runtime configuration for Xray on OpenWrt and compatible forks such as ImmortalWrt.
 
 ## Features
 
 - Import proxy subscriptions from a URL, raw share link, stdin, or valid 3x-ui/Xray JSON.
-- Parse VLESS, VMess, Trojan, and Shadowsocks share links.
+- Parse VLESS, VMess, and Trojan share links.
 - Normalize supported 3x-ui/Xray proxy outbounds into RouteFlux nodes.
 - Add, list, refresh, connect, disconnect, remove one subscription, or remove all subscriptions from the CLI or TUI.
 - Select nodes manually or use automatic best-node selection with health checks and anti-flap logic.
@@ -53,17 +53,22 @@ ssh root@router 'cat > /tmp/routeflux.new && chmod 0755 /tmp/routeflux.new && mv
 
 5. Optional: install the LuCI frontend files when you want the web interface.
 
-Build a deploy bundle:
+Build OpenWrt deployment artifacts:
 
 ```bash
 make package-openwrt
 ```
 
-Copy it to the router and extract it at `/`:
+This creates:
+
+- `dist/routeflux_0.1.0_mipsel_24kc.ipk`
+- `dist/routeflux_0.1.0_mipsel_24kc.tar.gz`
+
+For a reliable manual install, copy the tarball to the router and extract it at `/`:
 
 ```bash
-scp -O ./dist/routeflux_0.1.0_all.tar.gz root@router:/tmp/
-ssh root@router 'tar -xzf /tmp/routeflux_0.1.0_all.tar.gz -C / && rm -f /tmp/luci-indexcache && rm -rf /tmp/luci-modulecache && /etc/init.d/rpcd reload && /etc/init.d/uhttpd reload'
+scp -O ./dist/routeflux_0.1.0_mipsel_24kc.tar.gz root@router:/tmp/
+ssh root@router 'tar -xzf /tmp/routeflux_0.1.0_mipsel_24kc.tar.gz -C / && rm -f /tmp/luci-indexcache && rm -rf /tmp/luci-modulecache && /etc/init.d/rpcd reload && /etc/init.d/uhttpd reload'
 ```
 
 This installs:
@@ -72,6 +77,8 @@ This installs:
 - `/usr/share/luci/menu.d/luci-app-routeflux.json`
 - `/usr/share/rpcd/acl.d/luci-app-routeflux.json`
 - `/www/luci-static/resources/view/routeflux/*.js`
+
+To make `opkg install routeflux` work by package name, build the package with the OpenWrt SDK or buildroot, publish it in an `opkg` feed with `Packages.gz`, add that feed to the router, then run `opkg update` and `opkg install routeflux`.
 
 6. Install Xray Core later when you want to use `connect`, `disconnect`, or generated runtime config. Ensure the service script exists at `/etc/init.d/xray`, or override it with `ROUTEFLUX_XRAY_SERVICE`.
 
@@ -227,7 +234,6 @@ DNS transports:
 
 - `plain`: regular DNS, not encrypted.
 - `doh`: DNS over HTTPS. This is the working encrypted DNS option in the current backend.
-- `dot`: DNS over TLS. The setting exists, but the current Xray backend does not apply it yet.
 
 ## Development
 
@@ -264,7 +270,6 @@ The codebase is split into domain, parser, store, probe, backend, app, CLI, and 
 - VLESS
 - VMess
 - Trojan
-- Shadowsocks share-link parsing
 
 ## TUI
 
@@ -288,7 +293,7 @@ Placeholder screenshots:
 ## OpenWrt Deployment
 
 1. Build with `make build-openwrt`.
-2. Copy the binary to the router. If you install manually instead of unpacking the release tarball, also copy `openwrt/root/etc/init.d/routeflux` to `/etc/init.d/routeflux` and make it executable.
+2. Copy the binary to the router. If you install manually instead of installing the `.ipk`, also copy `openwrt/root/etc/init.d/routeflux` to `/etc/init.d/routeflux` and make it executable.
 3. Create `/etc/routeflux` if it does not exist.
 4. Install Xray only when you want to connect traffic, and verify that `/etc/init.d/xray` can `reload`, `start`, and `stop`.
 5. Enable the RouteFlux background refresh service when you want automatic subscription refresh:
@@ -305,8 +310,7 @@ Placeholder screenshots:
 
 - Xray is required for connect, disconnect, and runtime config generation.
 - 3x-ui/Xray JSON import reads supported proxy outbounds only. It does not preserve full `dns`, `routing`, `inbounds`, outbound chaining, or other auxiliary runtime sections.
-- The current Xray backend connects VLESS, VMess, and Trojan nodes. Shadowsocks parsing is available, but end-to-end Xray outbound generation for Shadowsocks is not wired yet.
-- `dns.transport=dot` is defined in settings but is not applied by the current Xray backend.
+- The current Xray backend connects VLESS, VMess, and Trojan nodes.
 - Transparent router traffic interception is not fully automated in MVP.
 - Automatic subscription refresh requires the RouteFlux daemon or OpenWrt `/etc/init.d/routeflux` service to be running.
 - Simple firewall routing currently supports destination IPv4 targets, source IPv4 hosts, CIDR pools, IPv4 ranges, and the `all` or `*` LAN-wide shortcut. QUIC blocking is host-mode only.

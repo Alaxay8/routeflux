@@ -61,10 +61,10 @@ func buildProviderGroups(subscriptions []domain.Subscription) []providerGroup {
 }
 
 func providerKey(sub domain.Subscription) string {
-	if value := strings.TrimSpace(sub.ProviderName); value != "" {
+	if value := tuiText(sub.ProviderName); value != "" {
 		return strings.ToLower(value)
 	}
-	if value := strings.TrimSpace(sub.DisplayName); value != "" {
+	if value := tuiText(sub.DisplayName); value != "" {
 		return strings.ToLower(value)
 	}
 	return sub.ID
@@ -72,17 +72,17 @@ func providerKey(sub domain.Subscription) string {
 
 func providerTitle(sub domain.Subscription) string {
 	if value := strings.TrimSpace(sub.ProviderName); value != "" {
-		return domain.HumanizeProviderName(value)
+		return tuiText(domain.HumanizeProviderName(value))
 	}
 	if value := strings.TrimSpace(sub.DisplayName); value != "" {
-		return domain.HumanizeProviderName(value)
+		return tuiText(domain.HumanizeProviderName(value))
 	}
 	return "Imported VPN"
 }
 
 func profileLabel(sub domain.Subscription) string {
-	label := strings.TrimSpace(sub.DisplayName)
-	if label == "" || strings.EqualFold(label, strings.TrimSpace(sub.ProviderName)) {
+	label := tuiText(sub.DisplayName)
+	if label == "" || strings.EqualFold(label, tuiText(sub.ProviderName)) {
 		return ""
 	}
 	return label

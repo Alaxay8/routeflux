@@ -361,7 +361,7 @@ function transportSummary(transport) {
 	case 'doh':
 		return _('DoH');
 	case 'dot':
-		return _('DoT');
+		return _('Legacy');
 	default:
 		return _('Plain');
 	}
@@ -568,7 +568,7 @@ return view.extend({
 		if (trim(dns.transport) === 'dot') {
 			content.push(E('div', { 'class': 'cbi-section' }, [
 				E('div', { 'class': 'alert-message warning' }, [
-					_('DoT is saved, but the current RouteFlux Xray backend does not apply DNS over TLS yet.')
+					_('The saved DNS transport is not supported by the current RouteFlux backend.')
 				])
 			]));
 		}
@@ -603,8 +603,7 @@ return view.extend({
 					E('div', { 'class': 'cbi-value-field' }, [
 						E('select', { 'id': 'routeflux-dns-transport' }, [
 							E('option', { 'value': 'plain', 'selected': trim(dns.transport) === 'plain' ? 'selected' : null }, [ _('Plain') ]),
-							E('option', { 'value': 'doh', 'selected': trim(dns.transport) === 'doh' ? 'selected' : null }, [ _('DoH') ]),
-							E('option', { 'value': 'dot', 'selected': trim(dns.transport) === 'dot' ? 'selected' : null }, [ _('DoT') ])
+							E('option', { 'value': 'doh', 'selected': trim(dns.transport) === 'doh' ? 'selected' : null }, [ _('DoH') ])
 						])
 					]),
 					E('div', { 'class': 'cbi-value-description' }, [

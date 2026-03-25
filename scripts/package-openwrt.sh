@@ -3,37 +3,48 @@ set -eu
 
 PKG_DIR="${PKG_DIR:-dist/routeflux-ipk}"
 VERSION="${VERSION:-0.1.0}"
-ARCH="${ARCH:-all}"
+ARCH="${ARCH:-mipsel_24kc}"
 ROOT_DIR="$(CDPATH= cd -- "$(dirname "$0")/.." && pwd)"
+DATA_DIR="${PKG_DIR}/data"
+CONTROL_DIR="${PKG_DIR}/control"
+WORK_DIR="${PKG_DIR}/work"
+PACKAGE_NAME="${PACKAGE_NAME:-routeflux}"
+IPK_PATH="${ROOT_DIR}/dist/${PACKAGE_NAME}_${VERSION}_${ARCH}.ipk"
+TARBALL_PATH="${ROOT_DIR}/dist/${PACKAGE_NAME}_${VERSION}_${ARCH}.tar.gz"
 
 rm -rf "${PKG_DIR}"
+mkdir -p "${ROOT_DIR}/dist"
 mkdir -p \
-	"${PKG_DIR}/usr/bin" \
-	"${PKG_DIR}/etc/init.d" \
-	"${PKG_DIR}/usr/share/luci/menu.d" \
-	"${PKG_DIR}/usr/share/rpcd/acl.d" \
-	"${PKG_DIR}/www/luci-static/resources/view/routeflux" \
-	"${PKG_DIR}/CONTROL"
+	"${DATA_DIR}/usr/bin" \
+	"${DATA_DIR}/etc/init.d" \
+	"${DATA_DIR}/usr/share/luci/menu.d" \
+	"${DATA_DIR}/usr/share/rpcd/acl.d" \
+	"${DATA_DIR}/www/luci-static/resources/view/routeflux" \
+	"${CONTROL_DIR}" \
+	"${WORK_DIR}"
 
-cp "${ROOT_DIR}/bin/openwrt/routeflux" "${PKG_DIR}/usr/bin/routeflux"
-cp "${ROOT_DIR}/openwrt/root/etc/init.d/routeflux" "${PKG_DIR}/etc/init.d/routeflux"
-chmod 0755 "${PKG_DIR}/etc/init.d/routeflux"
+cp "${ROOT_DIR}/bin/openwrt/routeflux" "${DATA_DIR}/usr/bin/routeflux"
+cp "${ROOT_DIR}/openwrt/root/etc/init.d/routeflux" "${DATA_DIR}/etc/init.d/routeflux"
+chmod 0755 "${DATA_DIR}/etc/init.d/routeflux"
 cp "${ROOT_DIR}/luci-app-routeflux/root/usr/share/luci/menu.d/luci-app-routeflux.json" \
-	"${PKG_DIR}/usr/share/luci/menu.d/luci-app-routeflux.json"
+	"${DATA_DIR}/usr/share/luci/menu.d/luci-app-routeflux.json"
 cp "${ROOT_DIR}/luci-app-routeflux/root/usr/share/rpcd/acl.d/luci-app-routeflux.json" \
-	"${PKG_DIR}/usr/share/rpcd/acl.d/luci-app-routeflux.json"
+	"${DATA_DIR}/usr/share/rpcd/acl.d/luci-app-routeflux.json"
 cp "${ROOT_DIR}/luci-app-routeflux/htdocs/luci-static/resources/view/routeflux/"*.js \
-	"${PKG_DIR}/www/luci-static/resources/view/routeflux/"
+	"${DATA_DIR}/www/luci-static/resources/view/routeflux/"
 
-cat > "${PKG_DIR}/CONTROL/control" <<EOF
-Package: routeflux
+cat > "${CONTROL_DIR}/control" <<EOF
+Package: ${PACKAGE_NAME}
 Version: ${VERSION}
 Architecture: ${ARCH}
 Maintainer: Alexey
+License: MIT
+Section: net
+Priority: optional
 Description: RouteFlux OpenWrt subscription proxy manager with LuCI frontend files
 EOF
 
-cat > "${PKG_DIR}/CONTROL/postinst" <<'EOF'
+cat > "${CONTROL_DIR}/postinst" <<'EOF'
 #!/bin/sh
 set -eu
 
@@ -45,7 +56,54 @@ if [ -z "${IPKG_INSTROOT:-}" ]; then
 	/etc/init.d/uhttpd reload >/dev/null 2>&1 || true
 fi
 EOF
-chmod 0755 "${PKG_DIR}/CONTROL/postinst"
+chmod 0755 "${CONTROL_DIR}/postinst"
 
-tar -C "${PKG_DIR}" -czf "dist/routeflux_${VERSION}_${ARCH}.tar.gz" .
-echo "Created dist/routeflux_${VERSION}_${ARCH}.tar.gz"
+printf '2.0\n' > "${WORK_DIR}/debian-binary"
+
+create_tarball() {
+	src_dir="$1"
+	out_file="$2"
+	out_file_dir="$(CDPATH= cd -- "$(dirname "${out_file}")" && pwd)"
+	out_file="${out_file_dir}/$(basename "${out_file}")"
+
+	(
+		cd "${src_dir}"
+		entries="$(find . -mindepth 1 -maxdepth 1 -print | LC_ALL=C sort)"
+		# shellcheck disable=SC2086
+		COPYFILE_DISABLE=1 bsdtar --format ustar --uid 0 --gid 0 --uname root --gname root -czf "${out_file}" ${entries}
+	)
+}
+
+create_tarball "${CONTROL_DIR}" "${WORK_DIR}/control.tar.gz"
+create_tarball "${DATA_DIR}" "${WORK_DIR}/data.tar.gz"
+create_tarball "${DATA_DIR}" "${TARBALL_PATH}"
+
+rm -f "${IPK_PATH}"
+printf '!<arch>\n' > "${IPK_PATH}"
+
+write_ar_member() {
+	name="$1"
+	file="$2"
+	size="$(wc -c < "${file}" | tr -d ' ')"
+	timestamp="$(date +%s)"
+
+	printf '%-16s%-12s%-6s%-6s%-8s%-10s`\n' \
+		"${name}/" \
+		"${timestamp}" \
+		"0" \
+		"0" \
+		"100644" \
+		"${size}" >> "${IPK_PATH}"
+	cat "${file}" >> "${IPK_PATH}"
+
+	if [ $((size % 2)) -ne 0 ]; then
+		printf '\n' >> "${IPK_PATH}"
+	fi
+}
+
+write_ar_member "debian-binary" "${WORK_DIR}/debian-binary"
+write_ar_member "control.tar.gz" "${WORK_DIR}/control.tar.gz"
+write_ar_member "data.tar.gz" "${WORK_DIR}/data.tar.gz"
+
+echo "Created ${IPK_PATH}"
+echo "Created ${TARBALL_PATH}"

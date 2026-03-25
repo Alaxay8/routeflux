@@ -233,6 +233,93 @@ func TestGenerateTransparentVLESSConfig(t *testing.T) {
 	}
 }
 
+func TestGenerateTransparentConfigRoutesDNSUpstreamsDirect(t *testing.T) {
+	t.Parallel()
+
+	req := backend.ConfigRequest{
+		Mode: domain.SelectionModeManual,
+		Nodes: []domain.Node{
+			{
+				ID:          "node-1",
+				Name:        "Edge Reality",
+				Protocol:    domain.ProtocolVLESS,
+				Address:     "node1.example.com",
+				Port:        443,
+				UUID:        "11111111-1111-1111-1111-111111111111",
+				Encryption:  "none",
+				Security:    "reality",
+				ServerName:  "edge.example.com",
+				Fingerprint: "chrome",
+				PublicKey:   "public-key-1",
+				ShortID:     "ab12cd34",
+				Transport:   "tcp",
+			},
+		},
+		SelectedNodeID:   "node-1",
+		LogLevel:         "warning",
+		SOCKSPort:        10808,
+		HTTPPort:         10809,
+		TransparentProxy: true,
+		TransparentPort:  12345,
+		DNS: domain.DNSSettings{
+			Mode:          domain.DNSModeSplit,
+			Transport:     domain.DNSTransportDoH,
+			Servers:       []string{"1.1.1.1", "dns.google"},
+			Bootstrap:     []string{"9.9.9.9"},
+			DirectDomains: []string{"domain:lan"},
+		},
+	}
+
+	got, err := xray.NewGenerator().Generate(req)
+	if err != nil {
+		t.Fatalf("generate config: %v", err)
+	}
+
+	var cfg map[string]any
+	if err := json.Unmarshal(got, &cfg); err != nil {
+		t.Fatalf("unmarshal generated json: %v", err)
+	}
+
+	routing, ok := cfg["routing"].(map[string]any)
+	if !ok {
+		t.Fatalf("routing section missing: %+v", cfg)
+	}
+
+	rules, ok := routing["rules"].([]any)
+	if !ok {
+		t.Fatalf("routing rules missing: %+v", routing)
+	}
+	if len(rules) < 2 {
+		t.Fatalf("expected direct dns rule before catch-all route, got %d rules", len(rules))
+	}
+
+	direct, ok := rules[0].(map[string]any)
+	if !ok {
+		t.Fatalf("expected first routing rule object, got %T", rules[0])
+	}
+	if direct["outboundTag"] != "direct" {
+		t.Fatalf("expected first routing rule to bypass dns upstreams directly, got %+v", direct)
+	}
+
+	gotIPs := asStringSlice(t, direct["ip"])
+	if !reflect.DeepEqual(gotIPs, []string{"1.1.1.1", "9.9.9.9"}) {
+		t.Fatalf("unexpected direct-route dns IPs: %v", gotIPs)
+	}
+
+	gotDomains := asStringSlice(t, direct["domain"])
+	if !reflect.DeepEqual(gotDomains, []string{"full:dns.google"}) {
+		t.Fatalf("unexpected direct-route dns domains: %v", gotDomains)
+	}
+
+	catchAll, ok := rules[1].(map[string]any)
+	if !ok {
+		t.Fatalf("expected second routing rule object, got %T", rules[1])
+	}
+	if catchAll["outboundTag"] != "selected" || catchAll["network"] != "tcp,udp" {
+		t.Fatalf("unexpected catch-all route: %+v", catchAll)
+	}
+}
+
 func mustReadGolden(t *testing.T, name string) string {
 	t.Helper()
 

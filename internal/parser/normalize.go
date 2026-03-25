@@ -18,6 +18,7 @@ func normalizeNode(node domain.Node, provider string) (domain.Node, error) {
 	if node.Remark == "" {
 		node.Remark = node.Name
 	}
+	node.Name = node.Remark
 	if node.Transport == "" {
 		node.Transport = "tcp"
 	}

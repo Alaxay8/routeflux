@@ -106,6 +106,10 @@ func tryParseJSONNodes(input, provider string) ([]domain.Node, bool, error) {
 }
 
 func parseJSONImport(raw json.RawMessage, provider string) ([]domain.Node, error) {
+	return parseJSONImportWithLabel(raw, provider, "")
+}
+
+func parseJSONImportWithLabel(raw json.RawMessage, provider, defaultLabel string) ([]domain.Node, error) {
 	trimmed := strings.TrimSpace(string(raw))
 	if trimmed == "" {
 		return nil, fmt.Errorf("empty json import")
@@ -123,26 +127,49 @@ func parseJSONImport(raw json.RawMessage, provider string) ([]domain.Node, error
 			if err != nil {
 				return nil, err
 			}
-			return parseOutboundList(outbounds, provider, label)
+			return parseOutboundList(outbounds, provider, firstNonEmpty(label, defaultLabel))
 		}
 		if protocol, ok := object["protocol"]; ok && len(protocol) > 0 {
-			node, err := parseJSONOutbound([]byte(trimmed), provider, "")
+			label, err := parseJSONImportLabel([]byte(trimmed))
+			if err != nil {
+				return nil, err
+			}
+			node, err := parseJSONOutbound([]byte(trimmed), provider, firstNonEmpty(label, defaultLabel))
 			if err != nil {
 				return nil, err
 			}
 			return []domain.Node{node}, nil
 		}
 		if rawConfig, ok := object["config"]; ok {
+			label, err := parseJSONImportLabel([]byte(trimmed))
+			if err != nil {
+				return nil, err
+			}
+			fallbackLabel := firstNonEmpty(label, defaultLabel)
+
 			var text string
 			if err := json.Unmarshal(rawConfig, &text); err == nil {
-				return ParseNodes(text, provider)
+				nodes, err := ParseNodes(text, provider)
+				if err != nil {
+					return nil, err
+				}
+				return applyFallbackNodeLabel(nodes, fallbackLabel), nil
 			}
-			return parseJSONImport(rawConfig, provider)
+			return parseJSONImportWithLabel(rawConfig, provider, fallbackLabel)
 		}
 		if rawLink, ok := object["link"]; ok {
+			label, err := parseJSONImportLabel([]byte(trimmed))
+			if err != nil {
+				return nil, err
+			}
+
 			var link string
 			if err := json.Unmarshal(rawLink, &link); err == nil {
-				return ParseNodes(link, provider)
+				nodes, err := ParseNodes(link, provider)
+				if err != nil {
+					return nil, err
+				}
+				return applyFallbackNodeLabel(nodes, firstNonEmpty(label, defaultLabel)), nil
 			}
 		}
 
@@ -214,6 +241,24 @@ func parseJSONImportLabel(raw json.RawMessage) (string, error) {
 	}
 
 	return firstNonEmpty(metadata.Remarks, metadata.Remark, metadata.Name, metadata.PS), nil
+}
+
+func applyFallbackNodeLabel(nodes []domain.Node, label string) []domain.Node {
+	label = strings.TrimSpace(label)
+	if label == "" {
+		return nodes
+	}
+
+	for idx := range nodes {
+		if strings.TrimSpace(nodes[idx].Remark) != "" {
+			nodes[idx].Name = strings.TrimSpace(nodes[idx].Remark)
+			continue
+		}
+		nodes[idx].Remark = label
+		nodes[idx].Name = label
+	}
+
+	return nodes
 }
 
 func parseJSONOutbound(raw json.RawMessage, provider, defaultLabel string) (domain.Node, error) {

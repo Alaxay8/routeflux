@@ -74,7 +74,7 @@ func newDNSSetCmd(opts *rootOptions) *cobra.Command {
 DNS options:
 - default: apply the RouteFlux recommended DNS profile in one step
 - mode: system, remote, split, disabled
-- transport: plain, doh, dot
+- transport: plain, doh
 - servers: main DNS servers, separated by commas
 - bootstrap: fallback DNS servers used to resolve DNS server hostnames
 - direct-domains: domains that stay local in split mode
@@ -86,7 +86,6 @@ Simple meaning:
 - split: local router/home names stay local, the rest goes to your chosen DNS
 - plain: normal DNS
 - doh: DNS over HTTPS
-- dot: DNS over TLS
 `),
 		Example: strings.TrimSpace(`
 routeflux dns set default
@@ -168,7 +167,6 @@ DNS modes:
 DNS transports:
 - plain: regular DNS, not encrypted.
 - doh: DNS over HTTPS. This is the working encrypted DNS option right now.
-- dot: DNS over TLS. The setting exists, but the current Xray backend in RouteFlux does not apply it yet.
 
 Other options:
 - servers: the main DNS servers RouteFlux should use.
@@ -245,7 +243,7 @@ func dnsTransportHelp(transport domain.DNSTransport) string {
 	case domain.DNSTransportDoH:
 		return "DNS over HTTPS. This is the working encrypted DNS option right now."
 	case domain.DNSTransportDoT:
-		return "DNS over TLS. The setting exists, but the current backend does not apply it yet."
+		return "Legacy transport value. The current backend does not apply it."
 	default:
 		return "DNS transport is not set."
 	}
