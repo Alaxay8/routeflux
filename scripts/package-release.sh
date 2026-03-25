@@ -39,8 +39,28 @@ build_release_asset() {
 		"${ROOT_DIR}/scripts/package-openwrt.sh"
 }
 
+build_xray_asset() {
+	package_arch="$1"
+	output_dir="$2"
+	goarch="$3"
+	gomips="${4:-}"
+
+	if [ -n "${gomips}" ]; then
+		OUTPUT_DIR="${output_dir}" GOARCH="${goarch}" GOMIPS="${gomips}" \
+			"${ROOT_DIR}/scripts/build-xray.sh"
+	else
+		OUTPUT_DIR="${output_dir}" GOARCH="${goarch}" \
+			"${ROOT_DIR}/scripts/build-xray.sh"
+	fi
+
+	VERSION="${RELEASE_VERSION}" ARCH="${package_arch}" BINARY_PATH="${output_dir}/xray" \
+		"${ROOT_DIR}/scripts/package-xray.sh"
+}
+
 RELEASE_VERSION="$(resolve_version)"
 
 build_release_asset "mipsel_24kc" "${ROOT_DIR}/bin/openwrt/mipsel_24kc" "mipsle" "softfloat"
 build_release_asset "x86_64" "${ROOT_DIR}/bin/openwrt/x86_64" "amd64"
+build_xray_asset "mipsel_24kc" "${ROOT_DIR}/bin/xray/mipsel_24kc" "mipsle" "softfloat"
+build_xray_asset "x86_64" "${ROOT_DIR}/bin/xray/x86_64" "amd64"
 "${ROOT_DIR}/scripts/render-install.sh" "${RELEASE_VERSION}" "${ROOT_DIR}/dist/install.sh" "mipsel_24kc" "x86_64"

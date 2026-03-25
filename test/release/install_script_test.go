@@ -26,6 +26,7 @@ func TestInstallScriptInstallsMatchedOpenWrtTarball(t *testing.T) {
 	writeServiceStub(t, filepath.Join(installRoot, "etc", "init.d", "rpcd"))
 	writeServiceStub(t, filepath.Join(installRoot, "etc", "init.d", "uhttpd"))
 	writeExecutable(t, filepath.Join(installRoot, "usr", "bin", "xray"), "#!/bin/sh\nexit 0\n")
+	writeExecutable(t, filepath.Join(installRoot, "etc", "init.d", "xray"), "#!/bin/sh\nexit 0\n")
 
 	binDir := t.TempDir()
 	writeExecutable(t, filepath.Join(binDir, "opkg"), "#!/bin/sh\nset -eu\n[ \"${1:-}\" = \"print-architecture\" ] || exit 1\nprintf 'arch all 1\\narch noarch 1\\narch mipsel_24kc 10\\n'\n")
@@ -88,31 +89,40 @@ func TestInstallScriptRejectsUnsupportedArchitecture(t *testing.T) {
 	}
 }
 
-func TestInstallScriptRejectsMissingXrayBeforeExtractingFiles(t *testing.T) {
+func TestInstallScriptInstallsBundledXrayWhenMissing(t *testing.T) {
 	t.Parallel()
 
 	version := "1.2.3"
 	scriptPath := renderInstallScript(t, version, "mipsel_24kc", "x86_64")
 	downloadDir := t.TempDir()
 	installRoot := t.TempDir()
+	serviceLogPath := filepath.Join(t.TempDir(), "services.log")
 
 	writeTestTarball(t, filepath.Join(downloadDir, "routeflux_"+version+"_mipsel_24kc.tar.gz"))
+	writeXrayTarball(t, filepath.Join(downloadDir, "xray_"+version+"_mipsel_24kc.tar.gz"))
+	writeServiceStub(t, filepath.Join(installRoot, "etc", "init.d", "rpcd"))
+	writeServiceStub(t, filepath.Join(installRoot, "etc", "init.d", "uhttpd"))
 
 	binDir := t.TempDir()
 	writeExecutable(t, filepath.Join(binDir, "opkg"), "#!/bin/sh\nset -eu\n[ \"${1:-}\" = \"print-architecture\" ] || exit 1\nprintf 'arch all 1\\narch noarch 1\\narch mipsel_24kc 10\\n'\n")
 	writeExecutable(t, filepath.Join(binDir, "wget"), "#!/bin/sh\nset -eu\nout=''\nwhile [ \"$#\" -gt 0 ]; do\n\tcase \"$1\" in\n\t\t-O)\n\t\t\tout=\"$2\"\n\t\t\tshift 2\n\t\t\t;;\n\t\t*)\n\t\t\turl=\"$1\"\n\t\t\tshift\n\t\t\t;;\n\tesac\ndone\nmkdir -p \"$(dirname \"$out\")\"\ncp \"${ROUTEFLUX_TEST_DOWNLOAD_DIR:?}/${url##*/}\" \"$out\"\n")
 
-	stdout, stderr, err := runInstallScript(t, scriptPath, installRoot, binDir, downloadDir, filepath.Join(t.TempDir(), "services.log"))
-	if err == nil {
-		t.Fatalf("expected install script to fail\nstdout:\n%s\nstderr:\n%s", stdout, stderr)
+	stdout, stderr, err := runInstallScript(t, scriptPath, installRoot, binDir, downloadDir, serviceLogPath)
+	if err != nil {
+		t.Fatalf("run install script: %v\nstdout:\n%s\nstderr:\n%s", err, stdout, stderr)
 	}
 
-	combined := stdout + "\n" + stderr
-	if !strings.Contains(combined, "Xray is required before installing RouteFlux") {
-		t.Fatalf("expected missing xray error, got %q", combined)
+	if _, err := os.Stat(filepath.Join(installRoot, "usr", "bin", "routeflux")); err != nil {
+		t.Fatalf("expected routeflux binary to be installed: %v", err)
 	}
-	if _, err := os.Stat(filepath.Join(installRoot, "usr", "bin", "routeflux")); !os.IsNotExist(err) {
-		t.Fatalf("expected routeflux binary to remain uninstalled, stat err=%v", err)
+	if _, err := os.Stat(filepath.Join(installRoot, "usr", "bin", "xray")); err != nil {
+		t.Fatalf("expected xray binary to be installed: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(installRoot, "etc", "init.d", "xray")); err != nil {
+		t.Fatalf("expected xray service to be installed: %v", err)
+	}
+	if !strings.Contains(stdout, "Bundled Xray installed") {
+		t.Fatalf("expected stdout to mention bundled xray install, got %q", stdout)
 	}
 }
 
@@ -130,6 +140,7 @@ func TestInstallScriptFallsBackToUnameForX8664(t *testing.T) {
 	writeServiceStub(t, filepath.Join(installRoot, "etc", "init.d", "rpcd"))
 	writeServiceStub(t, filepath.Join(installRoot, "etc", "init.d", "uhttpd"))
 	writeExecutable(t, filepath.Join(installRoot, "usr", "bin", "xray"), "#!/bin/sh\nexit 0\n")
+	writeExecutable(t, filepath.Join(installRoot, "etc", "init.d", "xray"), "#!/bin/sh\nexit 0\n")
 
 	binDir := t.TempDir()
 	writeExecutable(t, filepath.Join(binDir, "uname"), "#!/bin/sh\nset -eu\n[ \"${1:-}\" = \"-m\" ] || exit 1\nprintf 'x86_64\\n'\n")
@@ -148,7 +159,7 @@ func TestInstallScriptFallsBackToUnameForX8664(t *testing.T) {
 	}
 }
 
-func TestInstallScriptSkipXrayCheckInstallsForStaging(t *testing.T) {
+func TestInstallScriptFailsWhenBundledXrayAssetIsMissing(t *testing.T) {
 	t.Parallel()
 
 	version := "1.2.3"
@@ -156,23 +167,24 @@ func TestInstallScriptSkipXrayCheckInstallsForStaging(t *testing.T) {
 
 	downloadDir := t.TempDir()
 	installRoot := t.TempDir()
-	serviceLogPath := filepath.Join(t.TempDir(), "services.log")
 
 	writeTestTarball(t, filepath.Join(downloadDir, "routeflux_"+version+"_mipsel_24kc.tar.gz"))
-	writeServiceStub(t, filepath.Join(installRoot, "etc", "init.d", "rpcd"))
-	writeServiceStub(t, filepath.Join(installRoot, "etc", "init.d", "uhttpd"))
 
 	binDir := t.TempDir()
 	writeExecutable(t, filepath.Join(binDir, "opkg"), "#!/bin/sh\nset -eu\n[ \"${1:-}\" = \"print-architecture\" ] || exit 1\nprintf 'arch all 1\\narch noarch 1\\narch mipsel_24kc 10\\n'\n")
 	writeExecutable(t, filepath.Join(binDir, "wget"), "#!/bin/sh\nset -eu\nout=''\nwhile [ \"$#\" -gt 0 ]; do\n\tcase \"$1\" in\n\t\t-O)\n\t\t\tout=\"$2\"\n\t\t\tshift 2\n\t\t\t;;\n\t\t*)\n\t\t\turl=\"$1\"\n\t\t\tshift\n\t\t\t;;\n\tesac\ndone\nmkdir -p \"$(dirname \"$out\")\"\ncp \"${ROUTEFLUX_TEST_DOWNLOAD_DIR:?}/${url##*/}\" \"$out\"\n")
 
-	stdout, stderr, err := runInstallScript(t, scriptPath, installRoot, binDir, downloadDir, serviceLogPath, "--skip-xray-check")
-	if err != nil {
-		t.Fatalf("run install script: %v\nstdout:\n%s\nstderr:\n%s", err, stdout, stderr)
+	stdout, stderr, err := runInstallScript(t, scriptPath, installRoot, binDir, downloadDir, filepath.Join(t.TempDir(), "services.log"))
+	if err == nil {
+		t.Fatalf("expected install script to fail\nstdout:\n%s\nstderr:\n%s", stdout, stderr)
 	}
 
-	if _, err := os.Stat(filepath.Join(installRoot, "usr", "bin", "routeflux")); err != nil {
-		t.Fatalf("routeflux binary not installed: %v", err)
+	combined := stdout + "\n" + stderr
+	if !strings.Contains(combined, "xray_1.2.3_mipsel_24kc.tar.gz") {
+		t.Fatalf("expected failure to mention missing xray asset, got %q", combined)
+	}
+	if _, err := os.Stat(filepath.Join(installRoot, "usr", "bin", "routeflux")); !os.IsNotExist(err) {
+		t.Fatalf("expected routeflux binary to remain uninstalled, stat err=%v", err)
 	}
 }
 
@@ -234,6 +246,29 @@ func writeTestTarball(t *testing.T, path string) {
 	addTarFile(t, tw, "./usr/bin/routeflux", 0o755, "#!/bin/sh\nprintf 'routeflux stub\\n'\n")
 	addTarFile(t, tw, "./etc/init.d/routeflux", 0o755, "#!/bin/sh\nset -eu\nprintf '%s:%s\\n' \"$(basename \"$0\")\" \"${1:-}\" >> \"${ROUTEFLUX_TEST_SERVICE_LOG:?}\"\n")
 	addTarFile(t, tw, "./www/luci-static/resources/view/routeflux/overview.js", 0o644, "'use strict';\n")
+}
+
+func writeXrayTarball(t *testing.T, path string) {
+	t.Helper()
+
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		t.Fatalf("create tarball dir: %v", err)
+	}
+
+	file, err := os.Create(path)
+	if err != nil {
+		t.Fatalf("create tarball: %v", err)
+	}
+	defer file.Close()
+
+	gz := gzip.NewWriter(file)
+	defer gz.Close()
+
+	tw := tar.NewWriter(gz)
+	defer tw.Close()
+
+	addTarFile(t, tw, "./usr/bin/xray", 0o755, "#!/bin/sh\nprintf 'xray stub\\n'\n")
+	addTarFile(t, tw, "./etc/init.d/xray", 0o755, "#!/bin/sh\nexit 0\n")
 }
 
 func addTarFile(t *testing.T, tw *tar.Writer, name string, mode int64, data string) {

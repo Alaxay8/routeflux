@@ -291,18 +291,13 @@ func (h *openWRTHarness) InstallRouteFlux(ctx context.Context) error {
 }
 
 func (h *openWRTHarness) InstallXray(ctx context.Context) error {
-	xrayInitPath := filepath.Join(h.workDir, "xray-init.sh")
-	if err := os.WriteFile(xrayInitPath, []byte(xrayInitScript), 0o755); err != nil {
-		return fmt.Errorf("write xray init script: %w", err)
-	}
-
 	if err := h.sshCommand(ctx, "mkdir -p "+xrayRemoteConfigDir+" /var/log"); err != nil {
 		return err
 	}
 	if err := h.scpFile(ctx, h.xrayBin, xrayRemoteBinary); err != nil {
 		return err
 	}
-	if err := h.scpFile(ctx, xrayInitPath, xrayRemoteService); err != nil {
+	if err := h.scpFile(ctx, filepath.Join(h.repoRoot, "openwrt", "root", "etc", "init.d", "xray"), xrayRemoteService); err != nil {
 		return err
 	}
 	if err := h.sshCommand(ctx, "chmod 0755 "+xrayRemoteBinary+" "+xrayRemoteService); err != nil {
@@ -877,47 +872,3 @@ func tail(value string, limit int) string {
 	}
 	return value[len(value)-limit:]
 }
-
-const xrayInitScript = `#!/bin/sh
-BIN="/usr/bin/xray"
-CONFIG="/etc/xray/config.json"
-PIDFILE="/var/run/xray.pid"
-
-start() {
-	stop >/dev/null 2>&1 || true
-	[ -x "${BIN}" ] || return 1
-	[ -f "${CONFIG}" ] || return 1
-	"${BIN}" run -config "${CONFIG}" >/var/log/xray.log 2>&1 &
-	echo $! > "${PIDFILE}"
-	sleep 1
-	kill -0 "$(cat "${PIDFILE}")" >/dev/null 2>&1
-}
-
-stop() {
-	if [ -f "${PIDFILE}" ]; then
-		kill "$(cat "${PIDFILE}")" >/dev/null 2>&1 || true
-		rm -f "${PIDFILE}"
-	fi
-}
-
-reload() {
-	stop
-	start
-}
-
-status() {
-	if [ -f "${PIDFILE}" ] && kill -0 "$(cat "${PIDFILE}")" >/dev/null 2>&1; then
-		echo running
-	else
-		echo inactive
-	fi
-}
-
-case "$1" in
-	start) start ;;
-	stop) stop ;;
-	reload) reload ;;
-	status) status ;;
-	*) exit 1 ;;
-esac
-`

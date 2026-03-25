@@ -10,13 +10,12 @@ ROUTEFLUX_INSTALL_ROOT="${ROUTEFLUX_INSTALL_ROOT:-/}"
 ROUTEFLUX_ARCH_OVERRIDE="${ROUTEFLUX_ARCH:-}"
 ROUTEFLUX_XRAY_BINARY_PATH="${ROUTEFLUX_XRAY_BINARY:-}"
 ROUTEFLUX_XRAY_SERVICE_PATH="${ROUTEFLUX_XRAY_SERVICE:-}"
-ROUTEFLUX_SKIP_XRAY_CHECK="${ROUTEFLUX_SKIP_XRAY_CHECK:-0}"
 ROUTEFLUX_DRY_RUN=0
 
 usage() {
 	printf '%s\n' "RouteFlux OpenWrt installer"
 	printf '%s\n' ""
-	printf '%s\n' "Usage: install.sh [--version <version>] [--arch <arch>] [--base-url <url>] [--install-root <path>] [--skip-xray-check] [--dry-run]"
+	printf '%s\n' "Usage: install.sh [--version <version>] [--arch <arch>] [--base-url <url>] [--install-root <path>] [--dry-run]"
 }
 
 log() {
@@ -165,16 +164,8 @@ run_service_if_present() {
 	"${script}" "${action}" >/dev/null 2>&1 || return 1
 }
 
-require_xray_if_needed() {
-	if [ "${ROUTEFLUX_SKIP_XRAY_CHECK}" = "1" ]; then
-		return 0
-	fi
-
-	if [ -x "$(xray_binary_path)" ] || [ -x "$(service_path xray)" ]; then
-		return 0
-	fi
-
-	die "Xray is required before installing RouteFlux. Install Xray first, or rerun with --skip-xray-check only for staging."
+xray_is_ready() {
+	[ -x "$(xray_binary_path)" ] && [ -x "$(service_path xray)" ]
 }
 
 while [ "$#" -gt 0 ]; do
@@ -198,10 +189,6 @@ while [ "$#" -gt 0 ]; do
 			[ "$#" -ge 2 ] || die "missing value for --install-root"
 			ROUTEFLUX_INSTALL_ROOT="$2"
 			shift 2
-			;;
-		--skip-xray-check)
-			ROUTEFLUX_SKIP_XRAY_CHECK=1
-			shift
 			;;
 		--dry-run)
 			ROUTEFLUX_DRY_RUN=1
@@ -242,6 +229,8 @@ fi
 
 asset_name="routeflux_${ROUTEFLUX_VERSION}_${resolved_arch}.tar.gz"
 asset_url="${ROUTEFLUX_RELEASE_BASE_URL}/${asset_name}"
+xray_asset_name="xray_${ROUTEFLUX_VERSION}_${resolved_arch}.tar.gz"
+xray_asset_url="${ROUTEFLUX_RELEASE_BASE_URL}/${xray_asset_name}"
 
 log "RouteFlux version: ${ROUTEFLUX_VERSION}"
 log "RouteFlux arch: ${resolved_arch}"
@@ -252,12 +241,27 @@ if [ "${ROUTEFLUX_DRY_RUN}" = "1" ]; then
 fi
 
 command_exists tar || die "tar is required to install release assets"
-require_xray_if_needed
 
 tmp_dir="${TMPDIR:-/tmp}/routeflux-install.$$"
 asset_path="${tmp_dir}/${asset_name}"
+xray_asset_path="${tmp_dir}/${xray_asset_name}"
 mkdir -p "${tmp_dir}"
 trap 'rm -rf "${tmp_dir}"' EXIT HUP INT TERM
+
+if xray_is_ready; then
+	log "Detected existing Xray runtime"
+else
+	log "Xray runtime not found, installing bundled Xray"
+	log "Xray asset: ${xray_asset_url}"
+	download_file "${xray_asset_url}" "${xray_asset_path}"
+	mkdir -p "${ROUTEFLUX_INSTALL_ROOT}"
+	tar -xzf "${xray_asset_path}" -C "${ROUTEFLUX_INSTALL_ROOT}"
+	xray_service="$(service_path xray)"
+	if [ -f "${xray_service}" ]; then
+		chmod 0755 "${xray_service}" || true
+	fi
+	log "Bundled Xray installed"
+fi
 
 log "Downloading RouteFlux release asset"
 download_file "${asset_url}" "${asset_path}"

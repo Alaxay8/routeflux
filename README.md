@@ -33,7 +33,7 @@ ssh root@router "wget -O /tmp/routeflux-install.sh https://github.com/Alaxay8/ro
 ```
 
 GitHub does not serve prerelease assets from `releases/latest/download`. While RouteFlux is still published as a beta prerelease, use a tag-pinned release URL.
-The installer now checks for an existing Xray runtime before extracting files and exits early if Xray is missing.
+If Xray is missing, the installer automatically downloads and installs the bundled Xray runtime for the matching release and architecture before installing RouteFlux.
 
 Current easy-install release assets are provided for:
 
@@ -44,21 +44,20 @@ After install:
 
 1. Open LuCI at `Services -> RouteFlux`, or use the CLI over SSH.
 2. Add a subscription, share link, or valid 3x-ui/Xray JSON config.
-3. Install Xray if it is not already present, then connect a node or enable auto mode.
+3. Add a subscription and connect a node or enable auto mode.
 
 See [Installation](#installation) and [Usage](#usage).
 
 ## Installation
 
-1. Ensure Xray is already installed on the router and available as `/usr/bin/xray` or `/etc/init.d/xray`.
-2. Fastest path: use the installer from the current beta GitHub release:
+1. Fastest path: use the installer from the current beta GitHub release:
 
 ```bash
 ssh root@router "wget -O /tmp/routeflux-install.sh https://github.com/Alaxay8/routeflux/releases/download/v0.1.3-beta.9/install.sh && sh /tmp/routeflux-install.sh"
 ```
 
 If you publish a non-prerelease stable release later, you can switch this command back to `releases/latest/download/install.sh`.
-For staging or image-build workflows only, bypass the Xray presence check with `--skip-xray-check`.
+The installer will auto-install the bundled Xray runtime when `/usr/bin/xray` or `/etc/init.d/xray` is missing.
 
 2. For local builds, install Go `1.22` or later.
 3. Use OpenWrt or ImmortalWrt with `nftables` available. OpenWrt `22.03+` is the practical baseline for the current firewall integration.
@@ -102,6 +101,7 @@ VERSION="$(git describe --tags --always --dirty | sed 's/^v//')"
 
 - `dist/routeflux_${VERSION}_mipsel_24kc.ipk`
 - `dist/routeflux_${VERSION}_mipsel_24kc.tar.gz`
+- `dist/xray_${VERSION}_mipsel_24kc.tar.gz`
 
 Build the release bundle used by GitHub Releases:
 
@@ -115,6 +115,8 @@ This creates:
 - `dist/routeflux_${VERSION}_mipsel_24kc.tar.gz`
 - `dist/routeflux_${VERSION}_x86_64.ipk`
 - `dist/routeflux_${VERSION}_x86_64.tar.gz`
+- `dist/xray_${VERSION}_mipsel_24kc.tar.gz`
+- `dist/xray_${VERSION}_x86_64.tar.gz`
 - `dist/install.sh`
 
 For a reliable manual install, copy the tarball to the router and extract it at `/`:
@@ -134,7 +136,7 @@ This installs:
 
 To make `opkg install routeflux` work by package name, build the package with the OpenWrt SDK or buildroot, publish it in an `opkg` feed with `Packages.gz`, add that feed to the router, then run `opkg update` and `opkg install routeflux`.
 
-7. Install Xray Core before running the GitHub release installer. Ensure the binary exists at `/usr/bin/xray` or the service script exists at `/etc/init.d/xray`, or override them with `ROUTEFLUX_XRAY_BINARY` and `ROUTEFLUX_XRAY_SERVICE`.
+7. The GitHub release installer will auto-install the bundled Xray runtime when needed. For custom setups, you can still override the Xray binary and service paths with `ROUTEFLUX_XRAY_BINARY` and `ROUTEFLUX_XRAY_SERVICE`.
 
 ## Usage
 

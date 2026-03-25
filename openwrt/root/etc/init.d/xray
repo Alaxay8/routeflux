@@ -1,0 +1,47 @@
+#!/bin/sh
+set -eu
+
+BIN="${ROUTEFLUX_XRAY_BINARY:-/usr/bin/xray}"
+CONFIG="${ROUTEFLUX_XRAY_CONFIG:-/etc/xray/config.json}"
+PIDFILE="/var/run/xray.pid"
+LOGFILE="/var/log/xray.log"
+
+start() {
+	stop >/dev/null 2>&1 || true
+	[ -x "${BIN}" ] || return 1
+	[ -f "${CONFIG}" ] || return 1
+	mkdir -p "$(dirname "${PIDFILE}")" "$(dirname "${LOGFILE}")"
+	"${BIN}" run -config "${CONFIG}" >>"${LOGFILE}" 2>&1 &
+	echo $! > "${PIDFILE}"
+	sleep 1
+	kill -0 "$(cat "${PIDFILE}")" >/dev/null 2>&1
+}
+
+stop() {
+	if [ -f "${PIDFILE}" ]; then
+		kill "$(cat "${PIDFILE}")" >/dev/null 2>&1 || true
+		rm -f "${PIDFILE}"
+	fi
+}
+
+reload() {
+	stop
+	start
+}
+
+status() {
+	if [ -f "${PIDFILE}" ] && kill -0 "$(cat "${PIDFILE}")" >/dev/null 2>&1; then
+		echo running
+	else
+		echo inactive
+	fi
+}
+
+case "${1:-}" in
+	start) start ;;
+	stop) stop ;;
+	reload|restart) reload ;;
+	status) status ;;
+	enable|disable) exit 0 ;;
+	*) exit 1 ;;
+esac

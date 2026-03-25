@@ -1,6 +1,6 @@
 APP_NAME := routeflux
 BUILD_DIR := bin
-GO_FILES := $(shell find . -type f -name '*.go' -not -path './bin/*' -not -path './dist/*')
+GO_FILES := $(shell find . -type f -name '*.go' -not -path './bin/*' -not -path './dist/*' -not -path './.cache/*')
 VERSION ?= $(shell (git describe --tags --always --dirty 2>/dev/null || printf '0.0.0-dev') | sed 's/^v//')
 PACKAGE_ARCH ?= mipsel_24kc
 
