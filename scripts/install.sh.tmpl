@@ -98,12 +98,16 @@ resolve_arch() {
 		return 0
 	fi
 
-	for candidate in $(list_opkg_architectures); do
-		if is_supported_arch "${candidate}"; then
-			printf '%s\n' "${candidate}"
-			return 0
-		fi
-	done
+	opkg_arches="$(list_opkg_architectures)"
+	if [ -n "${opkg_arches}" ]; then
+		for candidate in ${opkg_arches}; do
+			if is_supported_arch "${candidate}"; then
+				printf '%s\n' "${candidate}"
+				return 0
+			fi
+		done
+		return 1
+	fi
 
 	for candidate in $(detect_uname_arch); do
 		if is_supported_arch "${candidate}"; then
