@@ -5,7 +5,15 @@ check_package() {
 	pkg="$1"
 	threshold="$2"
 
-	output="$(go test -cover "$pkg" 2>&1)"
+	printf 'checking coverage for %s\n' "$pkg"
+	if output="$(go test -cover "$pkg" 2>&1)"; then
+		:
+	else
+		status="$?"
+		printf '%s\n' "$output"
+		printf 'go test failed for %s\n' "$pkg" >&2
+		exit "$status"
+	fi
 	printf '%s\n' "$output"
 
 	coverage="$(printf '%s\n' "$output" | sed -n 's/.*coverage: \([0-9.][0-9.]*\)% of statements.*/\1/p' | tail -n 1)"
