@@ -4,6 +4,7 @@ set -eu
 PKG_DIR="${PKG_DIR:-dist/routeflux-ipk}"
 ARCH="${ARCH:-mipsel_24kc}"
 ROOT_DIR="$(CDPATH= cd -- "$(dirname "$0")/.." && pwd)"
+BINARY_PATH="${BINARY_PATH:-${ROOT_DIR}/bin/openwrt/routeflux}"
 DATA_DIR="${PKG_DIR}/data"
 CONTROL_DIR="${PKG_DIR}/control"
 WORK_DIR="${PKG_DIR}/work"
@@ -41,7 +42,7 @@ mkdir -p \
 	"${CONTROL_DIR}" \
 	"${WORK_DIR}"
 
-cp "${ROOT_DIR}/bin/openwrt/routeflux" "${DATA_DIR}/usr/bin/routeflux"
+cp "${BINARY_PATH}" "${DATA_DIR}/usr/bin/routeflux"
 cp "${ROOT_DIR}/openwrt/root/etc/init.d/routeflux" "${DATA_DIR}/etc/init.d/routeflux"
 chmod 0755 "${DATA_DIR}/etc/init.d/routeflux"
 cp "${ROOT_DIR}/luci-app-routeflux/root/usr/share/luci/menu.d/luci-app-routeflux.json" \

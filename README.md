@@ -26,17 +26,36 @@ The current production claim is the CLI and runtime path. The TUI and LuCI front
 
 ## Quick Start
 
-1. Install the RouteFlux binary on the router.
+Install the latest OpenWrt release from your computer:
+
+```bash
+ssh root@router "wget -O /tmp/routeflux-install.sh https://github.com/Alaxay8/routeflux/releases/latest/download/install.sh && sh /tmp/routeflux-install.sh"
+```
+
+Current easy-install release assets are provided for:
+
+- `mipsel_24kc`
+- `x86_64`
+
+After install:
+
+1. Open LuCI at `Services -> RouteFlux`, or use the CLI over SSH.
 2. Add a subscription, share link, or valid 3x-ui/Xray JSON config.
-3. Connect a node or enable auto mode.
+3. Install Xray if it is not already present, then connect a node or enable auto mode.
 
 See [Installation](#installation) and [Usage](#usage).
 
 ## Installation
 
-1. Install Go `1.22` or later if you are building locally.
-2. Use OpenWrt or ImmortalWrt with `nftables` available. OpenWrt `22.03+` is the practical baseline for the current firewall integration.
-3. Build RouteFlux:
+1. Fastest path: use the installer from the latest GitHub release:
+
+```bash
+ssh root@router "wget -O /tmp/routeflux-install.sh https://github.com/Alaxay8/routeflux/releases/latest/download/install.sh && sh /tmp/routeflux-install.sh"
+```
+
+2. For local builds, install Go `1.22` or later.
+3. Use OpenWrt or ImmortalWrt with `nftables` available. OpenWrt `22.03+` is the practical baseline for the current firewall integration.
+4. Build RouteFlux from source:
 
 ```bash
 make build-openwrt
@@ -48,7 +67,7 @@ Build the x86_64 OpenWrt test binary used by the QEMU integration suite:
 make build-openwrt-x86_64
 ```
 
-4. Copy the binary to the router. On many OpenWrt devices, `scp -O` works more reliably than default SFTP mode:
+5. Copy the binary to the router. On many OpenWrt devices, `scp -O` works more reliably than default SFTP mode:
 
 ```bash
 scp -O ./bin/openwrt/routeflux root@router:/usr/bin/routeflux
@@ -60,7 +79,7 @@ If your router does not provide SFTP support, stream the file over SSH:
 ssh root@router 'cat > /tmp/routeflux.new && chmod 0755 /tmp/routeflux.new && mv /tmp/routeflux.new /usr/bin/routeflux' < ./bin/openwrt/routeflux
 ```
 
-5. Optional: install the LuCI frontend files when you want the web interface.
+6. Optional: install the LuCI frontend files when you want the web interface.
 
 Build OpenWrt deployment artifacts:
 
@@ -76,6 +95,20 @@ VERSION="$(git describe --tags --always --dirty | sed 's/^v//')"
 
 - `dist/routeflux_${VERSION}_mipsel_24kc.ipk`
 - `dist/routeflux_${VERSION}_mipsel_24kc.tar.gz`
+
+Build the release bundle used by GitHub Releases:
+
+```bash
+make package-release
+```
+
+This creates:
+
+- `dist/routeflux_${VERSION}_mipsel_24kc.ipk`
+- `dist/routeflux_${VERSION}_mipsel_24kc.tar.gz`
+- `dist/routeflux_${VERSION}_x86_64.ipk`
+- `dist/routeflux_${VERSION}_x86_64.tar.gz`
+- `dist/install.sh`
 
 For a reliable manual install, copy the tarball to the router and extract it at `/`:
 
@@ -94,7 +127,7 @@ This installs:
 
 To make `opkg install routeflux` work by package name, build the package with the OpenWrt SDK or buildroot, publish it in an `opkg` feed with `Packages.gz`, add that feed to the router, then run `opkg update` and `opkg install routeflux`.
 
-6. Install Xray Core later when you want to use `connect`, `disconnect`, or generated runtime config. Ensure the service script exists at `/etc/init.d/xray`, or override it with `ROUTEFLUX_XRAY_SERVICE`.
+7. Install Xray Core later when you want to use `connect`, `disconnect`, or generated runtime config. Ensure the service script exists at `/etc/init.d/xray`, or override it with `ROUTEFLUX_XRAY_SERVICE`.
 
 ## Usage
 

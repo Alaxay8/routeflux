@@ -4,7 +4,7 @@ GO_FILES := $(shell find . -type f -name '*.go' -not -path './bin/*' -not -path 
 VERSION ?= $(shell (git describe --tags --always --dirty 2>/dev/null || printf '0.0.0-dev') | sed 's/^v//')
 PACKAGE_ARCH ?= mipsel_24kc
 
-.PHONY: build test test-verbose coverage coverage-runtime lint test-integration build-openwrt build-openwrt-x86_64 package-openwrt fmt
+.PHONY: build test test-verbose coverage coverage-runtime lint test-integration build-openwrt build-openwrt-x86_64 package-openwrt package-release fmt
 
 build:
 	go build -o $(BUILD_DIR)/$(APP_NAME) ./cmd/routeflux
@@ -53,3 +53,6 @@ test-integration: build-openwrt-x86_64
 
 package-openwrt: build-openwrt
 	VERSION=$(VERSION) ARCH=$(PACKAGE_ARCH) ./scripts/package-openwrt.sh
+
+package-release:
+	VERSION=$(VERSION) ./scripts/package-release.sh
