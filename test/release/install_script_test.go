@@ -25,6 +25,7 @@ func TestInstallScriptInstallsMatchedOpenWrtTarball(t *testing.T) {
 	writeTestTarball(t, filepath.Join(downloadDir, "routeflux_"+version+"_mipsel_24kc.tar.gz"))
 	writeServiceStub(t, filepath.Join(installRoot, "etc", "init.d", "rpcd"))
 	writeServiceStub(t, filepath.Join(installRoot, "etc", "init.d", "uhttpd"))
+	writeExecutable(t, filepath.Join(installRoot, "usr", "bin", "xray"), "#!/bin/sh\nexit 0\n")
 
 	binDir := t.TempDir()
 	writeExecutable(t, filepath.Join(binDir, "opkg"), "#!/bin/sh\nset -eu\n[ \"${1:-}\" = \"print-architecture\" ] || exit 1\nprintf 'arch all 1\\narch noarch 1\\narch mipsel_24kc 10\\n'\n")
@@ -87,6 +88,34 @@ func TestInstallScriptRejectsUnsupportedArchitecture(t *testing.T) {
 	}
 }
 
+func TestInstallScriptRejectsMissingXrayBeforeExtractingFiles(t *testing.T) {
+	t.Parallel()
+
+	version := "1.2.3"
+	scriptPath := renderInstallScript(t, version, "mipsel_24kc", "x86_64")
+	downloadDir := t.TempDir()
+	installRoot := t.TempDir()
+
+	writeTestTarball(t, filepath.Join(downloadDir, "routeflux_"+version+"_mipsel_24kc.tar.gz"))
+
+	binDir := t.TempDir()
+	writeExecutable(t, filepath.Join(binDir, "opkg"), "#!/bin/sh\nset -eu\n[ \"${1:-}\" = \"print-architecture\" ] || exit 1\nprintf 'arch all 1\\narch noarch 1\\narch mipsel_24kc 10\\n'\n")
+	writeExecutable(t, filepath.Join(binDir, "wget"), "#!/bin/sh\nset -eu\nout=''\nwhile [ \"$#\" -gt 0 ]; do\n\tcase \"$1\" in\n\t\t-O)\n\t\t\tout=\"$2\"\n\t\t\tshift 2\n\t\t\t;;\n\t\t*)\n\t\t\turl=\"$1\"\n\t\t\tshift\n\t\t\t;;\n\tesac\ndone\nmkdir -p \"$(dirname \"$out\")\"\ncp \"${ROUTEFLUX_TEST_DOWNLOAD_DIR:?}/${url##*/}\" \"$out\"\n")
+
+	stdout, stderr, err := runInstallScript(t, scriptPath, installRoot, binDir, downloadDir, filepath.Join(t.TempDir(), "services.log"))
+	if err == nil {
+		t.Fatalf("expected install script to fail\nstdout:\n%s\nstderr:\n%s", stdout, stderr)
+	}
+
+	combined := stdout + "\n" + stderr
+	if !strings.Contains(combined, "Xray is required before installing RouteFlux") {
+		t.Fatalf("expected missing xray error, got %q", combined)
+	}
+	if _, err := os.Stat(filepath.Join(installRoot, "usr", "bin", "routeflux")); !os.IsNotExist(err) {
+		t.Fatalf("expected routeflux binary to remain uninstalled, stat err=%v", err)
+	}
+}
+
 func TestInstallScriptFallsBackToUnameForX8664(t *testing.T) {
 	t.Parallel()
 
@@ -100,6 +129,7 @@ func TestInstallScriptFallsBackToUnameForX8664(t *testing.T) {
 	writeTestTarball(t, filepath.Join(downloadDir, "routeflux_"+version+"_x86_64.tar.gz"))
 	writeServiceStub(t, filepath.Join(installRoot, "etc", "init.d", "rpcd"))
 	writeServiceStub(t, filepath.Join(installRoot, "etc", "init.d", "uhttpd"))
+	writeExecutable(t, filepath.Join(installRoot, "usr", "bin", "xray"), "#!/bin/sh\nexit 0\n")
 
 	binDir := t.TempDir()
 	writeExecutable(t, filepath.Join(binDir, "uname"), "#!/bin/sh\nset -eu\n[ \"${1:-}\" = \"-m\" ] || exit 1\nprintf 'x86_64\\n'\n")
@@ -115,6 +145,34 @@ func TestInstallScriptFallsBackToUnameForX8664(t *testing.T) {
 	}
 	if !strings.Contains(stdout, "x86_64") {
 		t.Fatalf("expected stdout to mention resolved arch, got %q", stdout)
+	}
+}
+
+func TestInstallScriptSkipXrayCheckInstallsForStaging(t *testing.T) {
+	t.Parallel()
+
+	version := "1.2.3"
+	scriptPath := renderInstallScript(t, version, "mipsel_24kc", "x86_64")
+
+	downloadDir := t.TempDir()
+	installRoot := t.TempDir()
+	serviceLogPath := filepath.Join(t.TempDir(), "services.log")
+
+	writeTestTarball(t, filepath.Join(downloadDir, "routeflux_"+version+"_mipsel_24kc.tar.gz"))
+	writeServiceStub(t, filepath.Join(installRoot, "etc", "init.d", "rpcd"))
+	writeServiceStub(t, filepath.Join(installRoot, "etc", "init.d", "uhttpd"))
+
+	binDir := t.TempDir()
+	writeExecutable(t, filepath.Join(binDir, "opkg"), "#!/bin/sh\nset -eu\n[ \"${1:-}\" = \"print-architecture\" ] || exit 1\nprintf 'arch all 1\\narch noarch 1\\narch mipsel_24kc 10\\n'\n")
+	writeExecutable(t, filepath.Join(binDir, "wget"), "#!/bin/sh\nset -eu\nout=''\nwhile [ \"$#\" -gt 0 ]; do\n\tcase \"$1\" in\n\t\t-O)\n\t\t\tout=\"$2\"\n\t\t\tshift 2\n\t\t\t;;\n\t\t*)\n\t\t\turl=\"$1\"\n\t\t\tshift\n\t\t\t;;\n\tesac\ndone\nmkdir -p \"$(dirname \"$out\")\"\ncp \"${ROUTEFLUX_TEST_DOWNLOAD_DIR:?}/${url##*/}\" \"$out\"\n")
+
+	stdout, stderr, err := runInstallScript(t, scriptPath, installRoot, binDir, downloadDir, serviceLogPath, "--skip-xray-check")
+	if err != nil {
+		t.Fatalf("run install script: %v\nstdout:\n%s\nstderr:\n%s", err, stdout, stderr)
+	}
+
+	if _, err := os.Stat(filepath.Join(installRoot, "usr", "bin", "routeflux")); err != nil {
+		t.Fatalf("routeflux binary not installed: %v", err)
 	}
 }
 
@@ -135,10 +193,11 @@ func renderInstallScript(t *testing.T, version string, arches ...string) string 
 	return outPath
 }
 
-func runInstallScript(t *testing.T, scriptPath, installRoot, binDir, downloadDir, serviceLogPath string) (string, string, error) {
+func runInstallScript(t *testing.T, scriptPath, installRoot, binDir, downloadDir, serviceLogPath string, extraArgs ...string) (string, string, error) {
 	t.Helper()
 
-	cmd := exec.Command("sh", scriptPath, "--base-url", "https://example.test/releases/download/v1.2.3", "--install-root", installRoot)
+	args := append([]string{scriptPath, "--base-url", "https://example.test/releases/download/v1.2.3", "--install-root", installRoot}, extraArgs...)
+	cmd := exec.Command("sh", args...)
 	cmd.Env = append(os.Environ(),
 		"PATH="+binDir+string(os.PathListSeparator)+os.Getenv("PATH"),
 		"ROUTEFLUX_TEST_DOWNLOAD_DIR="+downloadDir,

@@ -8,12 +8,15 @@ ROUTEFLUX_REPO_NAME="${ROUTEFLUX_REPO_NAME:-routeflux}"
 ROUTEFLUX_RELEASE_BASE_URL="${ROUTEFLUX_RELEASE_BASE_URL:-}"
 ROUTEFLUX_INSTALL_ROOT="${ROUTEFLUX_INSTALL_ROOT:-/}"
 ROUTEFLUX_ARCH_OVERRIDE="${ROUTEFLUX_ARCH:-}"
+ROUTEFLUX_XRAY_BINARY_PATH="${ROUTEFLUX_XRAY_BINARY:-}"
+ROUTEFLUX_XRAY_SERVICE_PATH="${ROUTEFLUX_XRAY_SERVICE:-}"
+ROUTEFLUX_SKIP_XRAY_CHECK="${ROUTEFLUX_SKIP_XRAY_CHECK:-0}"
 ROUTEFLUX_DRY_RUN=0
 
 usage() {
 	printf '%s\n' "RouteFlux OpenWrt installer"
 	printf '%s\n' ""
-	printf '%s\n' "Usage: install.sh [--version <version>] [--arch <arch>] [--base-url <url>] [--install-root <path>] [--dry-run]"
+	printf '%s\n' "Usage: install.sh [--version <version>] [--arch <arch>] [--base-url <url>] [--install-root <path>] [--skip-xray-check] [--dry-run]"
 }
 
 log() {
@@ -44,7 +47,21 @@ root_path() {
 }
 
 service_path() {
+	if [ "$1" = "xray" ] && [ -n "${ROUTEFLUX_XRAY_SERVICE_PATH}" ]; then
+		printf '%s\n' "${ROUTEFLUX_XRAY_SERVICE_PATH}"
+		return
+	fi
+
 	root_path "etc/init.d/$1"
+}
+
+xray_binary_path() {
+	if [ -n "${ROUTEFLUX_XRAY_BINARY_PATH}" ]; then
+		printf '%s\n' "${ROUTEFLUX_XRAY_BINARY_PATH}"
+		return
+	fi
+
+	root_path "usr/bin/xray"
 }
 
 require_root_if_needed() {
@@ -148,6 +165,18 @@ run_service_if_present() {
 	"${script}" "${action}" >/dev/null 2>&1 || return 1
 }
 
+require_xray_if_needed() {
+	if [ "${ROUTEFLUX_SKIP_XRAY_CHECK}" = "1" ]; then
+		return 0
+	fi
+
+	if [ -x "$(xray_binary_path)" ] || [ -x "$(service_path xray)" ]; then
+		return 0
+	fi
+
+	die "Xray is required before installing RouteFlux. Install Xray first, or rerun with --skip-xray-check only for staging."
+}
+
 while [ "$#" -gt 0 ]; do
 	case "$1" in
 		--version)
@@ -169,6 +198,10 @@ while [ "$#" -gt 0 ]; do
 			[ "$#" -ge 2 ] || die "missing value for --install-root"
 			ROUTEFLUX_INSTALL_ROOT="$2"
 			shift 2
+			;;
+		--skip-xray-check)
+			ROUTEFLUX_SKIP_XRAY_CHECK=1
+			shift
 			;;
 		--dry-run)
 			ROUTEFLUX_DRY_RUN=1
@@ -219,6 +252,7 @@ if [ "${ROUTEFLUX_DRY_RUN}" = "1" ]; then
 fi
 
 command_exists tar || die "tar is required to install release assets"
+require_xray_if_needed
 
 tmp_dir="${TMPDIR:-/tmp}/routeflux-install.$$"
 asset_path="${tmp_dir}/${asset_name}"
@@ -247,7 +281,3 @@ run_service_if_present routeflux restart || run_service_if_present routeflux sta
 log "RouteFlux installed successfully"
 log "Open LuCI: Services -> RouteFlux"
 log "CLI example: routeflux add https://provider.example/subscription"
-
-if [ ! -x "$(root_path "usr/bin/xray")" ] && [ ! -x "$(service_path "xray")" ]; then
-	warn "Xray is not installed yet. Install Xray before using routeflux connect."
-fi
