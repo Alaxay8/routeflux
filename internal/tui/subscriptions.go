@@ -54,7 +54,7 @@ func renderProfiles(m model) string {
 			active = " active"
 		}
 		lines = append(lines, fmt.Sprintf("%s %s (%d nodes)%s", marker, profile.Label, len(profile.Subscription.Nodes), active))
-		lines = append(lines, m.mutedStyle.Render(fmt.Sprintf("  id=%s  updated=%s  status=%s", profile.Subscription.ID, profile.Subscription.LastUpdatedAt.Format("2006-01-02 15:04:05"), profile.Subscription.ParserStatus)))
+		lines = append(lines, m.mutedStyle.Render(fmt.Sprintf("  id=%s  updated=%s  status=%s", profile.Subscription.ID, formatLocalTimestamp(profile.Subscription.LastUpdatedAt), profile.Subscription.ParserStatus)))
 	}
 
 	return strings.Join(lines, "\n")

@@ -19,7 +19,7 @@ func newDaemonCmd(opts *rootOptions) *cobra.Command {
 
 	cmd := &cobra.Command{
 		Use:   "daemon",
-		Short: "Run the background subscription refresh daemon",
+		Short: "Run background refresh and auto health monitoring",
 		RunE: func(cmd *cobra.Command, args []string) error {
 			if tick <= 0 {
 				return fmt.Errorf("scheduler tick must be greater than zero")

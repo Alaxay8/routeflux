@@ -15,12 +15,29 @@ function hasContent(value) {
 	return trim(value) !== '';
 }
 
+function pad2(value) {
+	value = Number(value) || 0;
+	return value < 10 ? '0' + value : String(value);
+}
+
 return baseclass.extend({
 	formatTimestamp: function(value) {
 		var normalized = trim(value);
-		var match = normalized.match(/^(\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2})/);
+		var parsed;
 
-		return match ? match[1] : normalized;
+		if (normalized === '')
+			return '';
+
+		parsed = new Date(normalized);
+		if (isNaN(parsed.getTime()))
+			return normalized;
+
+		return parsed.getFullYear() + '-' +
+			pad2(parsed.getMonth() + 1) + '-' +
+			pad2(parsed.getDate()) + ' ' +
+			pad2(parsed.getHours()) + ':' +
+			pad2(parsed.getMinutes()) + ':' +
+			pad2(parsed.getSeconds());
 	},
 
 	statusTone: function(connected) {

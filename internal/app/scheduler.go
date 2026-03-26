@@ -32,22 +32,8 @@ func (s *Scheduler) SetTick(tick time.Duration) {
 
 // Start begins the background refresh loop.
 func (s *Scheduler) Start(ctx context.Context) {
-	go func() {
-		s.RunOnce(ctx)
-
-		ticker := time.NewTicker(s.tick)
-		defer ticker.Stop()
-		for {
-			select {
-			case <-ctx.Done():
-				return
-			case <-s.stopCh:
-				return
-			case <-ticker.C:
-				s.runOnce(ctx)
-			}
-		}
-	}()
+	go s.runRefreshLoop(ctx)
+	go s.runHealthLoop(ctx)
 }
 
 // Stop terminates the background loop.
@@ -62,6 +48,41 @@ func (s *Scheduler) Stop() {
 // RunOnce performs a single refresh scan across stored subscriptions.
 func (s *Scheduler) RunOnce(ctx context.Context) {
 	s.runOnce(ctx)
+}
+
+// RunHealthOnce performs a single health-monitoring pass for auto mode.
+func (s *Scheduler) RunHealthOnce(ctx context.Context) {
+	s.runHealthOnce(ctx)
+}
+
+func (s *Scheduler) runRefreshLoop(ctx context.Context) {
+	s.RunOnce(ctx)
+
+	ticker := time.NewTicker(s.tick)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-s.stopCh:
+			return
+		case <-ticker.C:
+			s.runOnce(ctx)
+		}
+	}
+}
+
+func (s *Scheduler) runHealthLoop(ctx context.Context) {
+	for {
+		interval, enabled := s.healthLoopConfig()
+		if !s.wait(ctx, interval) {
+			return
+		}
+		if !enabled {
+			continue
+		}
+		s.runHealthOnce(ctx)
+	}
 }
 
 func (s *Scheduler) runOnce(ctx context.Context) {
@@ -102,6 +123,51 @@ func (s *Scheduler) runOnce(ctx context.Context) {
 			continue
 		}
 		s.logInfo("refreshed subscription", "subscription", sub.ID)
+	}
+}
+
+func (s *Scheduler) runHealthOnce(ctx context.Context) {
+	if err := s.service.RunAutoHealthCheck(ctx); err != nil {
+		s.logWarn("auto health check", "error", err.Error())
+	}
+}
+
+func (s *Scheduler) healthLoopConfig() (time.Duration, bool) {
+	if s.service == nil || s.service.store == nil {
+		return time.Minute, false
+	}
+
+	settings, err := s.service.store.LoadSettings()
+	if err != nil {
+		s.logWarn("load settings for auto health loop", "error", err.Error())
+		return time.Minute, false
+	}
+
+	interval := settings.HealthCheckInterval.Duration()
+	if interval > 0 {
+		return interval, true
+	}
+	if s.tick > 0 {
+		return s.tick, false
+	}
+	return time.Minute, false
+}
+
+func (s *Scheduler) wait(ctx context.Context, d time.Duration) bool {
+	if d <= 0 {
+		d = time.Minute
+	}
+
+	timer := time.NewTimer(d)
+	defer timer.Stop()
+
+	select {
+	case <-ctx.Done():
+		return false
+	case <-s.stopCh:
+		return false
+	case <-timer.C:
+		return true
 	}
 }
 

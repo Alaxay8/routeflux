@@ -282,6 +282,49 @@ function notificationParagraph(message) {
 	return E('p', {}, [ message ]);
 }
 
+function stringifyJSON(value) {
+	try {
+		return JSON.stringify(value, null, 2);
+	}
+	catch (err) {
+		return String(value);
+	}
+}
+
+function formatMbps(value) {
+	var parsed = Number(value);
+
+	if (!isFinite(parsed))
+		return '-';
+
+	return parsed.toFixed(2) + ' Mbps';
+}
+
+function formatMilliseconds(value) {
+	var parsed = Number(value);
+
+	if (!isFinite(parsed))
+		return '-';
+
+	return parsed.toFixed(2) + ' ms';
+}
+
+function formatBytes(value) {
+	var parsed = Number(value);
+	var units = [ 'B', 'KB', 'MB', 'GB' ];
+	var unit = 0;
+
+	if (!isFinite(parsed) || parsed < 0)
+		return '-';
+
+	while (parsed >= 1024 && unit < units.length - 1) {
+		parsed /= 1024;
+		unit++;
+	}
+
+	return parsed.toFixed(unit === 0 ? 0 : 2) + ' ' + units[unit];
+}
+
 function badge(text, extraClass) {
 	var className = 'label';
 
@@ -325,6 +368,171 @@ return view.extend({
 				throw new Error(_('RouteFlux returned invalid JSON output.'));
 			}
 		});
+	},
+
+	copyText: function(value) {
+		var text = String(value == null ? '' : value);
+
+		if (navigator.clipboard && navigator.clipboard.writeText)
+			return navigator.clipboard.writeText(text);
+
+		return new Promise(function(resolve, reject) {
+			var input = document.createElement('textarea');
+			input.value = text;
+			input.setAttribute('readonly', 'readonly');
+			input.style.position = 'fixed';
+			input.style.left = '-9999px';
+			document.body.appendChild(input);
+			input.focus();
+			input.select();
+
+			try {
+				document.execCommand('copy');
+				resolve();
+			}
+			catch (err) {
+				reject(err);
+			}
+			finally {
+				document.body.removeChild(input);
+			}
+		});
+	},
+
+	downloadJSON: function(filename, value) {
+		var blob = new Blob([ stringifyJSON(value) + '\n' ], { 'type': 'application/json;charset=utf-8' });
+		var href = URL.createObjectURL(blob);
+		var link = document.createElement('a');
+
+		link.href = href;
+		link.download = filename;
+		document.body.appendChild(link);
+		link.click();
+		document.body.removeChild(link);
+		setTimeout(function() { URL.revokeObjectURL(href); }, 0);
+	},
+
+	showModal: function(title, body, actions, bodyClass) {
+		var buttons = Array.isArray(actions) ? actions.slice() : [];
+		var className = 'routeflux-modal-body';
+		var modalClass = trim(bodyClass);
+
+		if (modalClass !== '')
+			className += ' ' + modalClass;
+
+		if (buttons.length === 0) {
+			buttons.push(E('button', {
+				'class': 'cbi-button',
+				'click': function(ev) {
+					ui.hideModal();
+					return false;
+				}
+			}, [ _('Close') ]));
+		}
+
+		if (modalClass !== '') {
+			ui.showModal(title, [
+				E('div', { 'class': className }, Array.isArray(body) ? body : [ body ]),
+				E('div', { 'class': 'routeflux-modal-actions' }, buttons)
+			], modalClass);
+			return;
+		}
+
+		ui.showModal(title, [
+			E('div', { 'class': className }, Array.isArray(body) ? body : [ body ]),
+			E('div', { 'class': 'routeflux-modal-actions' }, buttons)
+		]);
+	},
+
+	showJSONModal: function(subscriptionId, node, payload) {
+		var nodeName = nodeDisplayName(node, node && node.id);
+		var content = stringifyJSON(payload);
+		var filename = 'routeflux-' + subscriptionId + '-' + trim(node && node.id) + '.json';
+
+		this.showModal(
+			_('Generated Xray JSON: %s').format(nodeName),
+			[
+				E('p', { 'class': 'routeflux-modal-help' }, [
+					_('This preview shows the full RouteFlux-generated Xray config for the selected node with the current app settings.')
+				]),
+				E('pre', { 'class': 'routeflux-inspect-pre' }, [ content ])
+			],
+			[
+				E('button', {
+					'class': 'cbi-button cbi-button-action',
+					'click': ui.createHandlerFn(this, function() {
+						return this.copyText(content).then(function() {
+							ui.addNotification(null, notificationParagraph(_('JSON copied to clipboard.')), 'info');
+						}).catch(function(err) {
+							ui.addNotification(null, notificationParagraph(err.message || String(err)));
+						});
+					})
+				}, [ _('Copy') ]),
+				E('button', {
+					'class': 'cbi-button cbi-button-action',
+					'click': ui.createHandlerFn(this, function() {
+						this.downloadJSON(filename, payload);
+						ui.addNotification(null, notificationParagraph(_('JSON file downloaded.')), 'info');
+					})
+				}, [ _('Download .json') ]),
+				E('button', {
+					'class': 'cbi-button',
+					'click': function(ev) {
+						ui.hideModal();
+						return false;
+					}
+				}, [ _('Close') ])
+			],
+			'routeflux-modal-json'
+		);
+	},
+
+	showSpeedTestModal: function(node, state) {
+		var nodeName = nodeDisplayName(node, node && node.id);
+		var body = [
+			E('p', { 'class': 'routeflux-modal-help' }, [
+				_('This is a router-side diagnostic. It measures the selected node from the router through a temporary isolated Xray process and does not change the active RouteFlux connection.')
+			])
+		];
+
+		if (state === 'loading') {
+			body.push(E('p', { 'class': 'routeflux-speedtest-status' }, [
+				_('Running speed test. This can take a few seconds.')
+			]));
+		}
+		else if (state && state.error) {
+			body.push(E('div', { 'class': 'alert-message warning' }, [ state.error ]));
+		}
+		else if (state && state.result) {
+			body.push(E('div', { 'class': 'routeflux-speedtest-grid' }, [
+				E('div', { 'class': 'routeflux-speedtest-metric' }, [
+					E('div', { 'class': 'routeflux-speedtest-label' }, [ _('Ping') ]),
+					E('div', { 'class': 'routeflux-speedtest-value' }, [ formatMilliseconds(state.result.latency_ms) ])
+				]),
+				E('div', { 'class': 'routeflux-speedtest-metric' }, [
+					E('div', { 'class': 'routeflux-speedtest-label' }, [ _('Download') ]),
+					E('div', { 'class': 'routeflux-speedtest-value' }, [ formatMbps(state.result.download_mbps) ])
+				]),
+				E('div', { 'class': 'routeflux-speedtest-metric' }, [
+					E('div', { 'class': 'routeflux-speedtest-label' }, [ _('Upload') ]),
+					E('div', { 'class': 'routeflux-speedtest-value' }, [ formatMbps(state.result.upload_mbps) ])
+				]),
+				E('div', { 'class': 'routeflux-speedtest-metric' }, [
+					E('div', { 'class': 'routeflux-speedtest-label' }, [ _('Downloaded') ]),
+					E('div', { 'class': 'routeflux-speedtest-value routeflux-speedtest-subtle' }, [ formatBytes(state.result.download_bytes) ])
+				]),
+				E('div', { 'class': 'routeflux-speedtest-metric' }, [
+					E('div', { 'class': 'routeflux-speedtest-label' }, [ _('Uploaded') ]),
+					E('div', { 'class': 'routeflux-speedtest-value routeflux-speedtest-subtle' }, [ formatBytes(state.result.upload_bytes) ])
+				]),
+				E('div', { 'class': 'routeflux-speedtest-metric' }, [
+					E('div', { 'class': 'routeflux-speedtest-label' }, [ _('Finished') ]),
+					E('div', { 'class': 'routeflux-speedtest-value routeflux-speedtest-subtle' }, [ routefluxUI.formatTimestamp(state.result.finished_at) || '-' ])
+				])
+			]));
+		}
+
+		this.showModal(_('Speed Test: %s').format(nodeName), body, null, 'routeflux-modal-speedtest');
 	},
 
 	refreshPageContent: function() {
@@ -415,8 +623,49 @@ return view.extend({
 		);
 	},
 
+	handleInspectJSON: function(subscriptionId, node, ev) {
+		return this.execJSON([
+			'--json', 'inspect', 'xray',
+			'--subscription', subscriptionId,
+			'--node', trim(node && node.id)
+		]).then(L.bind(function(payload) {
+			this.showJSONModal(subscriptionId, node, payload);
+		}, this)).catch(function(err) {
+			ui.addNotification(null, notificationParagraph(err.message || String(err)));
+			throw err;
+		});
+	},
+
+	handleSpeedTest: function(subscriptionId, node, ev) {
+		if (this.speedTestBusy === true) {
+			ui.addNotification(null, notificationParagraph(_('Another speed test is already running.')));
+			return Promise.resolve();
+		}
+
+		this.speedTestBusy = true;
+		this.showSpeedTestModal(node, 'loading');
+		this.refreshPageContent();
+
+		return this.execJSON([
+			'--json', 'inspect', 'speed',
+			'--subscription', subscriptionId,
+			'--node', trim(node && node.id)
+		]).then(L.bind(function(result) {
+			this.showSpeedTestModal(node, { 'result': result });
+			return result;
+		}, this)).catch(L.bind(function(err) {
+			this.showSpeedTestModal(node, { 'error': err.message || String(err) });
+			ui.addNotification(null, notificationParagraph(err.message || String(err)));
+			throw err;
+		}, this)).finally(L.bind(function() {
+			this.speedTestBusy = false;
+			this.refreshPageContent();
+		}, this));
+	},
+
 	renderNodeTable: function(subscription, activeSubscriptionId, activeNodeId) {
 		var nodes = Array.isArray(subscription.nodes) ? subscription.nodes : [];
+		var speedTestBusy = this.speedTestBusy === true;
 
 		if (nodes.length === 0)
 			return E('p', {}, [ _('No nodes found in this subscription.') ]);
@@ -439,10 +688,21 @@ return view.extend({
 				E('td', { 'class': 'td' }, [ firstNonEmpty([ node.transport ], '-') ]),
 				E('td', { 'class': 'td' }, [ firstNonEmpty([ node.security ], '-') ]),
 				E('td', { 'class': 'td right' }, [
-					E('button', {
-						'class': 'cbi-button cbi-button-action',
-						'click': ui.createHandlerFn(this, 'handleConnectNode', subscription.id, node.id)
-					}, [ _('Connect') ])
+					E('div', { 'class': 'routeflux-node-actions' }, [
+						E('button', {
+							'class': 'cbi-button cbi-button-action',
+							'click': ui.createHandlerFn(this, 'handleConnectNode', subscription.id, node.id)
+						}, [ _('Connect') ]),
+						E('button', {
+							'class': 'cbi-button cbi-button-action',
+							'click': ui.createHandlerFn(this, 'handleInspectJSON', subscription.id, node)
+						}, [ _('JSON') ]),
+						E('button', {
+							'class': 'cbi-button cbi-button-action',
+							'click': ui.createHandlerFn(this, 'handleSpeedTest', subscription.id, node),
+							'disabled': speedTestBusy ? 'disabled' : null
+						}, [ _('Speed Test') ])
+					])
 				])
 			]);
 		}, this));
@@ -555,6 +815,7 @@ return view.extend({
 			'.routeflux-subscription-title { font-size:18px; font-weight:600; }',
 			'.routeflux-subscription-provider { color:var(--text-color-secondary, #666); margin-top:4px; }',
 			'.routeflux-subscription-actions { display:flex; flex-wrap:wrap; gap:8px; align-items:flex-start; }',
+			'.routeflux-node-actions { display:flex; flex-wrap:wrap; justify-content:flex-end; gap:8px; }',
 			'.routeflux-add-grid { display:grid; grid-template-columns:minmax(220px, 320px) 1fr; gap:12px; margin-bottom:12px; }',
 			'.routeflux-add-actions { display:flex; flex-wrap:wrap; gap:10px; }',
 			'.routeflux-add-grid textarea { min-height:140px; width:100%; }',
@@ -563,7 +824,20 @@ return view.extend({
 			'.routeflux-provider-group { margin-bottom:22px; }',
 			'.routeflux-provider-group-header { display:flex; flex-wrap:wrap; justify-content:space-between; gap:12px; align-items:baseline; margin:12px 0 8px; }',
 			'.routeflux-provider-group-title { font-size:22px; font-weight:600; }',
-			'.routeflux-provider-group-meta { color:var(--text-color-secondary, #666); }'
+			'.routeflux-provider-group-meta { color:var(--text-color-secondary, #666); }',
+			'.routeflux-modal-body { width:100%; max-width:100%; min-width:0; box-sizing:border-box; overflow:hidden; }',
+			'.modal.routeflux-modal-json { width:min(92vw, 980px); max-width:92vw; }',
+			'.modal.routeflux-modal-speedtest { width:min(92vw, 720px); max-width:92vw; overflow:hidden; }',
+			'.routeflux-modal-help { margin:0 0 12px; color:var(--text-color-secondary, #586677); max-width:100%; overflow-wrap:anywhere; word-break:break-word; line-height:1.45; }',
+			'.routeflux-modal-actions { display:flex; flex-wrap:wrap; justify-content:flex-end; gap:8px; margin-top:14px; }',
+			'.routeflux-inspect-pre { white-space:pre-wrap; margin:0; max-height:56vh; max-width:100%; overflow:auto; padding:14px 16px; border:1px solid rgba(71, 85, 105, 0.82); border-radius:12px; background:linear-gradient(180deg, #09111d 0%, #0d1623 48%, #101a29 100%); color:#eef4fb; font-family:SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", monospace; font-size:13px; line-height:1.72; box-sizing:border-box; }',
+			'.routeflux-speedtest-status { margin:0; font-weight:600; }',
+			'.routeflux-speedtest-grid { display:grid; grid-template-columns:repeat(2, minmax(0, 1fr)); gap:10px; margin-top:12px; max-width:100%; min-width:0; align-items:stretch; }',
+			'.routeflux-speedtest-metric { min-width:0; width:100%; border:1px solid rgba(98, 112, 129, 0.34); border-radius:12px; padding:10px 12px; background:linear-gradient(180deg, rgba(243, 247, 251, 0.98) 0%, rgba(233, 238, 244, 0.98) 100%); box-sizing:border-box; }',
+			'.routeflux-speedtest-label { color:var(--text-color-secondary, #586677); font-size:10px; text-transform:uppercase; letter-spacing:.12em; font-weight:700; margin-bottom:4px; }',
+			'.routeflux-speedtest-value { color:var(--text-color-primary, #17263a); font-size:15px; font-weight:700; line-height:1.3; overflow-wrap:anywhere; word-break:break-word; }',
+			'.routeflux-speedtest-subtle { font-size:14px; }',
+			'@media (max-width: 640px) { .routeflux-speedtest-grid { grid-template-columns:minmax(0, 1fr); } }'
 		]));
 
 		content.push(E('h2', {}, [ _('RouteFlux - Subscriptions') ]));

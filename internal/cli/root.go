@@ -17,6 +17,7 @@ import (
 	"github.com/Alaxay8/routeflux/internal/backend/xray"
 	"github.com/Alaxay8/routeflux/internal/platform/openwrt"
 	"github.com/Alaxay8/routeflux/internal/probe"
+	"github.com/Alaxay8/routeflux/internal/speedtest"
 	"github.com/Alaxay8/routeflux/internal/store"
 )
 
@@ -53,6 +54,7 @@ func newRootCmd() *cobra.Command {
 		newFirewallCmd(opts),
 		newListCmd(opts),
 		newLogsCmd(opts),
+		newInspectCmd(opts),
 		newRemoveCmd(opts),
 		newRefreshCmd(opts),
 		newConnectCmd(opts),
@@ -98,7 +100,11 @@ func (o *rootOptions) initService() error {
 		Firewaller: firewall,
 		HTTPClient: &http.Client{Timeout: 20 * time.Second},
 		Checker:    probe.TCPChecker{Timeout: 5 * time.Second},
-		Logger:     logger,
+		SpeedTester: speedtest.Runner{
+			LockPath:   filepath.Join(root, "speedtest.lock"),
+			BinaryPath: xray.BinaryPath(),
+		},
+		Logger: logger,
 	})
 
 	return nil

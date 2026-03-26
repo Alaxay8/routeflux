@@ -148,7 +148,7 @@ func renderDiagnosticsText(snapshot diagnosticsSnapshot) string {
 		fmt.Sprintf("backend-service-state=%s", snapshot.Runtime.ServiceState),
 		fmt.Sprintf("backend-config=%s", snapshot.Runtime.ConfigPath),
 		fmt.Sprintf("backend-error=%s", snapshot.RuntimeError),
-		fmt.Sprintf("last-success=%s", snapshot.Status.State.LastSuccessAt.Format(time.RFC3339)),
+		fmt.Sprintf("last-success=%s", formatLocalTimestamp(snapshot.Status.State.LastSuccessAt)),
 		fmt.Sprintf("last-failure=%s", snapshot.Status.State.LastFailureReason),
 		describeDiagnosticFile("routeflux-binary", snapshot.Files.RoutefluxBinary),
 		describeDiagnosticFile("routeflux-root", snapshot.Files.RoutefluxRoot),
@@ -179,7 +179,7 @@ func describeDiagnosticFile(label string, status diagnosticsPathStatus) string {
 		parts = append(parts, fmt.Sprintf("mode=%s", status.Mode))
 	}
 	if status.ModifiedAt != "" {
-		parts = append(parts, fmt.Sprintf("modified=%s", status.ModifiedAt))
+		parts = append(parts, fmt.Sprintf("modified=%s", formatLocalTimestampString(status.ModifiedAt)))
 	}
 	if status.Error != "" {
 		parts = append(parts, fmt.Sprintf("error=%s", status.Error))

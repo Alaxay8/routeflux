@@ -16,7 +16,7 @@ The current production claim is the CLI and runtime path. The TUI and LuCI front
 - Parse VLESS, VMess, and Trojan share links.
 - Normalize supported 3x-ui/Xray proxy outbounds into RouteFlux nodes.
 - Add, list, refresh, connect, disconnect, remove one subscription, or remove all subscriptions from the CLI or TUI.
-- Select nodes manually or use automatic best-node selection with health checks and anti-flap logic.
+- Select nodes manually or use automatic best-node selection with daemon-backed health checks, live failover, and anti-flap logic.
 - Validate candidate Xray configs with `xray -test`, keep a last-known-good backup, and safely reload the OpenWrt `init.d` service.
 - Configure simple nftables-based routing for selected destination IPs, CIDRs, ranges, or LAN hosts.
 - Manage DNS behavior through a dedicated `routeflux dns` command instead of mixing it into general settings.
@@ -164,7 +164,7 @@ Dashboard elements:
 The `Actions` block is used for the most common control flow:
 
 - `Subscription`: selects which imported subscription or profile the quick actions should use.
-- `Connect Auto`: enables automatic best-node selection for the selected subscription.
+- `Connect Auto`: enables automatic best-node selection for the selected subscription. Continuous health monitoring and live failover require the daemon to be running.
 - `Refresh Active`: refreshes the currently active subscription and reloads the dashboard state.
 - `Disconnect`: stops the current RouteFlux connection without removing saved subscriptions.
 
@@ -362,7 +362,7 @@ Project notes:
 - 3x-ui and Xray JSON imports, including JSON arrays of full configs, are normalized into RouteFlux nodes instead of being copied as full runtime configs.
 - General settings and DNS settings are intentionally split. Use `routeflux settings` for app behavior and `routeflux dns` for runtime DNS.
 - `routeflux firewall set hosts` accepts single IPv4 addresses, IPv4 CIDR pools, IPv4 ranges, and the aliases `all` or `*` for common private LAN ranges.
-- `routeflux daemon` runs the background refresh loop. Use `--once` for a single scan or `--tick 30s` to override the scan interval.
+- `routeflux daemon` runs the background refresh loop and auto-mode health monitor. Use `--once` for a single scan or `--tick 30s` to override the refresh scan interval.
 
 ## Architecture
 
@@ -415,7 +415,7 @@ Placeholder screenshots:
 - 3x-ui/Xray JSON import reads supported proxy outbounds only. It does not preserve full `dns`, `routing`, `inbounds`, outbound chaining, or other auxiliary runtime sections.
 - The current Xray backend connects VLESS, VMess, and Trojan nodes.
 - Transparent router traffic interception is not fully automated in MVP.
-- Automatic subscription refresh requires the RouteFlux daemon or OpenWrt `/etc/init.d/routeflux` service to be running.
+- Automatic subscription refresh, continuous auto-mode health checks, and live failover require the RouteFlux daemon or OpenWrt `/etc/init.d/routeflux` service to be running.
 - Simple firewall routing currently supports destination IPv4 targets, source IPv4 hosts, CIDR pools, IPv4 ranges, and the `all` or `*` LAN-wide shortcut. QUIC blocking is host-mode only.
 - The CLI and runtime path are the supported production surface today.
 - The TUI and LuCI frontend remain MVP or experimental surfaces. A LuCI MVP lives in `luci-app-routeflux` with `Overview`, `Subscriptions`, `Firewall`, `DNS`, `Settings`, `Diagnostics`, and `Logs` pages.
