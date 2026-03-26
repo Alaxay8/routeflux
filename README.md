@@ -1,4 +1,4 @@
-[English](README.md) | [Русский](README.ru_RU.md)
+[English](README.md) | [Русский (скоро будет)](README.ru_RU.md)
 
 # RouteFlux
 
@@ -29,7 +29,7 @@ The current production claim is the CLI and runtime path. The TUI and LuCI front
 Install the current beta release from your computer:
 
 ```bash
-ssh root@router "wget -O /tmp/routeflux-install.sh https://github.com/Alaxay8/routeflux/releases/download/v0.1.3-beta.9/install.sh && sh /tmp/routeflux-install.sh"
+wget -O /tmp/routeflux-install.sh https://github.com/Alaxay8/routeflux/releases/download/v0.1.3-beta.10/install.sh && sh /tmp/routeflux-install.sh
 ```
 
 GitHub does not serve prerelease assets from `releases/latest/download`. While RouteFlux is still published as a beta prerelease, use a tag-pinned release URL.
@@ -53,15 +53,15 @@ See [Installation](#installation) and [Usage](#usage).
 1. Fastest path: use the installer from the current beta GitHub release:
 
 ```bash
-ssh root@router "wget -O /tmp/routeflux-install.sh https://github.com/Alaxay8/routeflux/releases/download/v0.1.3-beta.9/install.sh && sh /tmp/routeflux-install.sh"
+wget -O /tmp/routeflux-install.sh https://github.com/Alaxay8/routeflux/releases/download/v0.1.3-beta.10/install.sh && sh /tmp/routeflux-install.sh
 ```
 
 If you publish a non-prerelease stable release later, you can switch this command back to `releases/latest/download/install.sh`.
 The installer will auto-install the bundled Xray runtime when `/usr/bin/xray` or `/etc/init.d/xray` is missing.
 
-2. For local builds, install Go `1.22` or later.
-3. Use OpenWrt or ImmortalWrt with `nftables` available. OpenWrt `22.03+` is the practical baseline for the current firewall integration.
-4. Build RouteFlux from source:
+1. For local builds, install Go `1.22` or later.
+2. Use OpenWrt or ImmortalWrt with `nftables` available. OpenWrt `22.03+` is the practical baseline for the current firewall integration.
+3. Build RouteFlux from source:
 
 ```bash
 make build-openwrt
@@ -73,7 +73,7 @@ Build the x86_64 OpenWrt test binary used by the QEMU integration suite:
 make build-openwrt-x86_64
 ```
 
-5. Copy the binary to the router. On many OpenWrt devices, `scp -O` works more reliably than default SFTP mode:
+1. Copy the binary to the router. On many OpenWrt devices, `scp -O` works more reliably than default SFTP mode:
 
 ```bash
 scp -O ./bin/openwrt/routeflux root@router:/usr/bin/routeflux
@@ -82,10 +82,10 @@ scp -O ./bin/openwrt/routeflux root@router:/usr/bin/routeflux
 If your router does not provide SFTP support, stream the file over SSH:
 
 ```bash
-ssh root@router 'cat > /tmp/routeflux.new && chmod 0755 /tmp/routeflux.new && mv /tmp/routeflux.new /usr/bin/routeflux' < ./bin/openwrt/routeflux
+cat > /tmp/routeflux.new && chmod 0755 /tmp/routeflux.new && mv /tmp/routeflux.new /usr/bin/routeflux < ./bin/openwrt/routeflux
 ```
 
-6. Optional: install the LuCI frontend files when you want the web interface.
+1. Optional: install the LuCI frontend files when you want the web interface.
 
 Build OpenWrt deployment artifacts:
 
@@ -136,7 +136,7 @@ This installs:
 
 To make `opkg install routeflux` work by package name, build the package with the OpenWrt SDK or buildroot, publish it in an `opkg` feed with `Packages.gz`, add that feed to the router, then run `opkg update` and `opkg install routeflux`.
 
-7. The GitHub release installer will auto-install the bundled Xray runtime when needed. For custom setups, you can still override the Xray binary and service paths with `ROUTEFLUX_XRAY_BINARY` and `ROUTEFLUX_XRAY_SERVICE`.
+1. The GitHub release installer will auto-install the bundled Xray runtime when needed. For custom setups, you can still override the Xray binary and service paths with `ROUTEFLUX_XRAY_BINARY` and `ROUTEFLUX_XRAY_SERVICE`.
 
 ## Usage
 
@@ -369,8 +369,8 @@ Placeholder screenshots:
 /etc/init.d/routeflux start
 ```
 
-6. Run `routeflux add`, import a valid subscription or 3x-ui/Xray JSON config, and connect to a node.
-7. If you need encrypted DNS, configure it through `routeflux dns` after the runtime is working.
+1. Run `routeflux add`, import a valid subscription or 3x-ui/Xray JSON config, and connect to a node.
+2. If you need encrypted DNS, configure it through `routeflux dns` after the runtime is working.
 
 ## Limitations
 

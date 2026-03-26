@@ -2,6 +2,7 @@
 'require view';
 'require fs';
 'require ui';
+'require routeflux.ui as routefluxUI';
 
 var routefluxBinary = '/usr/bin/routeflux';
 
@@ -310,7 +311,7 @@ function fileDetails(file) {
 	if (trim(file.mode) !== '')
 		parts.push(_('Mode: %s').format(file.mode));
 	if (trim(file.modified_at) !== '')
-		parts.push(_('Modified: %s').format(file.modified_at));
+		parts.push(_('Modified: %s').format(routefluxUI.formatTimestamp(file.modified_at)));
 	if (trim(file.symlink_target) !== '')
 		parts.push(_('Symlink: %s').format(file.symlink_target));
 	if (trim(file.error) !== '')
@@ -354,11 +355,8 @@ return view.extend({
 		});
 	},
 
-	renderCard: function(label, value) {
-		return E('div', { 'class': 'routeflux-card' }, [
-			E('div', { 'class': 'routeflux-card-label' }, [ label ]),
-			E('div', { 'class': 'routeflux-card-value' }, [ value || '-' ])
-		]);
+	renderCard: function(label, value, options) {
+		return routefluxUI.renderSummaryCard(label, value, options);
 	},
 
 	renderFileTable: function(files) {
@@ -424,11 +422,8 @@ return view.extend({
 		if (data[1] && data[1].__error__)
 			ui.addNotification(null, notificationParagraph(_('Subscriptions error: %s').format(data[1].__error__)));
 
+		content.push(routefluxUI.renderSharedStyles());
 		content.push(E('style', { 'type': 'text/css' }, [
-			'.routeflux-overview-grid { display:grid; grid-template-columns:repeat(auto-fit, minmax(220px, 1fr)); gap:12px; margin-bottom:16px; }',
-			'.routeflux-card { border:1px solid var(--border-color-medium, #d9d9d9); border-radius:6px; padding:12px 14px; background:var(--background-color-primary, #fff); }',
-			'.routeflux-card-label { color:var(--text-color-secondary, #666); font-size:12px; margin-bottom:4px; text-transform:uppercase; letter-spacing:.04em; }',
-			'.routeflux-card-value { font-size:16px; font-weight:600; word-break:break-word; }',
 			'.routeflux-diagnostics-actions { display:flex; flex-wrap:wrap; gap:10px; }'
 		]));
 
@@ -438,15 +433,18 @@ return view.extend({
 		]));
 
 		content.push(E('div', { 'class': 'routeflux-overview-grid' }, [
-			this.renderCard(_('Connection'), state.connected === true ? _('Connected') : _('Disconnected')),
+			this.renderCard(_('Connection'), state.connected === true ? _('Connected') : _('Disconnected'), {
+				'tone': routefluxUI.statusTone(state.connected === true),
+				'primary': true
+			}),
 			this.renderCard(_('Effective Mode'), firstNonEmpty([ state.mode ], _('disconnected'))),
 			this.renderCard(_('Backend'), backendLabel(runtime, diagnostics.runtime_error)),
 			this.renderCard(_('Service State'), firstNonEmpty([ runtime.service_state ], _('unknown'))),
 			this.renderCard(_('Active Provider'), activeProvider),
 			this.renderCard(_('Active Profile'), activeProfile),
 			this.renderCard(_('Active Node'), activeNodeName),
-			this.renderCard(_('Last Success'), firstNonEmpty([ state.last_success_at ], _('Never'))),
-			this.renderCard(_('Last Switch'), firstNonEmpty([ state.last_switch_at ], _('Never'))),
+			this.renderCard(_('Last Success'), routefluxUI.formatTimestamp(state.last_success_at) || _('Never')),
+			this.renderCard(_('Last Switch'), routefluxUI.formatTimestamp(state.last_switch_at) || _('Never')),
 			this.renderCard(_('Backend Config'), firstNonEmpty([ runtime.config_path ], _('Not configured')))
 		]));
 
