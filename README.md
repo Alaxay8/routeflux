@@ -140,6 +140,43 @@ To make `opkg install routeflux` work by package name, build the package with th
 
 ## Usage
 
+LuCI examples:
+
+### Overview dashboard
+
+![RouteFlux LuCI overview](pic/overview.png)
+
+Full-size image: [overview.png](pic/overview.png)
+
+The `Overview` page is the main LuCI dashboard for day-to-day RouteFlux control. It gives a quick summary of the current connection state, the active profile, and the most common actions without switching to the CLI.
+
+Dashboard elements:
+
+- `State`: shows whether RouteFlux is currently connected and highlights the primary runtime status.
+- `Mode`: shows how the current connection was selected, for example `manual` or automatic mode.
+- `Provider`: shows the provider group for the active subscription.
+- `Profile`: shows the selected imported profile inside that provider group.
+- `Node`: shows the active proxy node. When possible, LuCI presents a human-friendly location instead of a raw node label.
+- `DNS`: shows the active DNS mode, for example `split` when encrypted upstream DNS is used for external domains and local names stay on the router DNS.
+- `Firewall`: shows how RouteFlux routing rules are applied. Typical values are `disabled`, `hosts`, or `targets`.
+- `Last Refresh`: shows when the active subscription was last updated.
+
+The `Actions` block is used for the most common control flow:
+
+- `Subscription`: selects which imported subscription or profile the quick actions should use.
+- `Connect Auto`: enables automatic best-node selection for the selected subscription.
+- `Refresh Active`: refreshes the currently active subscription and reloads the dashboard state.
+- `Disconnect`: stops the current RouteFlux connection without removing saved subscriptions.
+
+The `Subscriptions` table gives a compact inventory of imported profiles:
+
+- `Name`: provider and profile label shown in LuCI.
+- `Nodes`: number of parsed proxy nodes available in that profile.
+- `Updated`: last successful refresh time for that subscription.
+- `Status`: parser result for the latest import or refresh operation.
+
+If the active subscription fails to refresh or connect, LuCI also shows a `Last Error` panel under the table so the failure reason is visible without opening logs first.
+
 CLI examples:
 
 ```bash
