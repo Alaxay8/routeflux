@@ -15,19 +15,21 @@ Local development paths:
 
 ## Settings
 - `refresh_interval`: subscription refresh cadence
-- `health_check_interval`: active probe cadence
-- `switch_cooldown`: minimum delay between auto switches
-- `latency_threshold`: minimum improvement required to switch healthy nodes
+- `health_check_interval`: active probe cadence for daemon-backed auto health monitoring
+- `switch_cooldown`: minimum delay between auto switches while the daemon is monitoring auto mode
+- `latency_threshold`: minimum improvement required to switch healthy nodes while the daemon is monitoring auto mode
 - `auto_mode`: whether auto selection is enabled
 - `mode`: current selection mode
 - `log_level`: backend and app log verbosity (`debug`, `info`, `warn`, or `error` at startup)
+
+Auto health checks and live failover are performed only while `routeflux daemon` or the OpenWrt `/etc/init.d/routeflux` service is running.
 
 ## State
 Runtime state keeps:
 - active subscription and node
 - current mode
 - connection flag
-- last refresh timestamps
+- last refresh timestamps stored in UTC
 - node health telemetry
 - last switch time
 - last success and failure data

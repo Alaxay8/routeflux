@@ -29,6 +29,7 @@ const (
 	xrayRemoteService          = "/etc/init.d/xray"
 	routefluxRemoteService     = "/etc/init.d/routeflux"
 	xrayRemoteConfigDir        = "/etc/xray"
+	luciTestPassword           = "routeflux-smoke"
 	consoleLoginPrompt         = "login:"
 	consoleRootPrompt          = "root@"
 	openWrtBootTimeout         = 10 * time.Minute
@@ -57,16 +58,25 @@ func TestOpenWrtEndToEnd(t *testing.T) {
 	if err := harness.Start(ctx); err != nil {
 		t.Fatalf("start OpenWrt VM: %v", err)
 	}
+	if err := harness.InstallLuCI(ctx); err != nil {
+		t.Fatalf("install LuCI: %v", err)
+	}
 	if err := harness.InstallRouteFlux(ctx); err != nil {
 		t.Fatalf("install routeflux: %v", err)
 	}
 	if err := harness.InstallXray(ctx); err != nil {
 		t.Fatalf("install xray: %v", err)
 	}
+	if err := harness.AssertLuCISubscriptionsPage(ctx, "RouteFlux - Subscriptions", "Add Subscription", "No subscriptions imported yet."); err != nil {
+		t.Fatalf("browser smoke subscriptions empty state: %v", err)
+	}
 
 	subID, nodeID, err := harness.AddSubscription(ctx, integrationRawVLESSFixture)
 	if err != nil {
 		t.Fatalf("add subscription: %v", err)
+	}
+	if err := harness.AssertLuCISubscriptionsPage(ctx, "RouteFlux - Subscriptions", "Imported Subscription", "Profile 1", "Connect Auto", subID); err != nil {
+		t.Fatalf("browser smoke subscriptions populated state: %v", err)
 	}
 	if err := harness.Connect(ctx, subID, nodeID); err != nil {
 		t.Fatalf("connect routeflux: %v", err)
@@ -102,6 +112,7 @@ type openWRTHarness struct {
 	workDir       string
 	cacheDir      string
 	sshPort       int
+	httpPort      int
 	qemuImagePath string
 	routefluxBin  string
 	xrayBin       string
@@ -126,6 +137,10 @@ func newOpenWRTHarness(t *testing.T) (*openWRTHarness, error) {
 	}
 
 	sshPort, err := freeTCPPort()
+	if err != nil {
+		return nil, err
+	}
+	httpPort, err := freeTCPPort()
 	if err != nil {
 		return nil, err
 	}
@@ -156,6 +171,7 @@ func newOpenWRTHarness(t *testing.T) (*openWRTHarness, error) {
 		workDir:       workDir,
 		cacheDir:      cacheDir,
 		sshPort:       sshPort,
+		httpPort:      httpPort,
 		qemuImagePath: qemuImagePath,
 		routefluxBin:  routefluxBin,
 		xrayBin:       xrayBin,
@@ -177,7 +193,7 @@ func (h *openWRTHarness) Start(ctx context.Context) error {
 		"-monitor", "none",
 		"-serial", "stdio",
 		"-drive", fmt.Sprintf("file=%s,format=raw", h.qemuImagePath),
-		"-nic", fmt.Sprintf("user,model=e1000,hostfwd=tcp::%d-:22", h.sshPort),
+		"-nic", fmt.Sprintf("user,model=e1000,hostfwd=tcp::%d-:22,hostfwd=tcp::%d-:80", h.sshPort, h.httpPort),
 	)
 
 	stdin, err := cmd.StdinPipe()
@@ -198,27 +214,8 @@ func (h *openWRTHarness) Start(ctx context.Context) error {
 	bootCtx, cancel := context.WithTimeout(ctx, openWrtBootTimeout)
 	defer cancel()
 
-	if err := h.console.WaitForAny(bootCtx, 0, consoleLoginPrompt, consoleRootPrompt, "Please press Enter to activate this console."); err != nil {
-		return fmt.Errorf("wait for OpenWrt console activation: %w", err)
-	}
-	bootOutput := h.console.SliceFrom(0)
-	if strings.Contains(bootOutput, "Please press Enter to activate this console.") {
-		if _, err := io.WriteString(h.consoleStdin, "\n"); err != nil {
-			return fmt.Errorf("activate OpenWrt console: %w", err)
-		}
-		if err := h.console.WaitForAny(bootCtx, 0, consoleLoginPrompt, consoleRootPrompt); err != nil {
-			return fmt.Errorf("wait for OpenWrt login state: %w", err)
-		}
-	}
-
-	if !strings.Contains(h.console.SliceFrom(0), consoleRootPrompt) {
-		loginStart := h.console.Len()
-		if _, err := io.WriteString(h.consoleStdin, "root\n"); err != nil {
-			return fmt.Errorf("log into OpenWrt console: %w", err)
-		}
-		if err := h.console.WaitFor(bootCtx, loginStart, consoleRootPrompt); err != nil {
-			return fmt.Errorf("wait for OpenWrt shell prompt: %w", err)
-		}
+	if err := h.ensureConsoleRoot(bootCtx, 0); err != nil {
+		return fmt.Errorf("wait for initial OpenWrt console shell: %w", err)
 	}
 
 	if err := h.ConsoleCommand(bootCtx, "/etc/init.d/firewall stop"); err != nil {
@@ -232,6 +229,9 @@ func (h *openWRTHarness) Start(ctx context.Context) error {
 		return fmt.Errorf("read ssh public key: %w", err)
 	}
 	if err := h.ConsoleCommand(bootCtx, "printf '%s\n' "+shellQuote(strings.TrimSpace(string(publicKey)))+" > /etc/dropbear/authorized_keys"); err != nil {
+		return err
+	}
+	if err := h.ConsoleCommand(bootCtx, fmt.Sprintf("printf '%%s\\n%%s\\n' %s %s | passwd root", shellQuote(luciTestPassword), shellQuote(luciTestPassword))); err != nil {
 		return err
 	}
 	if err := h.ConsoleCommand(bootCtx, "/etc/init.d/dropbear restart"); err != nil {
@@ -271,8 +271,18 @@ func (h *openWRTHarness) Start(ctx context.Context) error {
 	return nil
 }
 
+func (h *openWRTHarness) InstallLuCI(ctx context.Context) error {
+	if err := h.sshCommand(ctx, "opkg update"); err != nil {
+		return err
+	}
+	if err := h.sshCommand(ctx, "opkg install luci"); err != nil {
+		return err
+	}
+	return nil
+}
+
 func (h *openWRTHarness) InstallRouteFlux(ctx context.Context) error {
-	if err := h.sshCommand(ctx, "mkdir -p /usr/bin /etc/routeflux"); err != nil {
+	if err := h.sshCommand(ctx, "mkdir -p /usr/bin /etc/routeflux /usr/share/luci/menu.d /usr/share/rpcd/acl.d /www/luci-static/resources/routeflux /www/luci-static/resources/view/routeflux"); err != nil {
 		return err
 	}
 	if err := h.scpFile(ctx, h.routefluxBin, routefluxRemoteBinary); err != nil {
@@ -281,7 +291,48 @@ func (h *openWRTHarness) InstallRouteFlux(ctx context.Context) error {
 	if err := h.scpFile(ctx, filepath.Join(h.repoRoot, "openwrt", "root", "etc", "init.d", "routeflux"), routefluxRemoteService); err != nil {
 		return err
 	}
+	if err := h.scpFile(ctx, filepath.Join(h.repoRoot, "luci-app-routeflux", "root", "usr", "share", "luci", "menu.d", "luci-app-routeflux.json"), "/usr/share/luci/menu.d/luci-app-routeflux.json"); err != nil {
+		return err
+	}
+	if err := h.scpFile(ctx, filepath.Join(h.repoRoot, "luci-app-routeflux", "root", "usr", "share", "rpcd", "acl.d", "luci-app-routeflux.json"), "/usr/share/rpcd/acl.d/luci-app-routeflux.json"); err != nil {
+		return err
+	}
+	for _, pattern := range []struct {
+		glob      string
+		remoteDir string
+	}{
+		{
+			glob:      filepath.Join(h.repoRoot, "luci-app-routeflux", "htdocs", "luci-static", "resources", "routeflux", "*.js"),
+			remoteDir: "/www/luci-static/resources/routeflux",
+		},
+		{
+			glob:      filepath.Join(h.repoRoot, "luci-app-routeflux", "htdocs", "luci-static", "resources", "view", "routeflux", "*.js"),
+			remoteDir: "/www/luci-static/resources/view/routeflux",
+		},
+	} {
+		matches, err := filepath.Glob(pattern.glob)
+		if err != nil {
+			return fmt.Errorf("glob LuCI assets %q: %w", pattern.glob, err)
+		}
+		for _, match := range matches {
+			if err := h.scpFile(ctx, match, pattern.remoteDir+"/"+filepath.Base(match)); err != nil {
+				return err
+			}
+		}
+	}
 	if err := h.sshCommand(ctx, "chmod 0755 "+routefluxRemoteBinary+" "+routefluxRemoteService); err != nil {
+		return err
+	}
+	if err := h.sshCommand(ctx, "rm -f /tmp/luci-indexcache /tmp/luci-indexcache.* && rm -rf /tmp/luci-modulecache"); err != nil {
+		return err
+	}
+	if err := h.sshCommand(ctx, "killall rpcd || true"); err != nil {
+		return err
+	}
+	if err := h.sshCommand(ctx, "/etc/init.d/rpcd start"); err != nil {
+		return err
+	}
+	if err := h.sshCommand(ctx, "/etc/init.d/uhttpd restart"); err != nil {
 		return err
 	}
 	if err := h.sshCommand(ctx, routefluxRemoteService+" enable"); err != nil {
@@ -380,6 +431,7 @@ func (h *openWRTHarness) AssertFirewallTableRemoved(ctx context.Context) error {
 }
 
 func (h *openWRTHarness) RebootAndWait(ctx context.Context) error {
+	rebootStart := h.console.Len()
 	_ = h.sshCommand(ctx, routefluxRemoteService+" start")
 	_ = h.sshCommand(ctx, "sync")
 	_ = h.sshCommand(ctx, "reboot")
@@ -398,8 +450,20 @@ func (h *openWRTHarness) RebootAndWait(ctx context.Context) error {
 
 	upCtx, cancelUp := context.WithTimeout(ctx, 5*time.Minute)
 	defer cancelUp()
-	if err := h.waitForSSH(upCtx); err != nil {
+	if err := h.ensureConsoleRoot(upCtx, rebootStart); err != nil {
+		return fmt.Errorf("wait for reboot console shell: %w", err)
+	}
+	if err := h.ConsoleCommand(upCtx, "service network restart"); err != nil {
 		return err
+	}
+	if err := h.ConsoleCommand(upCtx, "sleep 5"); err != nil {
+		return err
+	}
+	if err := h.ConsoleCommand(upCtx, "/etc/init.d/dropbear restart"); err != nil {
+		return err
+	}
+	if err := h.waitForSSH(upCtx); err != nil {
+		return fmt.Errorf("%w\nconsole tail:\n%s", err, tail(h.console.SliceFrom(rebootStart), 4000))
 	}
 	return nil
 }
@@ -453,13 +517,56 @@ func (h *openWRTHarness) ConsoleCommand(ctx context.Context, command string) err
 	return nil
 }
 
+func (h *openWRTHarness) ensureConsoleRoot(ctx context.Context, offset int) error {
+	if err := h.waitForConsolePrompt(ctx, offset); err != nil {
+		return err
+	}
+	if strings.Contains(h.console.SliceFrom(offset), consoleRootPrompt) {
+		return nil
+	}
+
+	loginStart := h.console.Len()
+	if _, err := io.WriteString(h.consoleStdin, "root\n"); err != nil {
+		return fmt.Errorf("log into OpenWrt console: %w", err)
+	}
+	if err := h.console.WaitFor(ctx, loginStart, consoleRootPrompt); err != nil {
+		return fmt.Errorf("wait for OpenWrt shell prompt: %w", err)
+	}
+	return nil
+}
+
+func (h *openWRTHarness) waitForConsolePrompt(ctx context.Context, offset int) error {
+	if err := h.console.WaitForAny(ctx, offset, consoleLoginPrompt, consoleRootPrompt, "Please press Enter to activate this console."); err != nil {
+		return fmt.Errorf("wait for OpenWrt console prompt: %w", err)
+	}
+
+	if !strings.Contains(h.console.SliceFrom(offset), "Please press Enter to activate this console.") {
+		return nil
+	}
+
+	activateStart := h.console.Len()
+	if _, err := io.WriteString(h.consoleStdin, "\n"); err != nil {
+		return fmt.Errorf("activate OpenWrt console: %w", err)
+	}
+	if err := h.console.WaitForAny(ctx, activateStart, consoleLoginPrompt, consoleRootPrompt); err != nil {
+		return fmt.Errorf("wait for OpenWrt login state: %w", err)
+	}
+	return nil
+}
+
 func (h *openWRTHarness) waitForSSH(ctx context.Context) error {
+	var lastErr error
 	for {
 		if ctx.Err() != nil {
+			if lastErr != nil {
+				return fmt.Errorf("wait for ssh: %w; last error: %v", ctx.Err(), lastErr)
+			}
 			return fmt.Errorf("wait for ssh: %w", ctx.Err())
 		}
 		if err := h.sshCommand(ctx, "true"); err == nil {
 			return nil
+		} else {
+			lastErr = err
 		}
 		time.Sleep(2 * time.Second)
 	}

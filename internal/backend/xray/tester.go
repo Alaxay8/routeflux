@@ -25,6 +25,11 @@ func NewCommandTester() CommandTester {
 	return CommandTester{BinaryPath: xrayBinaryPath()}
 }
 
+// BinaryPath returns the configured Xray binary path.
+func BinaryPath() string {
+	return xrayBinaryPath()
+}
+
 // Test validates the provided config path with `xray -test -config`.
 func (t CommandTester) Test(ctx context.Context, configPath string) error {
 	if strings.TrimSpace(configPath) == "" {

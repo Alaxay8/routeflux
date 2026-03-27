@@ -2,7 +2,6 @@ package xray
 
 import (
 	"context"
-	"os"
 	"path/filepath"
 	"testing"
 )
@@ -98,9 +97,5 @@ func writeStatusScript(t *testing.T, body string) string {
 
 	dir := t.TempDir()
 	path := filepath.Join(dir, "xray-status.sh")
-	if err := os.WriteFile(path, []byte(body), 0o755); err != nil {
-		t.Fatalf("write status script: %v", err)
-	}
-
-	return path
+	return writeTestExecutable(t, path, body)
 }

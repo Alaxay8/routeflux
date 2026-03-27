@@ -103,8 +103,5 @@ func TestFileWriterWritePersistsRawJSON(t *testing.T) {
 func writeExecutable(t *testing.T, path, body string) string {
 	t.Helper()
 
-	if err := os.WriteFile(path, []byte(body), 0o755); err != nil {
-		t.Fatalf("write executable %s: %v", path, err)
-	}
-	return path
+	return writeTestExecutable(t, path, body)
 }

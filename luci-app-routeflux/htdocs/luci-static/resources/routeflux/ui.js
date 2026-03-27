@@ -1,5 +1,6 @@
 'use strict';
 'require baseclass';
+'require ui';
 
 function trim(value) {
 	if (value == null)
@@ -15,16 +16,126 @@ function hasContent(value) {
 	return trim(value) !== '';
 }
 
+function pad2(value) {
+	value = Number(value) || 0;
+	return value < 10 ? '0' + value : String(value);
+}
+
+function appendClass(base, extra) {
+	var suffix = trim(extra);
+
+	if (suffix === '')
+		return base;
+
+	return trim(base + ' ' + suffix);
+}
+
+function normalizeChildren(value) {
+	return Array.isArray(value) ? value : [ value ];
+}
+
 return baseclass.extend({
 	formatTimestamp: function(value) {
 		var normalized = trim(value);
-		var match = normalized.match(/^(\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2})/);
+		var parsed;
 
-		return match ? match[1] : normalized;
+		if (normalized === '')
+			return '';
+
+		parsed = new Date(normalized);
+		if (isNaN(parsed.getTime()))
+			return normalized;
+
+		return parsed.getFullYear() + '-' +
+			pad2(parsed.getMonth() + 1) + '-' +
+			pad2(parsed.getDate()) + ' ' +
+			pad2(parsed.getHours()) + ':' +
+			pad2(parsed.getMinutes()) + ':' +
+			pad2(parsed.getSeconds());
 	},
 
 	statusTone: function(connected) {
 		return connected === true ? 'connected' : 'disconnected';
+	},
+
+	isPendingAction: function(view, key) {
+		var normalizedKey = trim(key);
+		var actions = view && view.pendingActions;
+
+		if (normalizedKey === '' || !actions)
+			return false;
+
+		return actions[normalizedKey] != null;
+	},
+
+	pendingActionMessage: function(view, key) {
+		var normalizedKey = trim(key);
+		var actions = view && view.pendingActions;
+
+		if (normalizedKey === '' || !actions || !actions[normalizedKey])
+			return '';
+
+		return trim(actions[normalizedKey].message);
+	},
+
+	runPendingAction: function(view, key, executor, options) {
+		var normalizedKey = trim(key);
+		var settings = options || {};
+		var actions;
+
+		if (normalizedKey === '')
+			return Promise.reject(new Error('missing action key'));
+
+		if (typeof executor !== 'function')
+			return Promise.reject(new Error('missing action executor'));
+
+		view.pendingActions = view.pendingActions || {};
+		actions = view.pendingActions;
+		if (actions[normalizedKey] != null)
+			return Promise.resolve(false);
+
+		actions[normalizedKey] = {
+			'message': trim(settings.message)
+		};
+
+		if (view && typeof view.renderIntoRoot === 'function')
+			view.renderIntoRoot();
+
+		return Promise.resolve().then(executor).finally(function() {
+			delete actions[normalizedKey];
+			if (view && typeof view.renderIntoRoot === 'function')
+				view.renderIntoRoot();
+		});
+	},
+
+	showModal: function(title, body, options) {
+		var settings = options || {};
+		var buttons = Array.isArray(settings.actions) ? settings.actions.slice() : [];
+		var modalClass = trim(settings.modalClass || settings.bodyClass);
+		var bodyClass = appendClass('routeflux-modal-body', settings.bodyClass);
+
+		if (buttons.length === 0) {
+			buttons.push(E('button', {
+				'class': 'cbi-button',
+				'click': function(ev) {
+					ui.hideModal();
+					return false;
+				}
+			}, [ _('Close') ]));
+		}
+
+		if (modalClass !== '') {
+			ui.showModal(title, [
+				E('div', { 'class': bodyClass }, normalizeChildren(body)),
+				E('div', { 'class': 'routeflux-modal-actions' }, buttons)
+			], modalClass);
+			return;
+		}
+
+		ui.showModal(title, [
+			E('div', { 'class': bodyClass }, normalizeChildren(body)),
+			E('div', { 'class': 'routeflux-modal-actions' }, buttons)
+		]);
 	},
 
 	renderSharedStyles: function() {
@@ -43,7 +154,9 @@ return baseclass.extend({
 			'.routeflux-card-disconnected { background:linear-gradient(180deg, rgba(229, 235, 243, 0.98) 0%, rgba(220, 227, 236, 0.98) 100%); border-color:rgba(90, 103, 121, 0.52); }',
 			'.routeflux-card-disconnected .routeflux-card-label { color:#526175; }',
 			'.routeflux-card-disconnected .routeflux-card-value { color:#1f2d40; }',
-			'.routeflux-card-disconnected.routeflux-card-primary .routeflux-card-accent { background:linear-gradient(90deg, #64748b 0%, #94a3b8 100%); }'
+			'.routeflux-card-disconnected.routeflux-card-primary .routeflux-card-accent { background:linear-gradient(90deg, #64748b 0%, #94a3b8 100%); }',
+			'.routeflux-modal-body { width:100%; max-width:100%; min-width:0; box-sizing:border-box; overflow:hidden; }',
+			'.routeflux-modal-actions { display:flex; flex-wrap:wrap; justify-content:flex-end; gap:8px; margin-top:14px; }'
 		]);
 	},
 

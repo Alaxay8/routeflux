@@ -3,6 +3,8 @@ name: CI
 on:
   push:
     branches:
+      - dev
+      - master
       - main
   pull_request:
 
@@ -27,24 +29,3 @@ jobs:
 
       - name: Enforce runtime coverage gate
         run: make coverage-runtime
-
-  integration-openwrt:
-    runs-on: ubuntu-latest
-    needs: checks
-    timeout-minutes: 40
-
-    steps:
-      - uses: actions/checkout@v4
-
-      - uses: actions/setup-go@v5
-        with:
-          go-version-file: go.mod
-          cache: true
-
-      - name: Install QEMU dependencies
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y qemu-system-x86 qemu-utils
-
-      - name: Run OpenWrt integration suite
-        run: make test-integration

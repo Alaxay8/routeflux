@@ -8,7 +8,7 @@ RouteFlux is a lightweight OpenWrt-native Go application for managing Xray and V
 
 RouteFlux imports subscription URLs, raw `vless://`, `vmess://`, and `trojan://` links, plus valid 3x-ui or Xray JSON configs. It normalizes supported proxy outbounds into one node model, stores local state safely, and generates runtime configuration for Xray on OpenWrt and compatible forks such as ImmortalWrt.
 
-The current production claim is the CLI and runtime path. The TUI and LuCI frontend remain MVP or experimental surfaces while the router runtime, persisted state, and OpenWrt backend path are hardened first.
+RouteFlux ships one runtime with three operator surfaces: CLI, LuCI, and TUI. On OpenWrt, the primary day-to-day surfaces are the CLI and LuCI web interface, while the TUI remains a keyboard-first local interface for SSH sessions and terminal-driven workflows.
 
 ## Features
 
@@ -16,7 +16,7 @@ The current production claim is the CLI and runtime path. The TUI and LuCI front
 - Parse VLESS, VMess, and Trojan share links.
 - Normalize supported 3x-ui/Xray proxy outbounds into RouteFlux nodes.
 - Add, list, refresh, connect, disconnect, remove one subscription, or remove all subscriptions from the CLI or TUI.
-- Select nodes manually or use automatic best-node selection with health checks and anti-flap logic.
+- Select nodes manually or use automatic best-node selection with daemon-backed health checks, live failover, and anti-flap logic.
 - Validate candidate Xray configs with `xray -test`, keep a last-known-good backup, and safely reload the OpenWrt `init.d` service.
 - Configure simple nftables-based routing for selected destination IPs, CIDRs, ranges, or LAN hosts.
 - Manage DNS behavior through a dedicated `routeflux dns` command instead of mixing it into general settings.
@@ -26,19 +26,31 @@ The current production claim is the CLI and runtime path. The TUI and LuCI front
 
 ## Quick Start
 
-Install the current beta release from your computer:
+Install the current stable release from your computer:
 
 ```bash
-wget -O /tmp/routeflux-install.sh https://github.com/Alaxay8/routeflux/releases/download/v0.1.3-beta.10/install.sh && sh /tmp/routeflux-install.sh
+wget -O /tmp/routeflux-install.sh "https://github.com/Alaxay8/routeflux/releases/latest/download/install.sh" && sh /tmp/routeflux-install.sh
 ```
 
-GitHub does not serve prerelease assets from `releases/latest/download`. While RouteFlux is still published as a beta prerelease, use a tag-pinned release URL.
+If you need a pinned stable version instead of the latest stable release, use the release tag directly:
+
+```bash
+ROUTEFLUX_TAG=v0.1.4
+wget -O /tmp/routeflux-install.sh "https://github.com/Alaxay8/routeflux/releases/download/${ROUTEFLUX_TAG}/install.sh" && sh /tmp/routeflux-install.sh
+```
+
 If Xray is missing, the installer automatically downloads and installs the bundled Xray runtime for the matching release and architecture before installing RouteFlux.
 
 Current easy-install release assets are provided for:
 
 - `mipsel_24kc`
 - `x86_64`
+
+To remove RouteFlux, the bundled Xray runtime, and LuCI assets from the router, use the uninstall script from the current stable release:
+
+```bash
+wget -O /tmp/routeflux-uninstall.sh "https://github.com/Alaxay8/routeflux/releases/latest/download/uninstall.sh" && sh /tmp/routeflux-uninstall.sh
+```
 
 After install:
 
@@ -50,16 +62,22 @@ See [Installation](#installation) and [Usage](#usage).
 
 ## Installation
 
-1. Fastest path: use the installer from the current beta GitHub release:
+1. Fastest path: use the installer from the current stable GitHub release:
 
 ```bash
-wget -O /tmp/routeflux-install.sh https://github.com/Alaxay8/routeflux/releases/download/v0.1.3-beta.10/install.sh && sh /tmp/routeflux-install.sh
+wget -O /tmp/routeflux-install.sh "https://github.com/Alaxay8/routeflux/releases/latest/download/install.sh" && sh /tmp/routeflux-install.sh
 ```
 
-If you publish a non-prerelease stable release later, you can switch this command back to `releases/latest/download/install.sh`.
+If you need a pinned stable installer instead of the moving latest stable alias, use the release tag directly:
+
+```bash
+ROUTEFLUX_TAG=v0.1.4
+wget -O /tmp/routeflux-install.sh "https://github.com/Alaxay8/routeflux/releases/download/${ROUTEFLUX_TAG}/install.sh" && sh /tmp/routeflux-install.sh
+```
+
 The installer will auto-install the bundled Xray runtime when `/usr/bin/xray` or `/etc/init.d/xray` is missing.
 
-1. For local builds, install Go `1.22` or later.
+1. For local builds, install Go `1.26` or later.
 2. Use OpenWrt or ImmortalWrt with `nftables` available. OpenWrt `22.03+` is the practical baseline for the current firewall integration.
 3. Build RouteFlux from source:
 
@@ -118,6 +136,7 @@ This creates:
 - `dist/xray_${VERSION}_mipsel_24kc.tar.gz`
 - `dist/xray_${VERSION}_x86_64.tar.gz`
 - `dist/install.sh`
+- `dist/uninstall.sh`
 
 For a reliable manual install, copy the tarball to the router and extract it at `/`:
 
@@ -140,6 +159,43 @@ To make `opkg install routeflux` work by package name, build the package with th
 
 ## Usage
 
+LuCI examples:
+
+### Overview dashboard
+
+![RouteFlux LuCI overview](pic/overview.png)
+
+Full-size image: [overview.png](pic/overview.png)
+
+The `Overview` page is the main LuCI dashboard for day-to-day RouteFlux control. It gives a quick summary of the current connection state, the active profile, and the most common actions without switching to the CLI.
+
+Dashboard elements:
+
+- `State`: shows whether RouteFlux is currently connected and highlights the primary runtime status.
+- `Mode`: shows how the current connection was selected, for example `manual` or automatic mode.
+- `Provider`: shows the provider group for the active subscription.
+- `Profile`: shows the selected imported profile inside that provider group.
+- `Node`: shows the active proxy node. When possible, LuCI presents a human-friendly location instead of a raw node label.
+- `DNS`: shows the active DNS mode, for example `split` when encrypted upstream DNS is used for external domains and local names stay on the router DNS.
+- `Firewall`: shows how RouteFlux routing rules are applied. Typical values are `disabled`, `hosts`, or `targets`.
+- `Last Refresh`: shows when the active subscription was last updated.
+
+The `Actions` block is used for the most common control flow:
+
+- `Subscription`: selects which imported subscription or profile the quick actions should use.
+- `Connect Auto`: enables automatic best-node selection for the selected subscription. Continuous health monitoring and live failover require the daemon to be running.
+- `Refresh Active`: refreshes the currently active subscription and reloads the dashboard state.
+- `Disconnect`: stops the current RouteFlux connection without removing saved subscriptions.
+
+The `Subscriptions` table gives a compact inventory of imported profiles:
+
+- `Name`: provider and profile label shown in LuCI.
+- `Nodes`: number of parsed proxy nodes available in that profile.
+- `Updated`: last successful refresh time for that subscription.
+- `Status`: parser result for the latest import or refresh operation.
+
+If the active subscription fails to refresh or connect, LuCI also shows a `Last Error` panel under the table so the failure reason is visible without opening logs first.
+
 CLI examples:
 
 ```bash
@@ -156,6 +212,7 @@ routeflux refresh --all
 routeflux connect --subscription sub-1234567890 --node abcdef123456
 routeflux connect --auto --subscription sub-1234567890
 routeflux disconnect
+routeflux version
 routeflux status
 routeflux diagnostics
 routeflux logs
@@ -325,7 +382,7 @@ Project notes:
 - 3x-ui and Xray JSON imports, including JSON arrays of full configs, are normalized into RouteFlux nodes instead of being copied as full runtime configs.
 - General settings and DNS settings are intentionally split. Use `routeflux settings` for app behavior and `routeflux dns` for runtime DNS.
 - `routeflux firewall set hosts` accepts single IPv4 addresses, IPv4 CIDR pools, IPv4 ranges, and the aliases `all` or `*` for common private LAN ranges.
-- `routeflux daemon` runs the background refresh loop. Use `--once` for a single scan or `--tick 30s` to override the scan interval.
+- `routeflux daemon` runs the background refresh loop and auto-mode health monitor. Use `--once` for a single scan or `--tick 30s` to override the refresh scan interval.
 
 ## Architecture
 
@@ -339,7 +396,7 @@ The codebase is split into domain, parser, store, probe, backend, app, CLI, and 
 
 ## TUI
 
-The TUI is still an MVP surface. It is keyboard-driven and focuses on provider-first navigation:
+The TUI is a keyboard-driven interface that focuses on provider-first navigation:
 
 - `j` / `k`: move between VPN services
 - `h` / `l`: move between profiles inside the selected service
@@ -377,16 +434,16 @@ Placeholder screenshots:
 - Xray is required for connect, disconnect, and runtime config generation.
 - 3x-ui/Xray JSON import reads supported proxy outbounds only. It does not preserve full `dns`, `routing`, `inbounds`, outbound chaining, or other auxiliary runtime sections.
 - The current Xray backend connects VLESS, VMess, and Trojan nodes.
-- Transparent router traffic interception is not fully automated in MVP.
-- Automatic subscription refresh requires the RouteFlux daemon or OpenWrt `/etc/init.d/routeflux` service to be running.
+- Transparent router traffic interception still requires explicit firewall configuration for the traffic you want to route through RouteFlux.
+- Automatic subscription refresh, continuous auto-mode health checks, and live failover require the RouteFlux daemon or OpenWrt `/etc/init.d/routeflux` service to be running.
 - Simple firewall routing currently supports destination IPv4 targets, source IPv4 hosts, CIDR pools, IPv4 ranges, and the `all` or `*` LAN-wide shortcut. QUIC blocking is host-mode only.
-- The CLI and runtime path are the supported production surface today.
-- The TUI and LuCI frontend remain MVP or experimental surfaces. A LuCI MVP lives in `luci-app-routeflux` with `Overview`, `Subscriptions`, `Firewall`, `DNS`, `Settings`, `Diagnostics`, and `Logs` pages.
+- CLI, LuCI, and TUI all operate on the same persisted state and runtime backend.
+- The LuCI frontend lives in `luci-app-routeflux` with `Overview`, `Subscriptions`, `Firewall`, `DNS`, `Settings`, `Diagnostics`, and `Logs` pages.
 
 ## Support Matrix
 
-- Supported production surface: CLI and runtime path.
-- Experimental surfaces: TUI and LuCI.
+- Primary operator surfaces: CLI and LuCI on OpenWrt.
+- Additional operator surface: TUI for keyboard-first local workflows.
 - Supported router family: OpenWrt and compatible forks such as ImmortalWrt.
 - Practical runtime baseline: OpenWrt `22.03+` with `nftables` available.
 - Runtime dependency: Xray service script available at `/etc/init.d/xray` unless overridden.

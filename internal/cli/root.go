@@ -17,13 +17,15 @@ import (
 	"github.com/Alaxay8/routeflux/internal/backend/xray"
 	"github.com/Alaxay8/routeflux/internal/platform/openwrt"
 	"github.com/Alaxay8/routeflux/internal/probe"
+	"github.com/Alaxay8/routeflux/internal/speedtest"
 	"github.com/Alaxay8/routeflux/internal/store"
 )
 
 type rootOptions struct {
-	rootDir    string
-	jsonOutput bool
-	service    *app.Service
+	rootDir     string
+	jsonOutput  bool
+	showVersion bool
+	service     *app.Service
 }
 
 // Execute runs the RouteFlux CLI.
@@ -37,13 +39,23 @@ func newRootCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "routeflux",
 		Short: "RouteFlux manages subscription-based Xray routing on OpenWrt",
+		RunE: func(cmd *cobra.Command, args []string) error {
+			if opts.showVersion {
+				return printVersion(cmd, opts.jsonOutput)
+			}
+			return cmd.Help()
+		},
 		PersistentPreRunE: func(cmd *cobra.Command, args []string) error {
+			if opts.showVersion || cmd.Name() == "version" || cmd.Name() == "help" {
+				return nil
+			}
 			return opts.initService()
 		},
 	}
 
 	cmd.PersistentFlags().StringVar(&opts.rootDir, "root", "", "RouteFlux state directory")
 	cmd.PersistentFlags().BoolVar(&opts.jsonOutput, "json", false, "Output JSON")
+	cmd.Flags().BoolVar(&opts.showVersion, "version", false, "Print RouteFlux version")
 
 	cmd.AddCommand(
 		newAddCmd(opts),
@@ -53,6 +65,7 @@ func newRootCmd() *cobra.Command {
 		newFirewallCmd(opts),
 		newListCmd(opts),
 		newLogsCmd(opts),
+		newInspectCmd(opts),
 		newRemoveCmd(opts),
 		newRefreshCmd(opts),
 		newConnectCmd(opts),
@@ -60,6 +73,7 @@ func newRootCmd() *cobra.Command {
 		newStatusCmd(opts),
 		newSettingsCmd(opts),
 		newTUICmd(opts),
+		newVersionCmd(opts),
 	)
 
 	return cmd
@@ -98,7 +112,11 @@ func (o *rootOptions) initService() error {
 		Firewaller: firewall,
 		HTTPClient: &http.Client{Timeout: 20 * time.Second},
 		Checker:    probe.TCPChecker{Timeout: 5 * time.Second},
-		Logger:     logger,
+		SpeedTester: speedtest.Runner{
+			LockPath:   filepath.Join(root, "speedtest.lock"),
+			BinaryPath: xray.BinaryPath(),
+		},
+		Logger: logger,
 	})
 
 	return nil

@@ -12,6 +12,7 @@
 bin/
 dist/
 plan/
+pic/
 
 coverage.out
 coverage-*.out

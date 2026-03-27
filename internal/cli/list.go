@@ -3,7 +3,6 @@ package cli
 import (
 	"fmt"
 	"strings"
-	"time"
 
 	"github.com/spf13/cobra"
 )
@@ -42,7 +41,7 @@ func newListSubscriptionsCmd(opts *rootOptions) *cobra.Command {
 
 			var lines []string
 			for _, sub := range subscriptions {
-				lines = append(lines, fmt.Sprintf("%s  %s  nodes=%d  updated=%s  status=%s", sub.ID, sub.DisplayName, len(sub.Nodes), sub.LastUpdatedAt.Format(time.RFC3339), sub.ParserStatus))
+				lines = append(lines, fmt.Sprintf("%s  %s  nodes=%d  updated=%s  status=%s", sub.ID, sub.DisplayName, len(sub.Nodes), formatLocalTimestamp(sub.LastUpdatedAt), sub.ParserStatus))
 			}
 
 			return printOutput(cmd, false, nil, strings.Join(lines, "\n"))

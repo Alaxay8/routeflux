@@ -6,6 +6,7 @@ import (
 	"encoding/base64"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"html"
 	"io"
@@ -24,7 +25,10 @@ import (
 	"github.com/Alaxay8/routeflux/internal/domain"
 	"github.com/Alaxay8/routeflux/internal/parser"
 	"github.com/Alaxay8/routeflux/internal/probe"
+	"github.com/Alaxay8/routeflux/internal/speedtest"
 )
+
+const inspectSpeedTimeout = 75 * time.Second
 
 // Store defines the persisted state contract required by the service layer.
 type Store interface {
@@ -69,6 +73,7 @@ type Service struct {
 	firewall           Firewaller
 	httpClient         *http.Client
 	checker            probe.Checker
+	speedTester        speedtest.Tester
 	logger             *slog.Logger
 	resolver           HostResolver
 	backendReadyChecks int
@@ -77,13 +82,14 @@ type Service struct {
 
 // Dependencies groups the service construction inputs.
 type Dependencies struct {
-	Store      Store
-	Backend    backend.Backend
-	Firewaller Firewaller
-	HTTPClient *http.Client
-	Checker    probe.Checker
-	Logger     *slog.Logger
-	Resolver   HostResolver
+	Store       Store
+	Backend     backend.Backend
+	Firewaller  Firewaller
+	HTTPClient  *http.Client
+	Checker     probe.Checker
+	SpeedTester speedtest.Tester
+	Logger      *slog.Logger
+	Resolver    HostResolver
 }
 
 type subscriptionFetchMetadata struct {
@@ -132,6 +138,7 @@ func NewService(deps Dependencies) *Service {
 		firewall:           deps.Firewaller,
 		httpClient:         ensureSubscriptionHTTPClient(deps.HTTPClient),
 		checker:            checker,
+		speedTester:        deps.SpeedTester,
 		logger:             logger,
 		resolver:           resolver,
 		backendReadyChecks: backendReadyMaxChecks,
@@ -362,6 +369,75 @@ func (s *Service) ListNodes(subscriptionID string) ([]domain.Node, error) {
 	return sub.Nodes, nil
 }
 
+// InspectXrayConfig renders the Xray config RouteFlux would generate for a node.
+func (s *Service) InspectXrayConfig(subscriptionID, nodeID string) (json.RawMessage, error) {
+	if s.backend == nil {
+		return nil, fmt.Errorf("backend is not configured")
+	}
+
+	settings, err := s.store.LoadSettings()
+	if err != nil {
+		return nil, fmt.Errorf("load settings: %w", err)
+	}
+
+	sub, node, err := s.subscriptionNode(subscriptionID, nodeID)
+	if err != nil {
+		return nil, err
+	}
+
+	rendered, err := s.backend.GenerateConfig(s.backendConfigRequest(settings, node, domain.SelectionModeManual, 10808, 10809, firewallEnabled(settings.Firewall)))
+	if err != nil {
+		return nil, fmt.Errorf("generate xray config for %s/%s: %w", sub.ID, node.ID, err)
+	}
+
+	return json.RawMessage(rendered), nil
+}
+
+// InspectSpeed runs an isolated router-side speed test for a node.
+func (s *Service) InspectSpeed(ctx context.Context, subscriptionID, nodeID string) (speedtest.Result, error) {
+	if s.backend == nil {
+		return speedtest.Result{}, fmt.Errorf("backend is not configured")
+	}
+	if s.speedTester == nil {
+		return speedtest.Result{}, fmt.Errorf("speed tester is not configured")
+	}
+
+	ctx, cancel := context.WithTimeout(ctx, inspectSpeedTimeout)
+	defer cancel()
+
+	settings, err := s.store.LoadSettings()
+	if err != nil {
+		return speedtest.Result{}, fmt.Errorf("load settings: %w", err)
+	}
+
+	_, node, err := s.subscriptionNode(subscriptionID, nodeID)
+	if err != nil {
+		return speedtest.Result{}, err
+	}
+
+	socksPort, err := pickFreeTCPPort()
+	if err != nil {
+		return speedtest.Result{}, fmt.Errorf("allocate speed test SOCKS port: %w", err)
+	}
+	httpPort, err := pickFreeTCPPort()
+	if err != nil {
+		return speedtest.Result{}, fmt.Errorf("allocate speed test HTTP port: %w", err)
+	}
+
+	rendered, err := s.backend.GenerateConfig(s.backendConfigRequest(settings, node, domain.SelectionModeManual, socksPort, httpPort, false))
+	if err != nil {
+		return speedtest.Result{}, fmt.Errorf("generate speed test config: %w", err)
+	}
+
+	return s.speedTester.Test(ctx, speedtest.Request{
+		SubscriptionID: subscriptionID,
+		NodeID:         nodeID,
+		NodeName:       node.DisplayName(),
+		Config:         rendered,
+		HTTPProxyPort:  httpPort,
+	})
+}
+
 // RefreshSubscription reloads and reparses a subscription.
 func (s *Service) RefreshSubscription(ctx context.Context, subscriptionID string) (domain.Subscription, error) {
 	return runStoreWriteLockedResult(s, func() (domain.Subscription, error) {
@@ -507,75 +583,36 @@ func (s *Service) connectAuto(ctx context.Context, subscriptionID string) (domai
 	}
 	s.logInfo("auto selection requested", "subscription", sub.ID)
 
+	settings, err := s.store.LoadSettings()
+	if err != nil {
+		return domain.Node{}, fmt.Errorf("load settings: %w", err)
+	}
+
 	state, err := s.store.LoadState()
 	if err != nil {
 		return domain.Node{}, fmt.Errorf("load state: %w", err)
 	}
 
-	if state.Health == nil {
-		state.Health = make(map[string]domain.NodeHealth)
-	}
-
-	results := s.probeSubscription(ctx, sub, state.Health)
-	bestNode, bestScore, err := probe.SelectBestNode(sub.Nodes, state.Health, probe.DefaultScoreConfig())
+	decision, err := s.evaluateAutoSelection(ctx, sub, settings, state)
 	if err != nil {
 		return domain.Node{}, err
 	}
-	current := state.Health[state.ActiveNodeID]
-	candidate := state.Health[bestNode.ID]
-	shouldSwitch, switchReason := probe.ShouldSwitch(current, candidate, time.Now().UTC(), state.LastSwitchAt, probe.DefaultSwitchPolicy())
-	if state.ActiveNodeID == "" {
-		shouldSwitch = true
-		switchReason = "no current node"
-	}
 
-	selectedNode := bestNode
-	switched := true
-	if !shouldSwitch && state.ActiveNodeID != "" {
-		if active, ok := sub.NodeByID(state.ActiveNodeID); ok {
-			selectedNode = active
-			switched = false
+	s.logAutoDecision("auto selection decision", sub, decision)
+
+	if !decision.HasHealthyCandidate {
+		state.Health = decision.Health
+		if err := s.store.SaveState(state); err != nil {
+			return domain.Node{}, fmt.Errorf("save state: %w", err)
 		}
+		return domain.Node{}, errors.New(decision.Reason)
 	}
-	s.logInfo(
-		"auto selection decision",
-		"subscription", sub.ID,
-		"current_node", state.ActiveNodeID,
-		"candidate_node", bestNode.ID,
-		"selected_node", selectedNode.ID,
-		"switch", switched,
-		"reason", switchReason,
-		"candidate_score", bestScore.Score,
-	)
 
-	if err := s.applyNodeSelection(ctx, sub, selectedNode, domain.SelectionModeAuto); err != nil {
+	selectedNode, err := s.commitAutoSelection(ctx, sub, decision)
+	if err != nil {
 		return domain.Node{}, err
 	}
 
-	state, _ = s.store.LoadState()
-	if state.Health == nil {
-		state.Health = make(map[string]domain.NodeHealth)
-	}
-	for _, result := range results {
-		if result.Health.NodeID != "" {
-			state.Health[result.NodeID] = result.Health
-		}
-	}
-	scored := state.Health[bestNode.ID]
-	scored.Score = bestScore.Score
-	state.Health[bestNode.ID] = scored
-	if switched {
-		state.LastSwitchAt = time.Now().UTC()
-	}
-	state.Mode = domain.SelectionModeAuto
-	state.Connected = true
-	state.ActiveSubscriptionID = sub.ID
-	state.ActiveNodeID = selectedNode.ID
-	if err := s.store.SaveState(state); err != nil {
-		return domain.Node{}, fmt.Errorf("save state: %w", err)
-	}
-
-	settings, err := s.store.LoadSettings()
 	if err == nil {
 		settings.AutoMode = true
 		settings.Mode = domain.SelectionModeAuto
@@ -717,7 +754,7 @@ func (s *Service) restoreRuntime(ctx context.Context) error {
 		if persistErr := s.persistRestoreFailure(ctx, reason); persistErr != nil {
 			return fmt.Errorf("%s: %v", reason, persistErr)
 		}
-		return fmt.Errorf(reason)
+		return errors.New(reason)
 	}
 
 	settings, err := s.store.LoadSettings()
@@ -1316,6 +1353,52 @@ func (s *Service) subscriptionByID(id string) (domain.Subscription, error) {
 	return domain.Subscription{}, fmt.Errorf("subscription %q not found", id)
 }
 
+func (s *Service) subscriptionNode(subscriptionID, nodeID string) (domain.Subscription, domain.Node, error) {
+	sub, err := s.subscriptionByID(subscriptionID)
+	if err != nil {
+		return domain.Subscription{}, domain.Node{}, err
+	}
+
+	node, ok := sub.NodeByID(nodeID)
+	if !ok {
+		return domain.Subscription{}, domain.Node{}, fmt.Errorf("node %q not found in subscription %q", nodeID, subscriptionID)
+	}
+
+	return sub, node, nil
+}
+
+func (s *Service) backendConfigRequest(settings domain.Settings, node domain.Node, mode domain.SelectionMode, socksPort, httpPort int, transparent bool) backend.ConfigRequest {
+	return backend.ConfigRequest{
+		Mode:             mode,
+		Nodes:            []domain.Node{node},
+		SelectedNodeID:   node.ID,
+		LogLevel:         settings.LogLevel,
+		DNS:              settings.DNS,
+		SOCKSPort:        socksPort,
+		HTTPPort:         httpPort,
+		TransparentProxy: transparent,
+		TransparentPort:  settings.Firewall.TransparentPort,
+	}
+}
+
+func firewallEnabled(settings domain.FirewallSettings) bool {
+	return settings.Enabled && (len(settings.TargetCIDRs) > 0 || len(settings.SourceCIDRs) > 0)
+}
+
+func pickFreeTCPPort() (int, error) {
+	listener, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		return 0, err
+	}
+	defer listener.Close()
+
+	addr, ok := listener.Addr().(*net.TCPAddr)
+	if !ok {
+		return 0, fmt.Errorf("unexpected listener address %T", listener.Addr())
+	}
+	return addr.Port, nil
+}
+
 func (s *Service) applyNodeSelection(ctx context.Context, sub domain.Subscription, node domain.Node, mode domain.SelectionMode) error {
 	settings, err := s.store.LoadSettings()
 	if err != nil {
@@ -1329,17 +1412,7 @@ func (s *Service) applyNodeSelection(ctx context.Context, sub domain.Subscriptio
 
 	if s.backend != nil {
 		s.logInfo("apply backend config", "subscription", sub.ID, "node", node.ID, "mode", mode, "resolved_address", resolvedNode.Address)
-		if err := s.backend.ApplyConfig(ctx, backend.ConfigRequest{
-			Mode:             mode,
-			Nodes:            []domain.Node{resolvedNode},
-			SelectedNodeID:   resolvedNode.ID,
-			LogLevel:         settings.LogLevel,
-			DNS:              settings.DNS,
-			SOCKSPort:        10808,
-			HTTPPort:         10809,
-			TransparentProxy: settings.Firewall.Enabled && (len(settings.Firewall.TargetCIDRs) > 0 || len(settings.Firewall.SourceCIDRs) > 0),
-			TransparentPort:  settings.Firewall.TransparentPort,
-		}); err != nil {
+		if err := s.backend.ApplyConfig(ctx, s.backendConfigRequest(settings, resolvedNode, mode, 10808, 10809, firewallEnabled(settings.Firewall))); err != nil {
 			s.logWarn("apply backend config failed", "subscription", sub.ID, "node", node.ID, "mode", mode, "error", err.Error())
 			_ = s.markConnectionFailed(ctx, sub.ID, node.ID, mode, fmt.Sprintf("apply backend config: %v", err))
 			return fmt.Errorf("apply backend config: %w", err)
@@ -1377,9 +1450,6 @@ func (s *Service) applyNodeSelection(ctx context.Context, sub domain.Subscriptio
 	state.Connected = true
 	state.LastSuccessAt = time.Now().UTC()
 	state.LastFailureReason = ""
-	if mode == domain.SelectionModeAuto {
-		state.LastSwitchAt = time.Now().UTC()
-	}
 
 	if err := s.store.SaveState(state); err != nil {
 		return fmt.Errorf("save state: %w", err)
@@ -1825,7 +1895,7 @@ func (s *Service) ensureBackendRunning(ctx context.Context, subscriptionID, node
 	}
 	s.logWarn("backend reported not running", "subscription", subscriptionID, "node", nodeID, "mode", mode, "service_state", status.ServiceState)
 	_ = s.markConnectionFailed(ctx, subscriptionID, nodeID, mode, reason)
-	return fmt.Errorf(reason)
+	return errors.New(reason)
 }
 
 func (s *Service) waitForBackendRunning(ctx context.Context, subscriptionID, nodeID string, mode domain.SelectionMode) (backend.RuntimeStatus, error) {

@@ -3,11 +3,17 @@ BUILD_DIR := bin
 GO_FILES := $(shell find . -type f -name '*.go' -not -path './bin/*' -not -path './dist/*' -not -path './.cache/*')
 VERSION ?= $(shell (git describe --tags --always --dirty 2>/dev/null || printf '0.0.0-dev') | sed 's/^v//')
 PACKAGE_ARCH ?= mipsel_24kc
+COMMIT ?= $(shell git rev-parse --short HEAD 2>/dev/null || printf 'unknown')
+BUILD_DATE ?= $(shell date -u '+%Y-%m-%dT%H:%M:%SZ')
+LDFLAGS := -s -w \
+	-X github.com/Alaxay8/routeflux/internal/buildinfo.Version=$(VERSION) \
+	-X github.com/Alaxay8/routeflux/internal/buildinfo.Commit=$(COMMIT) \
+	-X github.com/Alaxay8/routeflux/internal/buildinfo.BuildDate=$(BUILD_DATE)
 
 .PHONY: build test test-verbose coverage coverage-runtime lint test-integration build-openwrt build-openwrt-x86_64 package-openwrt package-release fmt
 
 build:
-	go build -o $(BUILD_DIR)/$(APP_NAME) ./cmd/routeflux
+	go build -trimpath -ldflags "$(LDFLAGS)" -o $(BUILD_DIR)/$(APP_NAME) ./cmd/routeflux
 
 test:
 	go test ./...
@@ -41,10 +47,10 @@ fmt:
 	go fmt ./...
 
 build-openwrt:
-	./scripts/build-openwrt.sh
+	VERSION=$(VERSION) ./scripts/build-openwrt.sh
 
 build-openwrt-x86_64:
-	OUTPUT_DIR=bin/openwrt/x86_64 GOARCH=amd64 ./scripts/build-openwrt.sh
+	VERSION=$(VERSION) OUTPUT_DIR=bin/openwrt/x86_64 GOARCH=amd64 ./scripts/build-openwrt.sh
 
 test-integration: build-openwrt-x86_64
 	ROUTEFLUX_RUN_OPENWRT_INTEGRATION=1 \
