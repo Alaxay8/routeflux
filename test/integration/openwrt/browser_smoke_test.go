@@ -13,6 +13,28 @@ import (
 	"github.com/chromedp/chromedp"
 )
 
+var browserEnvNames = []string{
+	"ROUTEFLUX_OPENWRT_BROWSER_BIN",
+	"CHROME_BIN",
+	"CHROMIUM_BIN",
+	"BROWSER",
+}
+
+var browserCandidates = []string{
+	"headless_shell",
+	"headless-shell",
+	"chromium",
+	"chromium-browser",
+	"google-chrome",
+	"google-chrome-stable",
+	"google-chrome-beta",
+	"google-chrome-unstable",
+	"/usr/bin/google-chrome",
+	"/usr/local/bin/chrome",
+	"/snap/bin/chromium",
+	"chrome",
+}
+
 func (h *openWRTHarness) AssertLuCISubscriptionsPage(ctx context.Context, expectedTexts ...string) error {
 	browserPath, err := lookupBrowserBinary()
 	if err != nil {
@@ -96,23 +118,32 @@ func (h *openWRTHarness) luciURL(path string) string {
 }
 
 func lookupBrowserBinary() (string, error) {
-	if path := strings.TrimSpace(os.Getenv("ROUTEFLUX_OPENWRT_BROWSER_BIN")); path != "" {
-		return path, nil
+	return resolveBrowserBinary(os.LookupEnv, exec.LookPath)
+}
+
+func resolveBrowserBinary(lookupEnv func(string) (string, bool), lookPath func(string) (string, error)) (string, error) {
+	for _, envName := range browserEnvNames {
+		if value, ok := lookupEnv(envName); ok {
+			path := strings.TrimSpace(value)
+			if path != "" {
+				if strings.Contains(path, string(os.PathSeparator)) {
+					return path, nil
+				}
+				resolved, err := lookPath(path)
+				if err == nil {
+					return resolved, nil
+				}
+				return path, nil
+			}
+		}
 	}
 
-	candidates := []string{
-		"chromium",
-		"chromium-browser",
-		"google-chrome",
-		"google-chrome-stable",
-	}
-
-	for _, candidate := range candidates {
-		path, err := exec.LookPath(candidate)
+	for _, candidate := range browserCandidates {
+		path, err := lookPath(candidate)
 		if err == nil {
 			return path, nil
 		}
 	}
 
-	return "", fmt.Errorf("find browser binary: install chromium/google-chrome or set ROUTEFLUX_OPENWRT_BROWSER_BIN")
+	return "", fmt.Errorf("find browser binary: install chromium/google-chrome/headless-shell or set ROUTEFLUX_OPENWRT_BROWSER_BIN")
 }
