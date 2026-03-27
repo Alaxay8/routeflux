@@ -26,10 +26,11 @@ RouteFlux ships one runtime with three operator surfaces: CLI, LuCI, and TUI. On
 
 ## Quick Start
 
-Install the current beta release from your computer:
+Install the current beta release from your computer. Set `ROUTEFLUX_TAG` to the release tag you want to install:
 
 ```bash
-wget -O /tmp/routeflux-install.sh https://github.com/Alaxay8/routeflux/releases/download/v0.1.3-beta.10/install.sh && sh /tmp/routeflux-install.sh
+ROUTEFLUX_TAG=v0.1.3-beta.10
+wget -O /tmp/routeflux-install.sh "https://github.com/Alaxay8/routeflux/releases/download/${ROUTEFLUX_TAG}/install.sh" && sh /tmp/routeflux-install.sh
 ```
 
 GitHub does not serve prerelease assets from `releases/latest/download`. While RouteFlux is still published as a beta prerelease, use a tag-pinned release URL.
@@ -40,10 +41,10 @@ Current easy-install release assets are provided for:
 - `mipsel_24kc`
 - `x86_64`
 
-To remove RouteFlux, the bundled Xray runtime, and LuCI assets from the router:
+To remove RouteFlux, the bundled Xray runtime, and LuCI assets from the router, use the same `ROUTEFLUX_TAG` value that you used for installation:
 
 ```bash
-wget -O /tmp/routeflux-uninstall.sh https://github.com/Alaxay8/routeflux/releases/download/v0.1.3-beta.10/uninstall.sh && sh /tmp/routeflux-uninstall.sh
+wget -O /tmp/routeflux-uninstall.sh "https://github.com/Alaxay8/routeflux/releases/download/${ROUTEFLUX_TAG}/uninstall.sh" && sh /tmp/routeflux-uninstall.sh
 ```
 
 After install:
@@ -59,7 +60,8 @@ See [Installation](#installation) and [Usage](#usage).
 1. Fastest path: use the installer from the current beta GitHub release:
 
 ```bash
-wget -O /tmp/routeflux-install.sh https://github.com/Alaxay8/routeflux/releases/download/v0.1.3-beta.10/install.sh && sh /tmp/routeflux-install.sh
+ROUTEFLUX_TAG=v0.1.3-beta.10
+wget -O /tmp/routeflux-install.sh "https://github.com/Alaxay8/routeflux/releases/download/${ROUTEFLUX_TAG}/install.sh" && sh /tmp/routeflux-install.sh
 ```
 
 If you publish a non-prerelease stable release later, you can switch this command back to `releases/latest/download/install.sh`.
