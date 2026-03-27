@@ -267,6 +267,7 @@ func waitForRenderedSubscriptionsPage(expectedTexts []string, snapshot *luciPage
 	return chromedp.ActionFunc(func(ctx context.Context) error {
 		var last luciPageSnapshot
 		var lastErr error
+		var readySince time.Time
 		ticker := time.NewTicker(500 * time.Millisecond)
 		defer ticker.Stop()
 
@@ -288,6 +289,16 @@ func waitForRenderedSubscriptionsPage(expectedTexts []string, snapshot *luciPage
 						*snapshot = current
 					}
 					return nil
+				}
+				if current.HasRoot && current.HasAddSource {
+					if readySince.IsZero() {
+						readySince = time.Now()
+					}
+					if time.Since(readySince) >= 10*time.Second {
+						return fmt.Errorf("subscriptions page rendered but missing expected text %v; url=%s title=%q body=%q", missingText(current.BodyText, expectedTexts), current.URL, current.Title, summarizeForError(current.BodyText, 320))
+					}
+				} else {
+					readySince = time.Time{}
 				}
 			}
 
@@ -394,6 +405,16 @@ func containsAllText(body string, expectedTexts []string) bool {
 		}
 	}
 	return true
+}
+
+func missingText(body string, expectedTexts []string) []string {
+	missing := make([]string, 0, len(expectedTexts))
+	for _, expected := range expectedTexts {
+		if !strings.Contains(body, expected) {
+			missing = append(missing, expected)
+		}
+	}
+	return missing
 }
 
 func summarizeForError(value string, limit int) string {

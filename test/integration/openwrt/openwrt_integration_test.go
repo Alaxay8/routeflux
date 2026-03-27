@@ -75,7 +75,7 @@ func TestOpenWrtEndToEnd(t *testing.T) {
 	if err != nil {
 		t.Fatalf("add subscription: %v", err)
 	}
-	if err := harness.AssertLuCISubscriptionsPage(ctx, "RouteFlux - Subscriptions", "OpenWrt Integration", "Speed Test"); err != nil {
+	if err := harness.AssertLuCISubscriptionsPage(ctx, "RouteFlux - Subscriptions", "Imported Subscription", "Profile 1", "Connect Auto", subID); err != nil {
 		t.Fatalf("browser smoke subscriptions populated state: %v", err)
 	}
 	if err := harness.Connect(ctx, subID, nodeID); err != nil {
