@@ -66,6 +66,10 @@ func TestBuildNFTablesRulesForSourceHosts(t *testing.T) {
 	}
 
 	wants := []string{
+		"set bypass_v4",
+		"127.0.0.0/8",
+		"192.168.0.0/16",
+		"ip daddr @bypass_v4 return",
 		"set source_v4",
 		"192.168.1.150",
 		"ip saddr @source_v4 tcp dport != 12345 redirect to :12345",
@@ -75,6 +79,31 @@ func TestBuildNFTablesRulesForSourceHosts(t *testing.T) {
 		if !strings.Contains(rules, want) {
 			t.Fatalf("rules missing %q\n%s", want, rules)
 		}
+	}
+}
+
+func TestBuildNFTablesRulesForSourceHostsBypassesLocalDestinationsFirst(t *testing.T) {
+	t.Parallel()
+
+	rules, err := BuildNFTablesRules(domain.FirewallSettings{
+		Enabled:         true,
+		TransparentPort: 12345,
+		SourceCIDRs:     []string{"192.168.1.150"},
+	})
+	if err != nil {
+		t.Fatalf("build rules: %v", err)
+	}
+
+	bypassIndex := strings.Index(rules, "ip daddr @bypass_v4 return")
+	redirectIndex := strings.Index(rules, "ip saddr @source_v4 tcp dport != 12345 redirect to :12345")
+	if bypassIndex < 0 {
+		t.Fatalf("rules missing bypass rule\n%s", rules)
+	}
+	if redirectIndex < 0 {
+		t.Fatalf("rules missing source redirect rule\n%s", rules)
+	}
+	if bypassIndex > redirectIndex {
+		t.Fatalf("expected bypass rule before redirect rule\n%s", rules)
 	}
 }
 
