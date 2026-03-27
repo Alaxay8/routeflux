@@ -23,10 +23,10 @@ jobs:
           go-version-file: go.mod
           cache: true
 
-      - name: Install QEMU dependencies
+      - name: Install QEMU and browser dependencies
         run: |
           sudo apt-get update
-          sudo apt-get install -y qemu-system-x86 qemu-utils
+          sudo apt-get install -y qemu-system-x86 qemu-utils chromium || sudo apt-get install -y qemu-system-x86 qemu-utils chromium-browser
 
       - name: Run lint and unit tests
         run: make lint
@@ -51,3 +51,4 @@ jobs:
             dist/*.ipk
             dist/*.tar.gz
             dist/install.sh
+            dist/uninstall.sh

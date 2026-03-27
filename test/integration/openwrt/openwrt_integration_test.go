@@ -29,6 +29,7 @@ const (
 	xrayRemoteService          = "/etc/init.d/xray"
 	routefluxRemoteService     = "/etc/init.d/routeflux"
 	xrayRemoteConfigDir        = "/etc/xray"
+	luciTestPassword           = "routeflux-smoke"
 	consoleLoginPrompt         = "login:"
 	consoleRootPrompt          = "root@"
 	openWrtBootTimeout         = 10 * time.Minute
@@ -57,16 +58,25 @@ func TestOpenWrtEndToEnd(t *testing.T) {
 	if err := harness.Start(ctx); err != nil {
 		t.Fatalf("start OpenWrt VM: %v", err)
 	}
+	if err := harness.InstallLuCI(ctx); err != nil {
+		t.Fatalf("install LuCI: %v", err)
+	}
 	if err := harness.InstallRouteFlux(ctx); err != nil {
 		t.Fatalf("install routeflux: %v", err)
 	}
 	if err := harness.InstallXray(ctx); err != nil {
 		t.Fatalf("install xray: %v", err)
 	}
+	if err := harness.AssertLuCISubscriptionsPage(ctx, "RouteFlux - Subscriptions", "Add Subscription", "No subscriptions imported yet."); err != nil {
+		t.Fatalf("browser smoke subscriptions empty state: %v", err)
+	}
 
 	subID, nodeID, err := harness.AddSubscription(ctx, integrationRawVLESSFixture)
 	if err != nil {
 		t.Fatalf("add subscription: %v", err)
+	}
+	if err := harness.AssertLuCISubscriptionsPage(ctx, "RouteFlux - Subscriptions", "OpenWrt Integration", "Speed Test"); err != nil {
+		t.Fatalf("browser smoke subscriptions populated state: %v", err)
 	}
 	if err := harness.Connect(ctx, subID, nodeID); err != nil {
 		t.Fatalf("connect routeflux: %v", err)
@@ -102,6 +112,7 @@ type openWRTHarness struct {
 	workDir       string
 	cacheDir      string
 	sshPort       int
+	httpPort      int
 	qemuImagePath string
 	routefluxBin  string
 	xrayBin       string
@@ -126,6 +137,10 @@ func newOpenWRTHarness(t *testing.T) (*openWRTHarness, error) {
 	}
 
 	sshPort, err := freeTCPPort()
+	if err != nil {
+		return nil, err
+	}
+	httpPort, err := freeTCPPort()
 	if err != nil {
 		return nil, err
 	}
@@ -156,6 +171,7 @@ func newOpenWRTHarness(t *testing.T) (*openWRTHarness, error) {
 		workDir:       workDir,
 		cacheDir:      cacheDir,
 		sshPort:       sshPort,
+		httpPort:      httpPort,
 		qemuImagePath: qemuImagePath,
 		routefluxBin:  routefluxBin,
 		xrayBin:       xrayBin,
@@ -177,7 +193,7 @@ func (h *openWRTHarness) Start(ctx context.Context) error {
 		"-monitor", "none",
 		"-serial", "stdio",
 		"-drive", fmt.Sprintf("file=%s,format=raw", h.qemuImagePath),
-		"-nic", fmt.Sprintf("user,model=e1000,hostfwd=tcp::%d-:22", h.sshPort),
+		"-nic", fmt.Sprintf("user,model=e1000,hostfwd=tcp::%d-:22,hostfwd=tcp::%d-:80", h.sshPort, h.httpPort),
 	)
 
 	stdin, err := cmd.StdinPipe()
@@ -234,6 +250,9 @@ func (h *openWRTHarness) Start(ctx context.Context) error {
 	if err := h.ConsoleCommand(bootCtx, "printf '%s\n' "+shellQuote(strings.TrimSpace(string(publicKey)))+" > /etc/dropbear/authorized_keys"); err != nil {
 		return err
 	}
+	if err := h.ConsoleCommand(bootCtx, fmt.Sprintf("printf '%%s\\n%%s\\n' %s %s | passwd root", shellQuote(luciTestPassword), shellQuote(luciTestPassword))); err != nil {
+		return err
+	}
 	if err := h.ConsoleCommand(bootCtx, "/etc/init.d/dropbear restart"); err != nil {
 		return err
 	}
@@ -271,8 +290,18 @@ func (h *openWRTHarness) Start(ctx context.Context) error {
 	return nil
 }
 
+func (h *openWRTHarness) InstallLuCI(ctx context.Context) error {
+	if err := h.sshCommand(ctx, "opkg update"); err != nil {
+		return err
+	}
+	if err := h.sshCommand(ctx, "opkg install luci"); err != nil {
+		return err
+	}
+	return nil
+}
+
 func (h *openWRTHarness) InstallRouteFlux(ctx context.Context) error {
-	if err := h.sshCommand(ctx, "mkdir -p /usr/bin /etc/routeflux"); err != nil {
+	if err := h.sshCommand(ctx, "mkdir -p /usr/bin /etc/routeflux /usr/share/luci/menu.d /usr/share/rpcd/acl.d /www/luci-static/resources/routeflux /www/luci-static/resources/view/routeflux"); err != nil {
 		return err
 	}
 	if err := h.scpFile(ctx, h.routefluxBin, routefluxRemoteBinary); err != nil {
@@ -281,7 +310,48 @@ func (h *openWRTHarness) InstallRouteFlux(ctx context.Context) error {
 	if err := h.scpFile(ctx, filepath.Join(h.repoRoot, "openwrt", "root", "etc", "init.d", "routeflux"), routefluxRemoteService); err != nil {
 		return err
 	}
+	if err := h.scpFile(ctx, filepath.Join(h.repoRoot, "luci-app-routeflux", "root", "usr", "share", "luci", "menu.d", "luci-app-routeflux.json"), "/usr/share/luci/menu.d/luci-app-routeflux.json"); err != nil {
+		return err
+	}
+	if err := h.scpFile(ctx, filepath.Join(h.repoRoot, "luci-app-routeflux", "root", "usr", "share", "rpcd", "acl.d", "luci-app-routeflux.json"), "/usr/share/rpcd/acl.d/luci-app-routeflux.json"); err != nil {
+		return err
+	}
+	for _, pattern := range []struct {
+		glob      string
+		remoteDir string
+	}{
+		{
+			glob:      filepath.Join(h.repoRoot, "luci-app-routeflux", "htdocs", "luci-static", "resources", "routeflux", "*.js"),
+			remoteDir: "/www/luci-static/resources/routeflux",
+		},
+		{
+			glob:      filepath.Join(h.repoRoot, "luci-app-routeflux", "htdocs", "luci-static", "resources", "view", "routeflux", "*.js"),
+			remoteDir: "/www/luci-static/resources/view/routeflux",
+		},
+	} {
+		matches, err := filepath.Glob(pattern.glob)
+		if err != nil {
+			return fmt.Errorf("glob LuCI assets %q: %w", pattern.glob, err)
+		}
+		for _, match := range matches {
+			if err := h.scpFile(ctx, match, pattern.remoteDir+"/"+filepath.Base(match)); err != nil {
+				return err
+			}
+		}
+	}
 	if err := h.sshCommand(ctx, "chmod 0755 "+routefluxRemoteBinary+" "+routefluxRemoteService); err != nil {
+		return err
+	}
+	if err := h.sshCommand(ctx, "rm -f /tmp/luci-indexcache /tmp/luci-indexcache.* && rm -rf /tmp/luci-modulecache"); err != nil {
+		return err
+	}
+	if err := h.sshCommand(ctx, "killall rpcd || true"); err != nil {
+		return err
+	}
+	if err := h.sshCommand(ctx, "/etc/init.d/rpcd start"); err != nil {
+		return err
+	}
+	if err := h.sshCommand(ctx, "/etc/init.d/uhttpd restart"); err != nil {
 		return err
 	}
 	if err := h.sshCommand(ctx, routefluxRemoteService+" enable"); err != nil {
