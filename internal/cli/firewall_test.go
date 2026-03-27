@@ -130,7 +130,7 @@ func TestFirewallGetShowsCurrentValuesAndMeaning(t *testing.T) {
 	wants := []string{
 		"enabled=true",
 		"mode=hosts",
-		"mode-help=All TCP traffic from selected LAN clients goes through RouteFlux.",
+		"mode-help=All TCP traffic from selected LAN devices goes through RouteFlux.",
 		"hosts=192.168.1.150",
 		"block-quic=true",
 	}
@@ -159,11 +159,11 @@ func TestFirewallExplainOutputsFriendlyGuide(t *testing.T) {
 
 	output := stdout.String()
 	wants := []string{
-		"disabled: RouteFlux does not redirect traffic with nftables.",
-		"targets: only selected destination IPv4 addresses",
-		"hosts: all TCP traffic from selected LAN clients goes through RouteFlux.",
+		"disabled: Do not redirect router traffic through RouteFlux.",
+		"targets: Send traffic through RouteFlux only when the destination matches selected IPs.",
+		"hosts: Send all TCP traffic from selected LAN devices through RouteFlux.",
 		"all or *: all common private LAN ranges",
-		"routeflux firewall set hosts all",
+		"routeflux firewall set hosts 192.168.1.150",
 	}
 	for _, want := range wants {
 		if !strings.Contains(output, want) {

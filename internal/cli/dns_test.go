@@ -63,11 +63,11 @@ func TestDNSExplainCommandOutputsFriendlyGuide(t *testing.T) {
 
 	output := stdout.String()
 	wants := []string{
-		"system: RouteFlux does not touch DNS settings.",
-		"remote: Send all DNS requests to the DNS servers you choose.",
-		"split: Keep local home-network names local",
-		"doh: DNS over HTTPS.",
-		"RouteFlux default: routeflux dns set default",
+		"system: Leave DNS as it is.",
+		"remote: Send every DNS request to the DNS servers you choose.",
+		"split: Keep local names on the router",
+		"doh: encrypted DNS over HTTPS.",
+		"routeflux dns set default",
 	}
 	for _, want := range wants {
 		if !strings.Contains(output, want) {
@@ -195,9 +195,9 @@ func TestDNSGetShowsCurrentValuesAndMeaning(t *testing.T) {
 	output := stdout.String()
 	wants := []string{
 		"mode=split",
-		"mode-help=Keep local home-network names local",
+		"mode-help=Keep local home names on the router",
 		"transport=doh",
-		"transport-help=DNS over HTTPS.",
+		"transport-help=Encrypted DNS over HTTPS.",
 		"servers=dns.google, 1.1.1.1",
 		"bootstrap=9.9.9.9",
 		"direct-domains=domain:lan, full:router.lan",
