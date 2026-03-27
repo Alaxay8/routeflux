@@ -84,8 +84,11 @@ func (h *openWRTHarness) AssertLuCISubscriptionsPage(ctx context.Context, expect
 		runtime.Enable(),
 		chromedp.Navigate(h.luciURL("/cgi-bin/luci/")),
 		chromedp.WaitVisible(`#luci_username`, chromedp.ByID),
-		chromedp.SetValue(`#luci_username`, "", chromedp.ByID),
+		chromedp.WaitVisible(`#luci_password`, chromedp.ByID),
+		clearLuCILoginForm(),
+		chromedp.Click(`#luci_username`, chromedp.ByID),
 		chromedp.SendKeys(`#luci_username`, "root", chromedp.ByID),
+		chromedp.Click(`#luci_password`, chromedp.ByID),
 		chromedp.SendKeys(`#luci_password`, luciTestPassword, chromedp.ByID),
 		chromedp.Click(`button.cbi-button-positive`, chromedp.ByQuery),
 		chromedp.WaitVisible(`#modemenu`, chromedp.ByID),
@@ -111,6 +114,32 @@ func (h *openWRTHarness) AssertLuCISubscriptionsPage(ctx context.Context, expect
 	}
 
 	return nil
+}
+
+func clearLuCILoginForm() chromedp.Action {
+	return chromedp.ActionFunc(func(ctx context.Context) error {
+		var cleared bool
+		if err := chromedp.Evaluate(`(() => {
+			const username = document.getElementById('luci_username');
+			const password = document.getElementById('luci_password');
+			if (!username || !password) {
+				return false;
+			}
+			username.value = '';
+			password.value = '';
+			username.dispatchEvent(new Event('input', { bubbles: true }));
+			password.dispatchEvent(new Event('input', { bubbles: true }));
+			username.dispatchEvent(new Event('change', { bubbles: true }));
+			password.dispatchEvent(new Event('change', { bubbles: true }));
+			return true;
+		})()`, &cleared).Do(ctx); err != nil {
+			return fmt.Errorf("clear LuCI login form: %w", err)
+		}
+		if !cleared {
+			return fmt.Errorf("clear LuCI login form: login inputs not found")
+		}
+		return nil
+	})
 }
 
 func (h *openWRTHarness) luciURL(path string) string {
