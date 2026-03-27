@@ -212,6 +212,7 @@ routeflux refresh --all
 routeflux connect --subscription sub-1234567890 --node abcdef123456
 routeflux connect --auto --subscription sub-1234567890
 routeflux disconnect
+routeflux version
 routeflux status
 routeflux diagnostics
 routeflux logs

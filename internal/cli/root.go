@@ -22,9 +22,10 @@ import (
 )
 
 type rootOptions struct {
-	rootDir    string
-	jsonOutput bool
-	service    *app.Service
+	rootDir     string
+	jsonOutput  bool
+	showVersion bool
+	service     *app.Service
 }
 
 // Execute runs the RouteFlux CLI.
@@ -38,13 +39,23 @@ func newRootCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "routeflux",
 		Short: "RouteFlux manages subscription-based Xray routing on OpenWrt",
+		RunE: func(cmd *cobra.Command, args []string) error {
+			if opts.showVersion {
+				return printVersion(cmd, opts.jsonOutput)
+			}
+			return cmd.Help()
+		},
 		PersistentPreRunE: func(cmd *cobra.Command, args []string) error {
+			if opts.showVersion || cmd.Name() == "version" || cmd.Name() == "help" {
+				return nil
+			}
 			return opts.initService()
 		},
 	}
 
 	cmd.PersistentFlags().StringVar(&opts.rootDir, "root", "", "RouteFlux state directory")
 	cmd.PersistentFlags().BoolVar(&opts.jsonOutput, "json", false, "Output JSON")
+	cmd.Flags().BoolVar(&opts.showVersion, "version", false, "Print RouteFlux version")
 
 	cmd.AddCommand(
 		newAddCmd(opts),
@@ -62,6 +73,7 @@ func newRootCmd() *cobra.Command {
 		newStatusCmd(opts),
 		newSettingsCmd(opts),
 		newTUICmd(opts),
+		newVersionCmd(opts),
 	)
 
 	return cmd
