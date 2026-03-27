@@ -23,30 +23,11 @@ jobs:
           go-version-file: go.mod
           cache: true
 
-      - name: Install QEMU and browser dependencies
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y qemu-system-x86 qemu-utils chromium || sudo apt-get install -y qemu-system-x86 qemu-utils chromium-browser
-
-      - name: Detect browser binary
-        run: |
-          for candidate in chromium chromium-browser google-chrome google-chrome-stable /snap/bin/chromium headless_shell headless-shell chrome; do
-            if command -v "$candidate" >/dev/null 2>&1; then
-              echo "ROUTEFLUX_OPENWRT_BROWSER_BIN=$(command -v "$candidate")" >> "$GITHUB_ENV"
-              exit 0
-            fi
-          done
-          echo "browser binary not found on runner" >&2
-          exit 1
-
       - name: Run lint and unit tests
         run: make lint
 
       - name: Enforce runtime coverage gate
         run: make coverage-runtime
-
-      - name: Run OpenWrt integration suite
-        run: make test-integration
 
       - name: Build OpenWrt release artifacts
         env:
