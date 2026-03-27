@@ -214,27 +214,8 @@ func (h *openWRTHarness) Start(ctx context.Context) error {
 	bootCtx, cancel := context.WithTimeout(ctx, openWrtBootTimeout)
 	defer cancel()
 
-	if err := h.console.WaitForAny(bootCtx, 0, consoleLoginPrompt, consoleRootPrompt, "Please press Enter to activate this console."); err != nil {
-		return fmt.Errorf("wait for OpenWrt console activation: %w", err)
-	}
-	bootOutput := h.console.SliceFrom(0)
-	if strings.Contains(bootOutput, "Please press Enter to activate this console.") {
-		if _, err := io.WriteString(h.consoleStdin, "\n"); err != nil {
-			return fmt.Errorf("activate OpenWrt console: %w", err)
-		}
-		if err := h.console.WaitForAny(bootCtx, 0, consoleLoginPrompt, consoleRootPrompt); err != nil {
-			return fmt.Errorf("wait for OpenWrt login state: %w", err)
-		}
-	}
-
-	if !strings.Contains(h.console.SliceFrom(0), consoleRootPrompt) {
-		loginStart := h.console.Len()
-		if _, err := io.WriteString(h.consoleStdin, "root\n"); err != nil {
-			return fmt.Errorf("log into OpenWrt console: %w", err)
-		}
-		if err := h.console.WaitFor(bootCtx, loginStart, consoleRootPrompt); err != nil {
-			return fmt.Errorf("wait for OpenWrt shell prompt: %w", err)
-		}
+	if err := h.ensureConsoleRoot(bootCtx, 0); err != nil {
+		return fmt.Errorf("wait for initial OpenWrt console shell: %w", err)
 	}
 
 	if err := h.ConsoleCommand(bootCtx, "/etc/init.d/firewall stop"); err != nil {
@@ -450,6 +431,7 @@ func (h *openWRTHarness) AssertFirewallTableRemoved(ctx context.Context) error {
 }
 
 func (h *openWRTHarness) RebootAndWait(ctx context.Context) error {
+	rebootStart := h.console.Len()
 	_ = h.sshCommand(ctx, routefluxRemoteService+" start")
 	_ = h.sshCommand(ctx, "sync")
 	_ = h.sshCommand(ctx, "reboot")
@@ -468,8 +450,20 @@ func (h *openWRTHarness) RebootAndWait(ctx context.Context) error {
 
 	upCtx, cancelUp := context.WithTimeout(ctx, 5*time.Minute)
 	defer cancelUp()
-	if err := h.waitForSSH(upCtx); err != nil {
+	if err := h.ensureConsoleRoot(upCtx, rebootStart); err != nil {
+		return fmt.Errorf("wait for reboot console shell: %w", err)
+	}
+	if err := h.ConsoleCommand(upCtx, "service network restart"); err != nil {
 		return err
+	}
+	if err := h.ConsoleCommand(upCtx, "sleep 5"); err != nil {
+		return err
+	}
+	if err := h.ConsoleCommand(upCtx, "/etc/init.d/dropbear restart"); err != nil {
+		return err
+	}
+	if err := h.waitForSSH(upCtx); err != nil {
+		return fmt.Errorf("%w\nconsole tail:\n%s", err, tail(h.console.SliceFrom(rebootStart), 4000))
 	}
 	return nil
 }
@@ -523,13 +517,56 @@ func (h *openWRTHarness) ConsoleCommand(ctx context.Context, command string) err
 	return nil
 }
 
+func (h *openWRTHarness) ensureConsoleRoot(ctx context.Context, offset int) error {
+	if err := h.waitForConsolePrompt(ctx, offset); err != nil {
+		return err
+	}
+	if strings.Contains(h.console.SliceFrom(offset), consoleRootPrompt) {
+		return nil
+	}
+
+	loginStart := h.console.Len()
+	if _, err := io.WriteString(h.consoleStdin, "root\n"); err != nil {
+		return fmt.Errorf("log into OpenWrt console: %w", err)
+	}
+	if err := h.console.WaitFor(ctx, loginStart, consoleRootPrompt); err != nil {
+		return fmt.Errorf("wait for OpenWrt shell prompt: %w", err)
+	}
+	return nil
+}
+
+func (h *openWRTHarness) waitForConsolePrompt(ctx context.Context, offset int) error {
+	if err := h.console.WaitForAny(ctx, offset, consoleLoginPrompt, consoleRootPrompt, "Please press Enter to activate this console."); err != nil {
+		return fmt.Errorf("wait for OpenWrt console prompt: %w", err)
+	}
+
+	if !strings.Contains(h.console.SliceFrom(offset), "Please press Enter to activate this console.") {
+		return nil
+	}
+
+	activateStart := h.console.Len()
+	if _, err := io.WriteString(h.consoleStdin, "\n"); err != nil {
+		return fmt.Errorf("activate OpenWrt console: %w", err)
+	}
+	if err := h.console.WaitForAny(ctx, activateStart, consoleLoginPrompt, consoleRootPrompt); err != nil {
+		return fmt.Errorf("wait for OpenWrt login state: %w", err)
+	}
+	return nil
+}
+
 func (h *openWRTHarness) waitForSSH(ctx context.Context) error {
+	var lastErr error
 	for {
 		if ctx.Err() != nil {
+			if lastErr != nil {
+				return fmt.Errorf("wait for ssh: %w; last error: %v", ctx.Err(), lastErr)
+			}
 			return fmt.Errorf("wait for ssh: %w", ctx.Err())
 		}
 		if err := h.sshCommand(ctx, "true"); err == nil {
 			return nil
+		} else {
+			lastErr = err
 		}
 		time.Sleep(2 * time.Second)
 	}
