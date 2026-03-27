@@ -1,6 +1,52 @@
 #!/bin/sh
 set -eu
 
+normalize_tenths() {
+	value="$1"
+	case "$value" in
+		*.*)
+			int_part="${value%%.*}"
+			frac_part="${value#*.}"
+			;;
+		*)
+			int_part="$value"
+			frac_part="0"
+			;;
+	esac
+
+	if [ -z "$int_part" ]; then
+		int_part="0"
+	fi
+
+	frac_part="$(printf '%s' "$frac_part" | cut -c1)"
+	if [ -z "$frac_part" ]; then
+		frac_part="0"
+	fi
+
+	printf '%s\n' "$((int_part * 10 + frac_part))"
+}
+
+format_tenths() {
+	value="$1"
+	case "$value" in
+		*.*)
+			int_part="${value%%.*}"
+			frac_part="${value#*.}"
+			;;
+		*)
+			int_part="$value"
+			frac_part="0"
+			;;
+	esac
+
+	frac_part="$(printf '%s' "$frac_part" | cut -c1)"
+	if [ -z "$frac_part" ]; then
+		frac_part="0"
+	fi
+
+	printf '%s.%s\n' "$int_part" "$frac_part"
+}
+
 check_package() {
 	pkg="$1"
 	threshold="$2"
@@ -22,12 +68,15 @@ check_package() {
 		exit 1
 	fi
 
-	awk -v pkg="$pkg" -v got="$coverage" -v want="$threshold" 'BEGIN {
-		if ((got + 0) < (want + 0)) {
-			printf("coverage gate failed for %s: got %.1f%%, need %.1f%%\n", pkg, got, want) > "/dev/stderr"
-			exit 1
-		}
-	}'
+	got_tenths="$(normalize_tenths "$coverage")"
+	want_tenths="$(normalize_tenths "$threshold")"
+	if [ "$got_tenths" -lt "$want_tenths" ]; then
+		printf 'coverage gate failed for %s: got %s%%, need %s%%\n' \
+			"$pkg" \
+			"$(format_tenths "$coverage")" \
+			"$(format_tenths "$threshold")" >&2
+		exit 1
+	fi
 }
 
 check_package ./internal/backend/xray 50

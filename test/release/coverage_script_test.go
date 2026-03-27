@@ -88,6 +88,37 @@ esac
 	}
 }
 
+func TestCoverageScriptAcceptsWholeNumberCoverage(t *testing.T) {
+	t.Parallel()
+
+	binDir := t.TempDir()
+	writeExecutable(t, filepath.Join(binDir, "go"), `#!/bin/sh
+set -eu
+[ "${1:-}" = "test" ] || exit 1
+pkg="${3:-}"
+case "$pkg" in
+	./internal/backend/xray)
+		printf 'ok  	example/internal/backend/xray	coverage: 50%% of statements\n'
+		;;
+	./internal/probe)
+		printf 'ok  	example/internal/probe	coverage: 60%% of statements\n'
+		;;
+	./internal/app)
+		printf 'ok  	example/internal/app	coverage: 65%% of statements\n'
+		;;
+	*)
+		printf 'unexpected package %s\n' "$pkg" >&2
+		exit 1
+		;;
+esac
+`)
+
+	stdout, stderr, err := runCoverageScript(t, binDir)
+	if err != nil {
+		t.Fatalf("expected coverage script to accept whole-number coverage\nstdout:\n%s\nstderr:\n%s", stdout, stderr)
+	}
+}
+
 func runCoverageScript(t *testing.T, binDir string) (string, string, error) {
 	t.Helper()
 
