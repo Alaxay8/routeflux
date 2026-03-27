@@ -159,25 +159,31 @@ func newDNSExplainCmd(opts *rootOptions) *cobra.Command {
 		RunE: func(cmd *cobra.Command, args []string) error {
 			return printOutput(cmd, false, nil, strings.TrimSpace(`
 DNS modes:
-- system: RouteFlux does not touch DNS settings. Use your router's normal DNS.
-- remote: Send all DNS requests to the DNS servers you choose.
-- split: Keep local home-network names local, but send the rest to the DNS servers you choose.
-- disabled: Do not write a RouteFlux DNS block into the Xray config.
+- system: Leave DNS as it is. Your router keeps using its usual DNS.
+  Example: you only want proxy routing and your router DNS already works fine.
+  Command: routeflux dns set mode system
+- remote: Send every DNS request to the DNS servers you choose.
+  Example: use Cloudflare or Google DNS for everything.
+  Command: routeflux dns set mode remote
+- split: Keep local names on the router, but send internet domains to the DNS servers you choose.
+  Example: router.lan stays local, google.com goes to Cloudflare.
+  Command: routeflux dns set default
+- disabled: Do not write RouteFlux DNS settings into the Xray config.
+  Example: advanced setup where DNS is managed somewhere else.
+  Command: routeflux dns set mode disabled
 
 DNS transports:
-- plain: regular DNS, not encrypted.
-- doh: DNS over HTTPS. This is the working encrypted DNS option right now.
+- plain: normal DNS, no encryption.
+- doh: encrypted DNS over HTTPS.
 
 Other options:
 - servers: the main DNS servers RouteFlux should use.
 - bootstrap: helper DNS servers used when your main DNS server is written as a hostname, such as dns.google.
-- direct-domains: local domains that should stay on local DNS in split mode.
+- direct-domains: names that should stay on local DNS in split mode.
 
-Good starting profiles:
-- RouteFlux default: routeflux dns set default
-- Safe default: mode=system
-- Encrypted DNS for everything: mode=remote + transport=doh
-- Home network + encrypted public DNS: mode=split + transport=doh + direct-domains=domain:lan,full:router.lan
+Easiest starting point:
+- routeflux dns set default
+  Good for most users: local names stay local, public DNS is encrypted.
 `))
 		},
 	}
@@ -224,13 +230,13 @@ func renderDNSSettingsText(dns domain.DNSSettings) string {
 func dnsModeHelp(mode domain.DNSMode) string {
 	switch mode {
 	case domain.DNSModeSystem:
-		return "Use your router's normal DNS. RouteFlux does not change it."
+		return "Leave DNS as it is. The router keeps using its usual DNS."
 	case domain.DNSModeRemote:
-		return "Send all DNS requests to the DNS servers you selected."
+		return "Send every DNS request to the DNS servers you chose."
 	case domain.DNSModeSplit:
-		return "Keep local home-network names local, but send the rest to your selected DNS."
+		return "Keep local home names on the router, send the rest to your chosen DNS."
 	case domain.DNSModeDisabled:
-		return "Do not write a DNS block into the Xray config."
+		return "Do not write DNS settings into the Xray config."
 	default:
 		return "DNS mode is not set."
 	}
@@ -239,9 +245,9 @@ func dnsModeHelp(mode domain.DNSMode) string {
 func dnsTransportHelp(transport domain.DNSTransport) string {
 	switch transport {
 	case domain.DNSTransportPlain:
-		return "Regular DNS, not encrypted."
+		return "Normal DNS, no encryption."
 	case domain.DNSTransportDoH:
-		return "DNS over HTTPS. This is the working encrypted DNS option right now."
+		return "Encrypted DNS over HTTPS."
 	case domain.DNSTransportDoT:
 		return "Legacy transport value. The current backend does not apply it."
 	default:

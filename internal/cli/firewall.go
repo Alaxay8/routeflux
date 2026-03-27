@@ -74,24 +74,25 @@ func newFirewallExplainCmd(opts *rootOptions) *cobra.Command {
 		RunE: func(cmd *cobra.Command, args []string) error {
 			return printOutput(cmd, false, nil, strings.TrimSpace(`
 Firewall modes:
-- disabled: RouteFlux does not redirect traffic with nftables.
-- targets: only selected destination IPv4 addresses, CIDRs, or ranges go through RouteFlux.
-- hosts: all TCP traffic from selected LAN clients goes through RouteFlux.
+- disabled: Do not redirect router traffic through RouteFlux.
+  Example: the proxy is installed, but no device or destination is forced through it.
+  Command: routeflux firewall disable
+- targets: Send traffic through RouteFlux only when the destination matches selected IPs.
+  Example: only traffic to 1.1.1.1 or 8.8.8.8/32 goes through RouteFlux.
+  Command: routeflux firewall set targets 1.1.1.1 8.8.8.8/32
+- hosts: Send all TCP traffic from selected LAN devices through RouteFlux.
+  Example: route one TV, phone, or laptop through the proxy.
+  Command: routeflux firewall set hosts 192.168.1.150
 
 Hosts selectors:
-- single IPv4: 192.168.1.150
-- IPv4 CIDR pool: 192.168.1.0/24
-- IPv4 range: 192.168.1.150-192.168.1.159
+- one device: 192.168.1.150
+- subnet: 192.168.1.0/24
+- range: 192.168.1.150-192.168.1.159
 - all or *: all common private LAN ranges
 
 Other options:
-- port: transparent redirect port used by nftables
-- block-quic: drop UDP/443 for host mode so apps do not bypass TCP routing through QUIC
-
-Good starting profiles:
-- One device through RouteFlux: routeflux firewall set hosts 192.168.1.150
-- Whole LAN through RouteFlux: routeflux firewall set hosts all
-- Only selected destinations through RouteFlux: routeflux firewall set targets 1.1.1.1 8.8.8.8/32
+- port: port used for transparent redirect
+- block-quic: block UDP/443 in host mode so apps do not bypass TCP routing through QUIC
 `))
 		},
 	}
@@ -304,12 +305,12 @@ func firewallMode(settings domain.FirewallSettings) string {
 func firewallModeHelp(settings domain.FirewallSettings) string {
 	switch firewallMode(settings) {
 	case "disabled":
-		return "RouteFlux is not redirecting traffic with nftables."
+		return "No traffic is being redirected through RouteFlux."
 	case "targets":
-		return "Only selected destination IPv4 addresses or ranges go through RouteFlux."
+		return "Only traffic to selected destination IPs goes through RouteFlux."
 	case "hosts":
-		return "All TCP traffic from selected LAN clients goes through RouteFlux."
+		return "All TCP traffic from selected LAN devices goes through RouteFlux."
 	default:
-		return "Both destination targets and source hosts are set."
+		return "Both destination targets and source hosts are active."
 	}
 }
