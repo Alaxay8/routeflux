@@ -27,6 +27,8 @@ import (
 	"github.com/Alaxay8/routeflux/internal/speedtest"
 )
 
+const inspectSpeedTimeout = 75 * time.Second
+
 // Store defines the persisted state contract required by the service layer.
 type Store interface {
 	LoadSubscriptions() ([]domain.Subscription, error)
@@ -398,6 +400,9 @@ func (s *Service) InspectSpeed(ctx context.Context, subscriptionID, nodeID strin
 	if s.speedTester == nil {
 		return speedtest.Result{}, fmt.Errorf("speed tester is not configured")
 	}
+
+	ctx, cancel := context.WithTimeout(ctx, inspectSpeedTimeout)
+	defer cancel()
 
 	settings, err := s.store.LoadSettings()
 	if err != nil {

@@ -239,6 +239,63 @@ func TestInspectSpeedUsesIsolatedConfigAndDoesNotMutateRuntime(t *testing.T) {
 	if strings.Contains(string(tester.request.Config), "transparent-in") {
 		t.Fatalf("expected isolated config without transparent inbound, got %s", tester.request.Config)
 	}
+	if tester.ctx == nil {
+		t.Fatal("expected speed tester context to be captured")
+	}
+	deadline, ok := tester.ctx.Deadline()
+	if !ok {
+		t.Fatal("expected inspect speed timeout deadline")
+	}
+	remaining := time.Until(deadline)
+	if remaining <= 0 || remaining > inspectSpeedTimeout {
+		t.Fatalf("expected timeout within %s, got %s", inspectSpeedTimeout, remaining)
+	}
+}
+
+func TestInspectSpeedProvidesEnoughTimeForRouterRun(t *testing.T) {
+	t.Parallel()
+
+	store := &memoryStore{
+		subs: []domain.Subscription{
+			{
+				ID:            "sub-1",
+				DisplayName:   "Demo VPN",
+				LastUpdatedAt: time.Now().UTC(),
+				Nodes: []domain.Node{
+					{
+						ID:             "node-1",
+						SubscriptionID: "sub-1",
+						Name:           "Netherlands",
+						Protocol:       domain.ProtocolVLESS,
+						Address:        "edge.example.com",
+						Port:           443,
+						UUID:           "11111111-1111-1111-1111-111111111111",
+					},
+				},
+			},
+		},
+		settings: domain.DefaultSettings(),
+		state:    domain.DefaultRuntimeState(),
+	}
+
+	tester := &fakeSpeedTester{
+		minRemaining: 50 * time.Second,
+		result: speedtest.Result{
+			SubscriptionID: "sub-1",
+			NodeID:         "node-1",
+			NodeName:       "Netherlands",
+		},
+	}
+
+	service := NewService(Dependencies{
+		Store:       store,
+		Backend:     &inspectBackend{generatedConfig: []byte(`{"ok":true}`)},
+		SpeedTester: tester,
+	})
+
+	if _, err := service.InspectSpeed(context.Background(), "sub-1", "node-1"); err != nil {
+		t.Fatalf("inspect speed: %v", err)
+	}
 }
 
 type inspectBackend struct {
@@ -272,10 +329,23 @@ type fakeSpeedTester struct {
 	request speedtest.Request
 	result  speedtest.Result
 	err     error
+	ctx     context.Context
+
+	minRemaining time.Duration
 }
 
-func (f *fakeSpeedTester) Test(_ context.Context, req speedtest.Request) (speedtest.Result, error) {
+func (f *fakeSpeedTester) Test(ctx context.Context, req speedtest.Request) (speedtest.Result, error) {
+	f.ctx = ctx
 	f.request = req
+	if f.minRemaining > 0 {
+		deadline, ok := ctx.Deadline()
+		if !ok {
+			return speedtest.Result{}, fmt.Errorf("missing speed test deadline")
+		}
+		if remaining := time.Until(deadline); remaining < f.minRemaining {
+			return speedtest.Result{}, fmt.Errorf("speed test deadline too short: %s", remaining)
+		}
+	}
 	if f.err != nil {
 		return speedtest.Result{}, f.err
 	}

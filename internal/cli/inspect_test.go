@@ -107,6 +107,55 @@ func TestInspectSpeedJSONOutputsMetrics(t *testing.T) {
 	}
 }
 
+func TestInspectSpeedDoesNotPrintUsageOnError(t *testing.T) {
+	t.Parallel()
+
+	store := &cliMemoryStore{
+		subs: []domain.Subscription{
+			{
+				ID:          "sub-1",
+				DisplayName: "Demo VPN",
+				Nodes: []domain.Node{
+					{
+						ID:             "node-1",
+						SubscriptionID: "sub-1",
+						Name:           "Node 1",
+						Protocol:       domain.ProtocolVLESS,
+						Address:        "edge.example.com",
+						Port:           443,
+						UUID:           "11111111-1111-1111-1111-111111111111",
+					},
+				},
+			},
+		},
+		settings: domain.DefaultSettings(),
+		state:    domain.DefaultRuntimeState(),
+	}
+	service := app.NewService(app.Dependencies{
+		Store:       store,
+		Backend:     &cliInspectBackend{config: []byte(`{"ok":true}`)},
+		SpeedTester: cliSpeedTester{err: speedtest.ErrBusy},
+	})
+
+	cmd := newInspectCmd(&rootOptions{service: service, jsonOutput: true})
+	stdout := new(bytes.Buffer)
+	stderr := new(bytes.Buffer)
+	cmd.SetOut(stdout)
+	cmd.SetErr(stderr)
+	cmd.SetArgs([]string{"speed", "--subscription", "sub-1", "--node", "node-1"})
+
+	err := cmd.Execute()
+	if err == nil {
+		t.Fatal("expected inspect speed error")
+	}
+	if !strings.Contains(err.Error(), speedtest.ErrBusy.Error()) {
+		t.Fatalf("expected busy error, got %v", err)
+	}
+	if strings.Contains(stderr.String(), "Usage:") {
+		t.Fatalf("expected no cobra usage output, got %s", stderr.String())
+	}
+}
+
 type cliInspectBackend struct {
 	config []byte
 }
@@ -123,9 +172,18 @@ func (b *cliInspectBackend) Status(context.Context) (backend.RuntimeStatus, erro
 	return backend.RuntimeStatus{}, nil
 }
 
-type cliSpeedTester struct{}
+type cliSpeedTester struct {
+	err error
+}
 
-func (cliSpeedTester) Test(context.Context, speedtest.Request) (speedtest.Result, error) {
+func (t cliSpeedTester) Test(context.Context, speedtest.Request) (speedtest.Result, error) {
+	return t.result()
+}
+
+func (t cliSpeedTester) result() (speedtest.Result, error) {
+	if t.err != nil {
+		return speedtest.Result{}, t.err
+	}
 	return speedtest.Result{
 		SubscriptionID: "sub-1",
 		NodeID:         "node-1",

@@ -10,9 +10,10 @@ import (
 
 func newInspectCmd(opts *rootOptions) *cobra.Command {
 	cmd := &cobra.Command{
-		Use:    "inspect",
-		Short:  "Internal inspection helpers for LuCI",
-		Hidden: true,
+		Use:          "inspect",
+		Short:        "Internal inspection helpers for LuCI",
+		Hidden:       true,
+		SilenceUsage: true,
 	}
 
 	cmd.AddCommand(
@@ -28,9 +29,10 @@ func newInspectXrayCmd(opts *rootOptions) *cobra.Command {
 	var nodeID string
 
 	cmd := &cobra.Command{
-		Use:    "xray",
-		Short:  "Render generated Xray JSON for a node",
-		Hidden: true,
+		Use:          "xray",
+		Short:        "Render generated Xray JSON for a node",
+		Hidden:       true,
+		SilenceUsage: true,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			rendered, err := opts.service.InspectXrayConfig(subscriptionID, nodeID)
 			if err != nil {
@@ -58,9 +60,10 @@ func newInspectSpeedCmd(opts *rootOptions) *cobra.Command {
 	var nodeID string
 
 	cmd := &cobra.Command{
-		Use:    "speed",
-		Short:  "Run isolated speed test for a node",
-		Hidden: true,
+		Use:          "speed",
+		Short:        "Run isolated speed test for a node",
+		Hidden:       true,
+		SilenceUsage: true,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			result, err := opts.service.InspectSpeed(context.Background(), subscriptionID, nodeID)
 			if err != nil {

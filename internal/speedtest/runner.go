@@ -14,14 +14,22 @@ import (
 	"path/filepath"
 	"sort"
 	"strings"
+	"sync"
+	"sync/atomic"
 	"syscall"
 	"time"
 )
 
 const (
-	defaultBinaryPath    = "/usr/bin/xray"
-	defaultDownloadBytes = 8 << 20
-	defaultUploadBytes   = 2 << 20
+	defaultBinaryPath       = "/usr/bin/xray"
+	defaultWarmupDuration   = 750 * time.Millisecond
+	defaultDownloadDuration = 4 * time.Second
+	defaultUploadDuration   = 3 * time.Second
+	defaultWarmupStreams    = 2
+	defaultMeasureStreams   = 4
+	downloadChunkBytes      = 1 << 20
+	uploadChunkBytes        = 512 << 10
+	proxyReadyTimeout       = 20 * time.Second
 )
 
 var ErrBusy = errors.New("speed test already running")
@@ -104,6 +112,10 @@ func (r Runner) Test(ctx context.Context, req Request) (Result, error) {
 	}
 	defer lock.Release()
 
+	if err := cleanupStaleTempDirs(r.tempRoot()); err != nil {
+		return Result{}, err
+	}
+
 	tempDir, err := os.MkdirTemp(r.tempRoot(), "routeflux-speedtest-")
 	if err != nil {
 		return Result{}, fmt.Errorf("create speed test temp dir: %w", err)
@@ -126,9 +138,12 @@ func (r Runner) Test(ctx context.Context, req Request) (Result, error) {
 	startedAt := now()
 	metrics, err := r.measureFunc()(ctx, fmt.Sprintf("http://127.0.0.1:%d", req.HTTPProxyPort), r.provider())
 	if err != nil {
+		if errors.Is(err, context.DeadlineExceeded) {
+			err = fmt.Errorf("speed test timed out")
+		}
 		output := strings.TrimSpace(process.Output())
 		if output != "" {
-			return Result{}, fmt.Errorf("measure speed test: %w: %s", err, output)
+			return Result{}, fmt.Errorf("measure speed test: %w\n%s", err, output)
 		}
 		return Result{}, fmt.Errorf("measure speed test: %w", err)
 	}
@@ -212,6 +227,7 @@ func measureViaHTTPProxy(ctx context.Context, proxyURL string, provider Provider
 		DisableCompression: true,
 	}
 	client := &http.Client{Transport: transport}
+	defer transport.CloseIdleConnections()
 
 	if err := waitForProxy(ctx, client, provider.ProbeURL); err != nil {
 		return Metrics{}, err
@@ -222,13 +238,48 @@ func measureViaHTTPProxy(ctx context.Context, proxyURL string, provider Provider
 		return Metrics{}, err
 	}
 
-	downloadURL := fmt.Sprintf(provider.DownloadURLFormat, defaultDownloadBytes)
-	downloadBytes, downloadDuration, err := transferDownload(ctx, client, downloadURL)
+	if _, _, err := transferDownloadWindow(
+		ctx,
+		client,
+		provider.DownloadURLFormat,
+		defaultWarmupDuration,
+		downloadChunkBytes,
+		defaultWarmupStreams,
+	); err != nil {
+		return Metrics{}, err
+	}
+
+	downloadBytes, downloadDuration, err := transferDownloadWindow(
+		ctx,
+		client,
+		provider.DownloadURLFormat,
+		defaultDownloadDuration,
+		downloadChunkBytes,
+		defaultMeasureStreams,
+	)
 	if err != nil {
 		return Metrics{}, err
 	}
 
-	uploadBytes, uploadDuration, err := transferUpload(ctx, client, provider.UploadURL, defaultUploadBytes)
+	if _, _, err := transferUploadWindow(
+		ctx,
+		client,
+		provider.UploadURL,
+		defaultWarmupDuration,
+		uploadChunkBytes,
+		defaultWarmupStreams,
+	); err != nil {
+		return Metrics{}, err
+	}
+
+	uploadBytes, uploadDuration, err := transferUploadWindow(
+		ctx,
+		client,
+		provider.UploadURL,
+		defaultUploadDuration,
+		uploadChunkBytes,
+		defaultMeasureStreams,
+	)
 	if err != nil {
 		return Metrics{}, err
 	}
@@ -243,7 +294,7 @@ func measureViaHTTPProxy(ctx context.Context, proxyURL string, provider Provider
 }
 
 func waitForProxy(ctx context.Context, client *http.Client, probeURL string) error {
-	deadlineCtx, cancel := context.WithTimeout(ctx, 10*time.Second)
+	deadlineCtx, cancel := context.WithTimeout(ctx, proxyReadyTimeout)
 	defer cancel()
 
 	var lastErr error
@@ -301,50 +352,176 @@ func measureLatency(ctx context.Context, client *http.Client, probeURL string) (
 	return samples[len(samples)/2], nil
 }
 
-func transferDownload(ctx context.Context, client *http.Client, rawURL string) (int64, time.Duration, error) {
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, rawURL, nil)
-	if err != nil {
-		return 0, 0, fmt.Errorf("build download request: %w", err)
+func transferDownloadWindow(ctx context.Context, client *http.Client, rawURLFormat string, duration time.Duration, chunkBytes int64, streams int) (int64, time.Duration, error) {
+	if duration <= 0 {
+		return 0, 0, nil
+	}
+	if chunkBytes <= 0 {
+		chunkBytes = downloadChunkBytes
+	}
+	if streams <= 0 {
+		streams = 1
 	}
 
-	start := time.Now()
+	return runParallelTransferWindow(ctx, duration, streams, func(phaseCtx context.Context) (int64, error) {
+		return transferDownloadChunk(phaseCtx, client, fmt.Sprintf(rawURLFormat, chunkBytes))
+	})
+}
+
+func transferDownloadChunk(ctx context.Context, client *http.Client, rawURL string) (int64, error) {
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, rawURL, nil)
+	if err != nil {
+		return 0, fmt.Errorf("build download request: %w", err)
+	}
+
 	resp, err := client.Do(req)
 	if err != nil {
-		return 0, 0, fmt.Errorf("download speed test: %w", err)
+		return 0, fmt.Errorf("download speed test: %w", err)
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		return 0, 0, fmt.Errorf("download speed test: unexpected status %s", resp.Status)
+		return 0, fmt.Errorf("download speed test: unexpected status %s", resp.Status)
 	}
 
 	n, err := io.Copy(io.Discard, resp.Body)
 	if err != nil {
-		return 0, 0, fmt.Errorf("download speed test body: %w", err)
+		return n, fmt.Errorf("download speed test body: %w", err)
 	}
 
-	return n, time.Since(start), nil
+	return n, nil
 }
 
-func transferUpload(ctx context.Context, client *http.Client, rawURL string, size int64) (int64, time.Duration, error) {
-	payload := bytes.NewReader(make([]byte, size))
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, rawURL, payload)
-	if err != nil {
-		return 0, 0, fmt.Errorf("build upload request: %w", err)
+func transferUploadWindow(ctx context.Context, client *http.Client, rawURL string, duration time.Duration, chunkBytes int64, streams int) (int64, time.Duration, error) {
+	if duration <= 0 {
+		return 0, 0, nil
 	}
-	req.Header.Set("Content-Type", "application/octet-stream")
+	if chunkBytes <= 0 {
+		chunkBytes = uploadChunkBytes
+	}
+	if streams <= 0 {
+		streams = 1
+	}
+
+	return runParallelTransferWindow(ctx, duration, streams, func(phaseCtx context.Context) (int64, error) {
+		return transferUploadChunk(phaseCtx, client, rawURL, chunkBytes)
+	})
+}
+
+func runParallelTransferWindow(
+	ctx context.Context,
+	duration time.Duration,
+	streams int,
+	transferChunk func(context.Context) (int64, error),
+) (int64, time.Duration, error) {
+	if duration <= 0 {
+		return 0, 0, nil
+	}
+	if streams <= 0 {
+		streams = 1
+	}
+
+	phaseCtx, cancel := context.WithTimeout(ctx, duration)
+	defer cancel()
 
 	start := time.Now()
+	var transferred atomic.Int64
+	errCh := make(chan error, 1)
+	reportErr := func(err error) {
+		select {
+		case errCh <- err:
+		default:
+		}
+		cancel()
+	}
+
+	var wg sync.WaitGroup
+	for range streams {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+
+			for {
+				if phaseCtx.Err() != nil {
+					return
+				}
+
+				n, err := transferChunk(phaseCtx)
+				if n > 0 {
+					transferred.Add(n)
+				}
+				if err != nil {
+					if phaseCtx.Err() != nil {
+						return
+					}
+					reportErr(err)
+					return
+				}
+			}
+		}()
+	}
+
+	wg.Wait()
+	elapsed := time.Since(start)
+
+	select {
+	case err := <-errCh:
+		return 0, 0, err
+	default:
+	}
+
+	if err := ctx.Err(); err != nil {
+		return 0, 0, err
+	}
+
+	return transferred.Load(), elapsed, nil
+}
+
+func transferUploadChunk(ctx context.Context, client *http.Client, rawURL string, size int64) (int64, error) {
+	body := &countingReader{reader: io.LimitReader(zeroReader{}, size)}
+
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, rawURL, body)
+	if err != nil {
+		return 0, fmt.Errorf("build upload request: %w", err)
+	}
+	req.ContentLength = size
+	req.Header.Set("Content-Type", "application/octet-stream")
+
 	resp, err := client.Do(req)
 	if err != nil {
-		return 0, 0, fmt.Errorf("upload speed test: %w", err)
+		return body.Count(), fmt.Errorf("upload speed test: %w", err)
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		return 0, 0, fmt.Errorf("upload speed test: unexpected status %s", resp.Status)
+		return body.Count(), fmt.Errorf("upload speed test: unexpected status %s", resp.Status)
 	}
 	_, _ = io.Copy(io.Discard, resp.Body)
 
-	return size, time.Since(start), nil
+	return body.Count(), nil
+}
+
+type zeroReader struct{}
+
+func (zeroReader) Read(p []byte) (int, error) {
+	clear(p)
+	return len(p), nil
+}
+
+type countingReader struct {
+	reader io.Reader
+	count  int64
+}
+
+func (r *countingReader) Read(p []byte) (int, error) {
+	n, err := r.reader.Read(p)
+	r.count += int64(n)
+	return n, err
+}
+
+func (r *countingReader) Count() int64 {
+	if r == nil {
+		return 0
+	}
+	return r.count
 }
 
 type execProcess struct {
@@ -355,6 +532,7 @@ type execProcess struct {
 
 func startProcess(ctx context.Context, binaryPath, configPath string) (Process, error) {
 	cmd := exec.CommandContext(ctx, binaryPath, "run", "-config", configPath)
+	configureProcess(cmd)
 	process := &execProcess{
 		cmd:  cmd,
 		done: make(chan struct{}),
@@ -380,7 +558,7 @@ func (p *execProcess) Stop() error {
 	}
 
 	if p.cmd.Process != nil && (p.cmd.ProcessState == nil || !p.cmd.ProcessState.Exited()) {
-		_ = p.cmd.Process.Kill()
+		_ = terminateProcess(p.cmd)
 	}
 
 	if p.done != nil {
@@ -441,6 +619,34 @@ func bitsPerSecond(bytes int64, duration time.Duration) float64 {
 		return 0
 	}
 	return float64(bytes*8) / duration.Seconds()
+}
+
+func cleanupStaleTempDirs(root string) error {
+	entries, err := os.ReadDir(root)
+	if err != nil {
+		if errors.Is(err, os.ErrNotExist) {
+			return nil
+		}
+		return fmt.Errorf("read speed test temp root: %w", err)
+	}
+
+	for _, entry := range entries {
+		if !entry.IsDir() || !strings.HasPrefix(entry.Name(), "routeflux-speedtest-") {
+			continue
+		}
+		if err := os.RemoveAll(filepath.Join(root, entry.Name())); err != nil {
+			return fmt.Errorf("remove stale speed test temp dir %q: %w", entry.Name(), err)
+		}
+	}
+
+	return nil
+}
+
+func minInt64(a, b int64) int64 {
+	if a < b {
+		return a
+	}
+	return b
 }
 
 func roundFloat(value float64, scale int) float64 {
