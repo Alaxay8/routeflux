@@ -6,6 +6,7 @@
 'require routeflux.ui as routefluxUI';
 
 var routefluxBinary = '/usr/bin/routeflux';
+var speedTestRPCTimeoutSeconds = 90;
 
 function trim(value) {
 	if (value == null)
@@ -282,6 +283,27 @@ function notificationParagraph(message) {
 	return E('p', {}, [ message ]);
 }
 
+function normalizeCommandError(value, fallback) {
+	var text = trim(value || '');
+	var lines;
+	var i;
+
+	if (text === '')
+		return fallback || _('RouteFlux command failed.');
+
+	lines = text.split(/\r?\n/);
+	for (i = 0; i < lines.length; i++) {
+		lines[i] = trim(lines[i]);
+		if (lines[i] === '' || lines[i].indexOf('Usage:') === 0 || lines[i].indexOf('Flags:') === 0 || lines[i].indexOf('Global Flags:') === 0)
+			continue;
+		if (lines[i].indexOf('-h, --help') >= 0)
+			continue;
+		return lines[i];
+	}
+
+	return fallback || _('RouteFlux command failed.');
+}
+
 function stringifyJSON(value) {
 	try {
 		return JSON.stringify(value, null, 2);
@@ -334,9 +356,124 @@ function badge(text, extraClass) {
 	return E('span', { 'class': className }, [ text ]);
 }
 
+function responsiveTableCell(label, content, extraClass) {
+	var className = trim(extraClass);
+
+	if (className !== '')
+		className = 'td ' + className;
+	else
+		className = 'td';
+
+	return E('td', {
+		'class': className,
+		'data-title': trim(label)
+	}, Array.isArray(content) ? content : [ content ]);
+}
+
+function emptyAddDraft() {
+	return {
+		'name': '',
+		'source': ''
+	};
+}
+
 return view.extend({
 	load: function() {
-		return this.requestPageData();
+		this.ensureState();
+		return this.requestPageData().then(L.bind(function(data) {
+			return this.applyRequestedPageData(data);
+		}, this));
+	},
+
+	ensureState: function() {
+		if (this.__routefluxStateInitialized === true)
+			return;
+
+		this.__routefluxStateInitialized = true;
+		this.pendingActions = {};
+		this.pageData = [ {}, [] ];
+		this.lastGoodPageData = null;
+		this.pageError = '';
+		this.pageInfo = '';
+		this.pageLoading = false;
+		this.addDraft = emptyAddDraft();
+		this.subscriptionOpen = {};
+		this.speedTestBusy = false;
+	},
+
+	setPageInfo: function(message) {
+		this.pageInfo = trim(message);
+	},
+
+	setPageError: function(message) {
+		this.pageError = trim(message);
+	},
+
+	clearPageMessages: function() {
+		this.pageInfo = '';
+		this.pageError = '';
+	},
+
+	renderIntoRoot: function() {
+		var root;
+
+		this.ensureState();
+		root = document.querySelector('#routeflux-subscriptions-root');
+		if (root)
+			dom.content(root, this.renderPageContent(this.pageData));
+	},
+
+	normalizeRequestedPageData: function(data) {
+		var statusPayload = data && data[0];
+		var subscriptionsPayload = data && data[1];
+
+		return {
+			'status': statusPayload && !statusPayload.__error__ ? statusPayload : {},
+			'subscriptions': Array.isArray(subscriptionsPayload) ? subscriptionsPayload : [],
+			'status_error': trim(statusPayload && statusPayload.__error__),
+			'subscriptions_error': trim(subscriptionsPayload && subscriptionsPayload.__error__)
+		};
+	},
+
+	applyRequestedPageData: function(data) {
+		var parsed;
+		var fallback = { 'status': {}, 'subscriptions': [] };
+		var next;
+		var messages = [];
+
+		this.ensureState();
+		parsed = this.normalizeRequestedPageData(data);
+
+		if (this.lastGoodPageData)
+			fallback = this.normalizeRequestedPageData(this.lastGoodPageData);
+
+		next = [
+			parsed.status_error === '' ? parsed.status : fallback.status,
+			parsed.subscriptions_error === '' ? parsed.subscriptions : fallback.subscriptions
+		];
+
+		if (!this.lastGoodPageData) {
+			if (parsed.status_error !== '')
+				next[0] = {};
+			if (parsed.subscriptions_error !== '')
+				next[1] = [];
+		}
+
+		this.pageData = next;
+
+		if (parsed.status_error === '' && parsed.subscriptions_error === '') {
+			this.lastGoodPageData = next;
+			this.pageError = '';
+			return this.pageData;
+		}
+
+		if (parsed.status_error !== '')
+			messages.push(_('Status error: %s').format(parsed.status_error));
+		if (parsed.subscriptions_error !== '')
+			messages.push(_('Subscriptions error: %s').format(parsed.subscriptions_error));
+		this.pageError = messages.join(' ');
+
+		return this.pageData;
 	},
 
 	requestPageData: function() {
@@ -354,9 +491,10 @@ return view.extend({
 		return fs.exec(routefluxBinary, argv).then(function(res) {
 			var stderr = trim(res.stderr);
 			var stdout = trim(res.stdout);
+			var message = normalizeCommandError(stderr || stdout, _('RouteFlux command failed.'));
 
 			if (res.code !== 0)
-				throw new Error(stderr || stdout || _('RouteFlux command failed.'));
+				throw new Error(message);
 
 			if (stdout === '')
 				throw new Error(_('RouteFlux returned empty JSON output.'));
@@ -367,6 +505,42 @@ return view.extend({
 			catch (err) {
 				throw new Error(_('RouteFlux returned invalid JSON output.'));
 			}
+		});
+	},
+
+	execCommand: function(argv) {
+		return fs.exec(routefluxBinary, argv).then(function(res) {
+			var stderr = trim(res.stderr);
+			var stdout = trim(res.stdout);
+			var message = normalizeCommandError(stderr || stdout, _('RouteFlux command failed.'));
+
+			if (res.code !== 0)
+				throw new Error(message);
+
+			return {
+				'stdout': stdout,
+				'stderr': stderr
+			};
+		});
+	},
+
+	withRPCTimeout: function(timeoutSeconds, executor) {
+		var nextTimeout = Number(timeoutSeconds);
+		var previousRaw;
+		var hasPrevious;
+
+		if (!isFinite(nextTimeout) || nextTimeout <= 0 || typeof executor !== 'function')
+			return Promise.resolve().then(executor);
+
+		previousRaw = L.env.rpctimeout;
+		hasPrevious = previousRaw != null && previousRaw !== '';
+		L.env.rpctimeout = String(Math.ceil(nextTimeout));
+
+		return Promise.resolve().then(executor).finally(function() {
+			if (hasPrevious)
+				L.env.rpctimeout = previousRaw;
+			else
+				delete L.env.rpctimeout;
 		});
 	},
 
@@ -412,36 +586,126 @@ return view.extend({
 		setTimeout(function() { URL.revokeObjectURL(href); }, 0);
 	},
 
-	showModal: function(title, body, actions, bodyClass) {
-		var buttons = Array.isArray(actions) ? actions.slice() : [];
-		var className = 'routeflux-modal-body';
-		var modalClass = trim(bodyClass);
+	actionKey: function(scope, subscriptionId, nodeId) {
+		return [ trim(scope), trim(subscriptionId), trim(nodeId) ].filter(Boolean).join(':');
+	},
 
-		if (modalClass !== '')
-			className += ' ' + modalClass;
+	subscriptionActionKey: function(subscriptionId) {
+		return this.actionKey('subscription', subscriptionId);
+	},
 
-		if (buttons.length === 0) {
-			buttons.push(E('button', {
-				'class': 'cbi-button',
-				'click': function(ev) {
-					ui.hideModal();
-					return false;
-				}
-			}, [ _('Close') ]));
+	nodeActionKey: function(subscriptionId, nodeId) {
+		return this.actionKey('node', subscriptionId, nodeId);
+	},
+
+	hasPendingActionPrefix: function(prefix) {
+		var actions;
+		var keys;
+		var i;
+
+		this.ensureState();
+		actions = this.pendingActions || {};
+		keys = Object.keys(actions);
+		for (i = 0; i < keys.length; i++) {
+			if (keys[i].indexOf(prefix) === 0)
+				return true;
 		}
 
-		if (modalClass !== '') {
-			ui.showModal(title, [
-				E('div', { 'class': className }, Array.isArray(body) ? body : [ body ]),
-				E('div', { 'class': 'routeflux-modal-actions' }, buttons)
-			], modalClass);
+		return false;
+	},
+
+	pendingMessageByPrefix: function(prefix) {
+		var actions;
+		var keys;
+		var i;
+
+		this.ensureState();
+		actions = this.pendingActions || {};
+		keys = Object.keys(actions);
+		for (i = 0; i < keys.length; i++) {
+			if (keys[i].indexOf(prefix) === 0)
+				return trim(actions[keys[i]].message);
+		}
+
+		return '';
+	},
+
+	isSubscriptionBusy: function(subscriptionId) {
+		return routefluxUI.isPendingAction(this, this.subscriptionActionKey(subscriptionId)) ||
+			this.hasPendingActionPrefix(this.actionKey('node', subscriptionId) + ':');
+	},
+
+	subscriptionBusyMessage: function(subscriptionId) {
+		var direct = routefluxUI.pendingActionMessage(this, this.subscriptionActionKey(subscriptionId));
+
+		if (direct !== '')
+			return direct;
+
+		return this.pendingMessageByPrefix(this.actionKey('node', subscriptionId) + ':');
+	},
+
+	isNodeBusy: function(subscriptionId, nodeId) {
+		return routefluxUI.isPendingAction(this, this.nodeActionKey(subscriptionId, nodeId)) ||
+			routefluxUI.isPendingAction(this, this.subscriptionActionKey(subscriptionId));
+	},
+
+	nodeBusyMessage: function(subscriptionId, nodeId) {
+		var direct = routefluxUI.pendingActionMessage(this, this.nodeActionKey(subscriptionId, nodeId));
+
+		if (direct !== '')
+			return direct;
+
+		return routefluxUI.pendingActionMessage(this, this.subscriptionActionKey(subscriptionId));
+	},
+
+	isSubscriptionOpen: function(subscriptionId, fallback) {
+		var key = trim(subscriptionId);
+
+		if (Object.prototype.hasOwnProperty.call(this.subscriptionOpen, key))
+			return this.subscriptionOpen[key] === true;
+
+		return fallback === true;
+	},
+
+	handleSubscriptionToggle: function(subscriptionId, ev) {
+		this.ensureState();
+		this.subscriptionOpen[trim(subscriptionId)] = !!(ev && ev.target && ev.target.open);
+	},
+
+	handleDraftInput: function(field, ev) {
+		var key = trim(field);
+
+		this.ensureState();
+		if (key === '')
 			return;
-		}
 
-		ui.showModal(title, [
-			E('div', { 'class': className }, Array.isArray(body) ? body : [ body ]),
-			E('div', { 'class': 'routeflux-modal-actions' }, buttons)
-		]);
+		this.addDraft[key] = ev && ev.target ? ev.target.value : '';
+	},
+
+	refreshPageContent: function(options) {
+		var settings = options || {};
+
+		this.ensureState();
+		this.pageLoading = settings.showLoading !== false;
+		if (this.pageLoading)
+			this.pageInfo = trim(settings.loadingMessage) || _('Refreshing page data...');
+		this.renderIntoRoot();
+
+		return this.requestPageData().then(L.bind(function(data) {
+			this.pageLoading = false;
+			this.pageInfo = '';
+			this.applyRequestedPageData(data);
+			this.renderIntoRoot();
+			return this.pageData;
+		}, this));
+	},
+
+	runAction: function(key, message, executor) {
+		this.ensureState();
+		this.clearPageMessages();
+		return routefluxUI.runPendingAction(this, key, executor, {
+			'message': message
+		});
 	},
 
 	showJSONModal: function(subscriptionId, node, payload) {
@@ -449,7 +713,7 @@ return view.extend({
 		var content = stringifyJSON(payload);
 		var filename = 'routeflux-' + subscriptionId + '-' + trim(node && node.id) + '.json';
 
-		this.showModal(
+		routefluxUI.showModal(
 			_('Generated Xray JSON: %s').format(nodeName),
 			[
 				E('p', { 'class': 'routeflux-modal-help' }, [
@@ -457,33 +721,36 @@ return view.extend({
 				]),
 				E('pre', { 'class': 'routeflux-inspect-pre' }, [ content ])
 			],
-			[
-				E('button', {
-					'class': 'cbi-button cbi-button-action',
-					'click': ui.createHandlerFn(this, function() {
-						return this.copyText(content).then(function() {
-							ui.addNotification(null, notificationParagraph(_('JSON copied to clipboard.')), 'info');
-						}).catch(function(err) {
-							ui.addNotification(null, notificationParagraph(err.message || String(err)));
-						});
-					})
-				}, [ _('Copy') ]),
-				E('button', {
-					'class': 'cbi-button cbi-button-action',
-					'click': ui.createHandlerFn(this, function() {
-						this.downloadJSON(filename, payload);
-						ui.addNotification(null, notificationParagraph(_('JSON file downloaded.')), 'info');
-					})
-				}, [ _('Download .json') ]),
-				E('button', {
-					'class': 'cbi-button',
-					'click': function(ev) {
-						ui.hideModal();
-						return false;
-					}
-				}, [ _('Close') ])
-			],
-			'routeflux-modal-json'
+			{
+				'actions': [
+					E('button', {
+						'class': 'cbi-button cbi-button-action',
+						'click': ui.createHandlerFn(this, function() {
+							return this.copyText(content).then(function() {
+								ui.addNotification(null, notificationParagraph(_('JSON copied to clipboard.')), 'info');
+							}).catch(function(err) {
+								ui.addNotification(null, notificationParagraph(err.message || String(err)));
+							});
+						})
+					}, [ _('Copy') ]),
+					E('button', {
+						'class': 'cbi-button cbi-button-action',
+						'click': ui.createHandlerFn(this, function() {
+							this.downloadJSON(filename, payload);
+							ui.addNotification(null, notificationParagraph(_('JSON file downloaded.')), 'info');
+						})
+					}, [ _('Download .json') ]),
+					E('button', {
+						'class': 'cbi-button',
+						'click': function(ev) {
+							ui.hideModal();
+							return false;
+						}
+					}, [ _('Close') ])
+				],
+				'bodyClass': 'routeflux-modal-json',
+				'modalClass': 'routeflux-modal-json'
+			}
 		);
 	},
 
@@ -532,42 +799,56 @@ return view.extend({
 			]));
 		}
 
-		this.showModal(_('Speed Test: %s').format(nodeName), body, null, 'routeflux-modal-speedtest');
-	},
-
-	refreshPageContent: function() {
-		return this.requestPageData().then(L.bind(function(data) {
-			var root = document.querySelector('#routeflux-subscriptions-root');
-			if (root)
-				dom.content(root, this.renderPageContent(data));
-		}, this));
-	},
-
-	execAction: function(argv, successMessage) {
-		return fs.exec(routefluxBinary, argv).then(L.bind(function(res) {
-			var stderr = trim(res.stderr);
-			var stdout = trim(res.stdout);
-
-			if (res.code !== 0)
-				throw new Error(stderr || stdout || _('RouteFlux command failed.'));
-
-			ui.addNotification(null, notificationParagraph(stdout || successMessage), 'info');
-			return this.refreshPageContent().then(function() {
-				return res;
-			});
-		}, this)).catch(function(err) {
-			ui.addNotification(null, notificationParagraph(err.message || String(err)));
-			throw err;
+		routefluxUI.showModal(_('Speed Test: %s').format(nodeName), body, {
+			'bodyClass': 'routeflux-modal-speedtest',
+			'modalClass': 'routeflux-modal-speedtest'
 		});
 	},
 
+	runCLIAction: function(key, argv, successMessage, pendingMessage, options) {
+		var settings = options || {};
+
+		return this.runAction(key, pendingMessage, L.bind(function() {
+			return this.execCommand(argv).then(L.bind(function(res) {
+				var message = trim(res.stdout) || successMessage;
+
+				if (message !== '')
+					ui.addNotification(null, notificationParagraph(message), 'info');
+
+				if (settings.clearDraft === true)
+					this.addDraft = emptyAddDraft();
+
+				if (settings.refreshPage === false)
+					return res;
+
+				return this.refreshPageContent({
+					'showLoading': true,
+					'loadingMessage': settings.loadingMessage
+				}).then(function() {
+					return res;
+				});
+			}, this)).catch(L.bind(function(err) {
+				var message = err.message || String(err);
+
+				this.setPageError(message);
+				ui.addNotification(null, notificationParagraph(message));
+				this.renderIntoRoot();
+				return null;
+			}, this));
+		}, this));
+	},
+
 	handleAdd: function(ev) {
-		var source = trim(document.querySelector('#routeflux-add-source').value);
-		var name = trim(document.querySelector('#routeflux-add-name').value);
+		var source = trim(this.addDraft && this.addDraft.source);
+		var name = trim(this.addDraft && this.addDraft.name);
 		var argv = [ 'add' ];
+		var message;
 
 		if (source === '') {
-			ui.addNotification(null, notificationParagraph(_('Paste a subscription URL, share link, or 3x-ui/Xray JSON first.')));
+			message = _('Paste a subscription URL, share link, or 3x-ui/Xray JSON first.');
+			this.setPageError(message);
+			ui.addNotification(null, notificationParagraph(message));
+			this.renderIntoRoot();
 			return Promise.resolve();
 		}
 
@@ -579,13 +860,27 @@ return view.extend({
 		else
 			argv.push('--raw', source);
 
-		return this.execAction(argv, _('Subscription added.'));
+		return this.runCLIAction(
+			'add',
+			argv,
+			_('Subscription added.'),
+			_('Adding subscription...'),
+			{
+				'clearDraft': true,
+				'loadingMessage': _('Reloading subscriptions...')
+			}
+		);
 	},
 
 	handleRefreshSubscription: function(subscriptionId, ev) {
-		return this.execAction(
+		return this.runCLIAction(
+			this.subscriptionActionKey(subscriptionId),
 			[ 'refresh', '--subscription', subscriptionId ],
-			_('Subscription refreshed.')
+			_('Subscription refreshed.'),
+			_('Refreshing subscription...'),
+			{
+				'loadingMessage': _('Reloading subscriptions...')
+			}
 		);
 	},
 
@@ -593,9 +888,14 @@ return view.extend({
 		if (!window.confirm(_('Remove subscription "%s"?').format(displayName || subscriptionId)))
 			return Promise.resolve();
 
-		return this.execAction(
+		return this.runCLIAction(
+			this.subscriptionActionKey(subscriptionId),
 			[ 'remove', subscriptionId ],
-			_('Subscription removed.')
+			_('Subscription removed.'),
+			_('Removing subscription...'),
+			{
+				'loadingMessage': _('Reloading subscriptions...')
+			}
 		);
 	},
 
@@ -603,63 +903,107 @@ return view.extend({
 		if (!window.confirm(_('Remove all imported subscriptions? This disconnects the active profile if needed.')))
 			return Promise.resolve();
 
-		return this.execAction(
+		return this.runCLIAction(
+			'remove-all',
 			[ 'remove', '--all' ],
-			_('All subscriptions removed.')
+			_('All subscriptions removed.'),
+			_('Removing subscriptions...'),
+			{
+				'loadingMessage': _('Reloading subscriptions...')
+			}
 		);
 	},
 
 	handleConnectAuto: function(subscriptionId, ev) {
-		return this.execAction(
+		return this.runCLIAction(
+			this.subscriptionActionKey(subscriptionId),
 			[ 'connect', '--auto', '--subscription', subscriptionId ],
-			_('Auto mode enabled.')
+			_('Auto mode enabled.'),
+			_('Connecting automatic selection...'),
+			{
+				'loadingMessage': _('Reloading runtime status...')
+			}
 		);
 	},
 
 	handleConnectNode: function(subscriptionId, nodeId, ev) {
-		return this.execAction(
+		return this.runCLIAction(
+			this.nodeActionKey(subscriptionId, nodeId),
 			[ 'connect', '--subscription', subscriptionId, '--node', nodeId ],
-			_('Node connected.')
+			_('Node connected.'),
+			_('Connecting node...'),
+			{
+				'loadingMessage': _('Reloading runtime status...')
+			}
 		);
 	},
 
 	handleInspectJSON: function(subscriptionId, node, ev) {
-		return this.execJSON([
-			'--json', 'inspect', 'xray',
-			'--subscription', subscriptionId,
-			'--node', trim(node && node.id)
-		]).then(L.bind(function(payload) {
-			this.showJSONModal(subscriptionId, node, payload);
-		}, this)).catch(function(err) {
-			ui.addNotification(null, notificationParagraph(err.message || String(err)));
-			throw err;
-		});
+		return this.runAction(
+			this.nodeActionKey(subscriptionId, trim(node && node.id)),
+			_('Loading generated Xray JSON...'),
+			L.bind(function() {
+				return this.execJSON([
+					'--json', 'inspect', 'xray',
+					'--subscription', subscriptionId,
+					'--node', trim(node && node.id)
+				]).then(L.bind(function(payload) {
+					this.showJSONModal(subscriptionId, node, payload);
+					return payload;
+				}, this)).catch(L.bind(function(err) {
+					var message = err.message || String(err);
+
+					this.setPageError(message);
+					ui.addNotification(null, notificationParagraph(message));
+					this.renderIntoRoot();
+					return null;
+				}, this));
+			}, this)
+		);
 	},
 
 	handleSpeedTest: function(subscriptionId, node, ev) {
+		var nodeID = trim(node && node.id);
+		var message;
+
 		if (this.speedTestBusy === true) {
-			ui.addNotification(null, notificationParagraph(_('Another speed test is already running.')));
+			message = _('Another speed test is already running.');
+			this.setPageError(message);
+			ui.addNotification(null, notificationParagraph(message));
+			this.renderIntoRoot();
 			return Promise.resolve();
 		}
 
 		this.speedTestBusy = true;
 		this.showSpeedTestModal(node, 'loading');
-		this.refreshPageContent();
+		this.renderIntoRoot();
 
-		return this.execJSON([
-			'--json', 'inspect', 'speed',
-			'--subscription', subscriptionId,
-			'--node', trim(node && node.id)
-		]).then(L.bind(function(result) {
-			this.showSpeedTestModal(node, { 'result': result });
-			return result;
-		}, this)).catch(L.bind(function(err) {
-			this.showSpeedTestModal(node, { 'error': err.message || String(err) });
-			ui.addNotification(null, notificationParagraph(err.message || String(err)));
-			throw err;
-		}, this)).finally(L.bind(function() {
+		return this.runAction(
+			this.nodeActionKey(subscriptionId, nodeID),
+			_('Running speed test...'),
+			L.bind(function() {
+				return this.withRPCTimeout(speedTestRPCTimeoutSeconds, L.bind(function() {
+					return this.execJSON([
+						'--json', 'inspect', 'speed',
+						'--subscription', subscriptionId,
+						'--node', nodeID
+					]);
+				}, this)).then(L.bind(function(result) {
+					this.showSpeedTestModal(node, { 'result': result });
+					return result;
+				}, this)).catch(L.bind(function(err) {
+					var errorMessage = err.message || String(err);
+
+					this.showSpeedTestModal(node, { 'error': errorMessage });
+					this.setPageError(errorMessage);
+					ui.addNotification(null, notificationParagraph(errorMessage));
+					this.renderIntoRoot();
+					return null;
+				}, this));
+			}, this)
+		).finally(L.bind(function() {
 			this.speedTestBusy = false;
-			this.refreshPageContent();
+			this.renderIntoRoot();
 		}, this));
 	},
 
@@ -672,51 +1016,68 @@ return view.extend({
 
 		var rows = nodes.map(L.bind(function(node) {
 			var isActive = subscription.id === activeSubscriptionId && node.id === activeNodeId;
+			var nodeBusy = this.isNodeBusy(subscription.id, node.id);
+			var busyMessage = this.nodeBusyMessage(subscription.id, node.id);
 			var name = nodeDisplayName(node, node.id);
 			var address = firstNonEmpty([
 				node.address && node.port ? node.address + ':' + node.port : '',
 				node.address
 			], '-');
 
-			return E('tr', { 'class': 'tr' }, [
-				E('td', { 'class': 'td' }, [
+			return E('tr', { 'class': 'tr routeflux-node-row' }, [
+				responsiveTableCell(_('Node'), [
 					name,
-					isActive ? E('div', { 'style': 'margin-top:4px' }, [ badge(_('Active'), 'notice') ]) : ''
-				]),
-				E('td', { 'class': 'td' }, [ address ]),
-				E('td', { 'class': 'td' }, [ firstNonEmpty([ node.protocol ], '-') ]),
-				E('td', { 'class': 'td' }, [ firstNonEmpty([ node.transport ], '-') ]),
-				E('td', { 'class': 'td' }, [ firstNonEmpty([ node.security ], '-') ]),
-				E('td', { 'class': 'td right' }, [
-					E('div', { 'class': 'routeflux-node-actions' }, [
-						E('button', {
-							'class': 'cbi-button cbi-button-action',
-							'click': ui.createHandlerFn(this, 'handleConnectNode', subscription.id, node.id)
-						}, [ _('Connect') ]),
-						E('button', {
-							'class': 'cbi-button cbi-button-action',
-							'click': ui.createHandlerFn(this, 'handleInspectJSON', subscription.id, node)
-						}, [ _('JSON') ]),
-						E('button', {
-							'class': 'cbi-button cbi-button-action',
-							'click': ui.createHandlerFn(this, 'handleSpeedTest', subscription.id, node),
-							'disabled': speedTestBusy ? 'disabled' : null
-						}, [ _('Speed Test') ])
-					])
-				])
+					isActive ? E('div', { 'class': 'routeflux-node-active-badge' }, [ badge(_('Active'), 'notice') ]) : ''
+				], 'routeflux-node-cell-primary'),
+				responsiveTableCell(_('Address'), address, 'routeflux-node-cell-address'),
+				responsiveTableCell(_('Protocol'), firstNonEmpty([ node.protocol ], '-')),
+				responsiveTableCell(_('Transport'), firstNonEmpty([ node.transport ], '-')),
+				responsiveTableCell(_('Security'), firstNonEmpty([ node.security ], '-')),
+				responsiveTableCell(_('Actions'), [
+					E('div', { 'class': 'routeflux-node-actions-shell' }, [
+						E('div', { 'class': 'routeflux-node-actions' }, [
+							E('button', {
+								'class': 'cbi-button cbi-button-action',
+								'click': ui.createHandlerFn(this, 'handleConnectNode', subscription.id, node.id),
+								'disabled': nodeBusy ? 'disabled' : null
+							}, [ _('Connect') ]),
+							E('button', {
+								'class': 'cbi-button cbi-button-action',
+								'click': ui.createHandlerFn(this, 'handleInspectJSON', subscription.id, node),
+								'disabled': nodeBusy ? 'disabled' : null
+							}, [ _('JSON') ]),
+							E('button', {
+								'class': 'cbi-button cbi-button-action',
+								'click': ui.createHandlerFn(this, 'handleSpeedTest', subscription.id, node),
+								'disabled': nodeBusy || speedTestBusy ? 'disabled' : null
+							}, [ _('Speed Test') ])
+						])
+					]),
+					busyMessage !== '' ? E('div', { 'class': 'routeflux-action-status' }, [ busyMessage ]) : ''
+				], 'right routeflux-node-cell-actions')
 			]);
 		}, this));
 
-		return E('table', { 'class': 'table cbi-section-table' }, [
-			E('tr', { 'class': 'tr cbi-section-table-titles' }, [
-				E('th', { 'class': 'th' }, [ _('Node') ]),
-				E('th', { 'class': 'th' }, [ _('Address') ]),
-				E('th', { 'class': 'th' }, [ _('Protocol') ]),
-				E('th', { 'class': 'th' }, [ _('Transport') ]),
-				E('th', { 'class': 'th' }, [ _('Security') ]),
-				E('th', { 'class': 'th right' }, [ '\u00a0' ])
-			])
-		].concat(rows));
+		return E('div', { 'class': 'routeflux-node-table-wrap' }, [
+			E('table', { 'class': 'table cbi-section-table routeflux-node-table' }, [
+				E('colgroup', {}, [
+					E('col', { 'class': 'routeflux-node-col-name' }),
+					E('col', { 'class': 'routeflux-node-col-address' }),
+					E('col', { 'class': 'routeflux-node-col-protocol' }),
+					E('col', { 'class': 'routeflux-node-col-transport' }),
+					E('col', { 'class': 'routeflux-node-col-security' }),
+					E('col', { 'class': 'routeflux-node-col-actions' })
+				]),
+				E('tr', { 'class': 'tr cbi-section-table-titles' }, [
+					E('th', { 'class': 'th' }, [ _('Node') ]),
+					E('th', { 'class': 'th' }, [ _('Address') ]),
+					E('th', { 'class': 'th' }, [ _('Protocol') ]),
+					E('th', { 'class': 'th' }, [ _('Transport') ]),
+					E('th', { 'class': 'th' }, [ _('Security') ]),
+					E('th', { 'class': 'th right routeflux-node-heading-actions' }, [ _('Actions') ])
+				])
+			].concat(rows))
+		]);
 	},
 
 	renderSubscriptionCard: function(entry, activeSubscriptionId, activeNodeId) {
@@ -724,6 +1085,8 @@ return view.extend({
 		var displayName = entry.profile_label;
 		var providerName = entry.provider_title;
 		var isActive = subscription.id === activeSubscriptionId;
+		var subscriptionBusy = this.isSubscriptionBusy(subscription.id);
+		var busyMessage = this.subscriptionBusyMessage(subscription.id);
 		var nodesCount = Array.isArray(subscription.nodes) ? subscription.nodes.length : 0;
 		var metaRows = [
 			[ _('ID'), subscription.id ],
@@ -735,8 +1098,8 @@ return view.extend({
 			[ _('Nodes'), String(nodesCount) ]
 		].map(function(item) {
 			return E('tr', { 'class': 'tr' }, [
-				E('td', { 'class': 'td left', 'style': 'width:180px' }, [ item[0] ]),
-				E('td', { 'class': 'td left' }, [ item[1] ])
+				E('td', { 'class': 'td left routeflux-meta-label' }, [ item[0] ]),
+				E('td', { 'class': 'td left routeflux-meta-value' }, [ item[1] ])
 			]);
 		});
 
@@ -747,31 +1110,43 @@ return view.extend({
 		headerNodes.push(E('div', { 'class': 'routeflux-subscription-provider' }, [ providerName ]));
 
 		if (isActive)
-			headerNodes.push(E('div', { 'style': 'margin-top:6px' }, [ badge(_('Active'), 'notice') ]));
+			headerNodes.push(E('div', { 'class': 'routeflux-subscription-badges' }, [ badge(_('Active'), 'notice') ]));
 
 		return E('div', { 'class': 'cbi-section routeflux-subscription-card' }, [
 			E('div', { 'class': 'routeflux-subscription-header' }, [
-				E('div', {}, headerNodes),
-				E('div', { 'class': 'routeflux-subscription-actions' }, [
-					E('button', {
-						'class': 'cbi-button cbi-button-action',
-						'click': ui.createHandlerFn(this, 'handleRefreshSubscription', subscription.id)
-					}, [ _('Refresh') ]),
-					E('button', {
-						'class': 'cbi-button cbi-button-apply',
-						'click': ui.createHandlerFn(this, 'handleConnectAuto', subscription.id)
-					}, [ _('Connect Auto') ]),
-					E('button', {
-						'class': 'cbi-button cbi-button-negative',
-						'click': ui.createHandlerFn(this, 'handleRemoveSubscription', subscription.id, displayName)
-					}, [ _('Remove') ])
+				E('div', { 'class': 'routeflux-subscription-heading' }, headerNodes),
+				E('div', { 'class': 'routeflux-subscription-controls' }, [
+					E('div', { 'class': 'routeflux-subscription-actions' }, [
+						E('button', {
+							'class': 'cbi-button cbi-button-action',
+							'click': ui.createHandlerFn(this, 'handleRefreshSubscription', subscription.id),
+							'disabled': subscriptionBusy ? 'disabled' : null
+						}, [ _('Refresh') ]),
+						E('button', {
+							'class': 'cbi-button cbi-button-apply',
+							'click': ui.createHandlerFn(this, 'handleConnectAuto', subscription.id),
+							'disabled': subscriptionBusy ? 'disabled' : null
+						}, [ _('Connect Auto') ]),
+						E('button', {
+							'class': 'cbi-button cbi-button-negative',
+							'click': ui.createHandlerFn(this, 'handleRemoveSubscription', subscription.id, displayName),
+							'disabled': subscriptionBusy ? 'disabled' : null
+						}, [ _('Remove') ])
+					]),
+					busyMessage !== '' ? E('div', { 'class': 'routeflux-action-status routeflux-action-status-group' }, [ busyMessage ]) : ''
 				])
 			]),
-			E('table', { 'class': 'table' }, metaRows),
+			E('table', { 'class': 'table routeflux-meta-table' }, metaRows),
 			trim(subscription.last_error) !== '' ? E('div', { 'class': 'alert-message warning', 'style': 'margin-top:10px' }, [
 				subscription.last_error
 			]) : '',
-			E('details', { 'class': 'routeflux-node-details', 'open': isActive ? 'open' : null }, [
+			E('details', {
+				'class': 'routeflux-node-details',
+				'open': this.isSubscriptionOpen(subscription.id, isActive) ? 'open' : null,
+				'toggle': L.bind(function(ev) {
+					this.handleSubscriptionToggle(subscription.id, ev);
+				}, this)
+			}, [
 				E('summary', {}, [
 					_('Nodes (%d)').format(nodesCount)
 				]),
@@ -801,49 +1176,100 @@ return view.extend({
 		var presentation = buildSubscriptionPresentation(subscriptions);
 		var activeSubscriptionId = trim(status.active_subscription && status.active_subscription.id);
 		var activeNodeId = trim(status.active_node && status.active_node.id);
+		var addBusy = routefluxUI.isPendingAction(this, 'add');
+		var addBusyMessage = routefluxUI.pendingActionMessage(this, 'add');
+		var removeAllBusy = routefluxUI.isPendingAction(this, 'remove-all');
+		var removeAllMessage = routefluxUI.pendingActionMessage(this, 'remove-all');
+		var addActionMessage = addBusyMessage || removeAllMessage;
 		var content = [];
 
-		if (data[0] && data[0].__error__)
-			ui.addNotification(null, notificationParagraph(_('Status error: %s').format(data[0].__error__)));
-
-		if (data[1] && data[1].__error__)
-			ui.addNotification(null, notificationParagraph(_('Subscriptions error: %s').format(data[1].__error__)));
-
+		this.ensureState();
+		content.push(routefluxUI.renderSharedStyles());
 		content.push(E('style', { 'type': 'text/css' }, [
-			'.routeflux-subscription-card { margin-bottom:16px; }',
-			'.routeflux-subscription-header { display:flex; flex-wrap:wrap; justify-content:space-between; gap:12px; margin-bottom:12px; }',
-			'.routeflux-subscription-title { font-size:18px; font-weight:600; }',
-			'.routeflux-subscription-provider { color:var(--text-color-secondary, #666); margin-top:4px; }',
-			'.routeflux-subscription-actions { display:flex; flex-wrap:wrap; gap:8px; align-items:flex-start; }',
-			'.routeflux-node-actions { display:flex; flex-wrap:wrap; justify-content:flex-end; gap:8px; }',
-			'.routeflux-add-grid { display:grid; grid-template-columns:minmax(220px, 320px) 1fr; gap:12px; margin-bottom:12px; }',
+			'.routeflux-subscriptions-shell { width:100%; max-width:100%; min-width:0; box-sizing:border-box; }',
+			'.routeflux-subscription-card { margin-bottom:16px; overflow:hidden; }',
+			'.routeflux-subscription-header { display:grid; grid-template-columns:minmax(0, 1fr) auto; gap:14px 18px; align-items:start; margin-bottom:12px; }',
+			'.routeflux-subscription-heading { min-width:0; }',
+			'.routeflux-subscription-title { font-size:clamp(17px, 1.1vw + 14px, 22px); font-weight:600; line-height:1.25; overflow-wrap:anywhere; word-break:break-word; }',
+			'.routeflux-subscription-provider { color:var(--text-color-medium, #666); margin-top:4px; overflow-wrap:anywhere; word-break:break-word; }',
+			'.routeflux-subscription-badges { display:flex; flex-wrap:wrap; gap:8px; margin-top:8px; }',
+			'.routeflux-subscription-controls { display:grid; gap:8px; justify-items:end; min-width:min(100%, 360px); }',
+			'.routeflux-subscription-actions { display:flex; flex-wrap:nowrap; justify-content:flex-end; gap:8px; align-items:flex-start; }',
+			'.routeflux-subscription-actions .cbi-button, .routeflux-node-actions .cbi-button { white-space:nowrap; }',
+			'.routeflux-meta-table { width:100%; table-layout:fixed; margin-bottom:0; }',
+			'.routeflux-meta-label { width:180px; color:var(--text-color-medium, #586677); font-weight:600; }',
+			'.routeflux-meta-value { overflow-wrap:anywhere; word-break:break-word; }',
+			'.routeflux-node-table-wrap { width:100%; max-width:100%; overflow-x:auto; -webkit-overflow-scrolling:touch; }',
+			'.routeflux-node-table { width:100%; min-width:920px; table-layout:fixed; }',
+			'.routeflux-node-col-name { width:18%; }',
+			'.routeflux-node-col-address { width:20%; }',
+			'.routeflux-node-col-protocol { width:9%; }',
+			'.routeflux-node-col-transport { width:9%; }',
+			'.routeflux-node-col-security { width:12%; }',
+			'.routeflux-node-col-actions { width:32%; }',
+			'.routeflux-node-table .th, .routeflux-node-table .td { vertical-align:middle; overflow-wrap:anywhere; word-break:break-word; }',
+			'.routeflux-node-heading-actions { text-align:right; }',
+			'.routeflux-node-cell-actions { min-width:0; }',
+			'.routeflux-node-active-badge { margin-top:6px; }',
+			'.routeflux-node-actions-shell { width:100%; }',
+			'.routeflux-node-actions { display:flex; flex-wrap:nowrap; justify-content:flex-end; align-items:stretch; gap:8px; width:100%; }',
+			'.routeflux-node-actions .cbi-button { flex:1 1 0; min-width:0; text-align:center; }',
+			'.routeflux-action-status { margin-top:8px; color:var(--text-color-medium, #586677); font-size:12px; line-height:1.4; }',
+			'.routeflux-action-status-group { width:100%; text-align:right; }',
+			'.routeflux-page-status { margin-bottom:14px; }',
+			'.routeflux-page-banner { padding:10px 12px; border:1px solid rgba(98, 112, 129, 0.34); border-radius:12px; margin-bottom:10px; line-height:1.45; }',
+			'.routeflux-page-banner-info { background:rgba(224, 242, 254, 0.6); border-color:rgba(56, 189, 248, 0.32); color:#0f3f57; }',
+			'.routeflux-page-banner-warning { background:rgba(254, 242, 242, 0.7); border-color:rgba(239, 68, 68, 0.28); color:#6e1f1f; }',
+			'.routeflux-page-status-actions { display:flex; justify-content:flex-end; margin-top:10px; }',
+			'.routeflux-add-grid { display:grid; grid-template-columns:minmax(220px, 320px) minmax(0, 1fr); gap:12px; margin-bottom:12px; }',
 			'.routeflux-add-actions { display:flex; flex-wrap:wrap; gap:10px; }',
-			'.routeflux-add-grid textarea { min-height:140px; width:100%; }',
+			'.routeflux-add-grid .cbi-value-field, .routeflux-add-grid .cbi-input-text, .routeflux-add-grid .cbi-input-textarea { width:100%; max-width:100%; box-sizing:border-box; }',
+			'.routeflux-add-grid textarea { min-height:140px; width:100%; max-width:100%; }',
 			'.routeflux-node-details { margin-top:12px; }',
 			'.routeflux-node-details summary { cursor:pointer; margin-bottom:10px; }',
 			'.routeflux-provider-group { margin-bottom:22px; }',
-			'.routeflux-provider-group-header { display:flex; flex-wrap:wrap; justify-content:space-between; gap:12px; align-items:baseline; margin:12px 0 8px; }',
-			'.routeflux-provider-group-title { font-size:22px; font-weight:600; }',
-			'.routeflux-provider-group-meta { color:var(--text-color-secondary, #666); }',
-			'.routeflux-modal-body { width:100%; max-width:100%; min-width:0; box-sizing:border-box; overflow:hidden; }',
+			'.routeflux-provider-group-header { display:grid; grid-template-columns:minmax(0, 1fr) auto; gap:8px 12px; align-items:end; margin:12px 0 8px; }',
+			'.routeflux-provider-group-title { font-size:clamp(20px, 1.3vw + 15px, 26px); font-weight:600; overflow-wrap:anywhere; word-break:break-word; }',
+			'.routeflux-provider-group-meta { color:var(--text-color-medium, #666); }',
 			'.modal.routeflux-modal-json { width:min(92vw, 980px); max-width:92vw; }',
 			'.modal.routeflux-modal-speedtest { width:min(92vw, 720px); max-width:92vw; overflow:hidden; }',
-			'.routeflux-modal-help { margin:0 0 12px; color:var(--text-color-secondary, #586677); max-width:100%; overflow-wrap:anywhere; word-break:break-word; line-height:1.45; }',
-			'.routeflux-modal-actions { display:flex; flex-wrap:wrap; justify-content:flex-end; gap:8px; margin-top:14px; }',
+			'.routeflux-modal-help { margin:0 0 12px; color:var(--text-color-medium, #586677); max-width:100%; overflow-wrap:anywhere; word-break:break-word; line-height:1.45; }',
 			'.routeflux-inspect-pre { white-space:pre-wrap; margin:0; max-height:56vh; max-width:100%; overflow:auto; padding:14px 16px; border:1px solid rgba(71, 85, 105, 0.82); border-radius:12px; background:linear-gradient(180deg, #09111d 0%, #0d1623 48%, #101a29 100%); color:#eef4fb; font-family:SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", monospace; font-size:13px; line-height:1.72; box-sizing:border-box; }',
 			'.routeflux-speedtest-status { margin:0; font-weight:600; }',
 			'.routeflux-speedtest-grid { display:grid; grid-template-columns:repeat(2, minmax(0, 1fr)); gap:10px; margin-top:12px; max-width:100%; min-width:0; align-items:stretch; }',
-			'.routeflux-speedtest-metric { min-width:0; width:100%; border:1px solid rgba(98, 112, 129, 0.34); border-radius:12px; padding:10px 12px; background:linear-gradient(180deg, rgba(243, 247, 251, 0.98) 0%, rgba(233, 238, 244, 0.98) 100%); box-sizing:border-box; }',
-			'.routeflux-speedtest-label { color:var(--text-color-secondary, #586677); font-size:10px; text-transform:uppercase; letter-spacing:.12em; font-weight:700; margin-bottom:4px; }',
-			'.routeflux-speedtest-value { color:var(--text-color-primary, #17263a); font-size:15px; font-weight:700; line-height:1.3; overflow-wrap:anywhere; word-break:break-word; }',
+			'.routeflux-speedtest-metric { min-width:0; width:100%; border:1px solid var(--border-color-medium); border-radius:12px; padding:10px 12px; background:linear-gradient(180deg, var(--background-color-high) 0%, var(--background-color-low) 100%); box-shadow:inset 0 1px 0 hsla(var(--background-color-high-hsl), 0.28); box-sizing:border-box; }',
+			'.routeflux-speedtest-label { color:var(--text-color-medium, #586677); font-size:10px; text-transform:uppercase; letter-spacing:.12em; font-weight:700; margin-bottom:4px; }',
+			'.routeflux-speedtest-value { color:var(--text-color-high, #17263a); font-size:15px; font-weight:700; line-height:1.3; overflow-wrap:anywhere; word-break:break-word; }',
 			'.routeflux-speedtest-subtle { font-size:14px; }',
-			'@media (max-width: 640px) { .routeflux-speedtest-grid { grid-template-columns:minmax(0, 1fr); } }'
+			'@media (min-width: 981px) { .routeflux-node-heading-actions, .routeflux-node-cell-actions { text-align:center !important; } .routeflux-node-actions-shell { display:block; width:min(100%, 320px); margin:0 auto; padding:8px 10px; border:1px solid var(--border-color-medium); border-radius:14px; background:linear-gradient(180deg, var(--background-color-high) 0%, var(--background-color-low) 100%); box-shadow:inset 0 1px 0 hsla(var(--background-color-high-hsl), 0.24), 0 0 0 1px hsla(var(--border-color-low-hsl), 0.25); } .routeflux-node-actions { display:grid; grid-template-columns:repeat(2, minmax(0, 1fr)); justify-content:center; gap:8px; width:100%; } .routeflux-node-actions .cbi-button { width:100%; min-width:0; } .routeflux-node-actions .cbi-button:last-child { grid-column:1 / -1; } }',
+			'@media (max-width: 980px) { .routeflux-subscription-header, .routeflux-provider-group-header, .routeflux-add-grid { grid-template-columns:minmax(0, 1fr); } .routeflux-subscription-controls { justify-items:stretch; min-width:0; } .routeflux-subscription-actions, .routeflux-node-actions { justify-content:flex-start; } .routeflux-action-status-group { text-align:left; } .routeflux-node-table { min-width:860px; } }',
+			'@media (max-width: 700px) { .routeflux-meta-table, .routeflux-meta-table .tr, .routeflux-meta-table .td { display:block; width:100%; box-sizing:border-box; } .routeflux-meta-table .tr { padding:10px 0; border-top:1px solid rgba(98, 112, 129, 0.22); } .routeflux-meta-table .tr:first-child { padding-top:0; border-top:0; } .routeflux-meta-label { width:100%; padding-bottom:4px; } .routeflux-meta-value { padding-top:0; } .routeflux-add-actions, .routeflux-page-status-actions { flex-direction:column; } .routeflux-add-actions .cbi-button, .routeflux-page-status-actions .cbi-button { width:100%; } .routeflux-speedtest-grid { grid-template-columns:minmax(0, 1fr); } }',
+			'@media (max-width: 560px) { .routeflux-subscription-actions, .routeflux-node-actions { flex-direction:column; align-items:stretch; } .routeflux-subscription-actions .cbi-button, .routeflux-node-actions .cbi-button { flex:1 1 auto; width:100%; } .routeflux-node-table, .routeflux-node-table .tr, .routeflux-node-table .td { display:block; width:100%; box-sizing:border-box; } .routeflux-node-table { min-width:0; } .routeflux-node-table .cbi-section-table-titles { display:none; } .routeflux-node-table .routeflux-node-row { margin-bottom:12px; padding:12px 14px; border:1px solid var(--border-color-medium); border-radius:12px; background:linear-gradient(180deg, var(--background-color-high) 0%, var(--background-color-low) 100%); box-shadow:0 8px 18px hsla(var(--border-color-low-hsl), 0.35), inset 0 1px 0 hsla(var(--background-color-high-hsl), 0.28); } .routeflux-node-table .routeflux-node-row:last-child { margin-bottom:0; } .routeflux-node-table .td { padding:8px 0; border-top:1px solid var(--border-color-low); text-align:left; } .routeflux-node-table .td:first-child { padding-top:0; border-top:0; } .routeflux-node-table .td:last-child { padding-bottom:0; } .routeflux-node-table .td::before { content:attr(data-title); display:block; margin-bottom:4px; color:var(--text-color-medium, #586677); font-size:10px; text-transform:uppercase; letter-spacing:.12em; font-weight:700; } .routeflux-node-cell-actions { min-width:0; } .routeflux-node-actions { width:100%; } .routeflux-action-status { margin-top:6px; } }',
+			'@media (max-width: 420px) { .modal.routeflux-modal-json, .modal.routeflux-modal-speedtest { width:min(96vw, 96vw); max-width:96vw; } .routeflux-inspect-pre { font-size:12px; padding:12px; } }'
 		]));
 
 		content.push(E('h2', {}, [ _('RouteFlux - Subscriptions') ]));
 		content.push(E('p', { 'class': 'cbi-section-descr' }, [
 			_('Manage imported subscriptions, add new providers, refresh existing profiles, remove one or all profiles, and connect a specific node or the best node automatically.')
 		]));
+
+		if (this.pageInfo !== '' || this.pageError !== '') {
+			content.push(E('div', { 'class': 'cbi-section routeflux-page-status' }, [
+				this.pageInfo !== '' ? E('div', { 'class': 'routeflux-page-banner routeflux-page-banner-info' }, [ this.pageInfo ]) : '',
+				this.pageError !== '' ? E('div', { 'class': 'routeflux-page-banner routeflux-page-banner-warning' }, [ this.pageError ]) : '',
+				this.pageError !== '' ? E('div', { 'class': 'routeflux-page-status-actions' }, [
+					E('button', {
+						'class': 'cbi-button',
+						'click': ui.createHandlerFn(this, function() {
+							return this.refreshPageContent({
+								'showLoading': true,
+								'loadingMessage': _('Retrying page load...')
+							});
+						})
+					}, [ _('Retry') ])
+				]) : ''
+			]));
+		}
 
 		content.push(E('div', { 'class': 'cbi-section' }, [
 			E('h3', {}, [ _('Add Subscription') ]),
@@ -855,7 +1281,11 @@ return view.extend({
 							'id': 'routeflux-add-name',
 							'class': 'cbi-input-text',
 							'type': 'text',
-							'placeholder': _('Optional provider name')
+							'placeholder': _('Optional provider name'),
+							'value': this.addDraft.name,
+							'input': L.bind(function(ev) {
+								this.handleDraftInput('name', ev);
+							}, this)
 						})
 					])
 				]),
@@ -865,27 +1295,33 @@ return view.extend({
 						E('textarea', {
 							'id': 'routeflux-add-source',
 							'class': 'cbi-input-textarea',
-							'placeholder': _('Paste a subscription URL, VLESS/VMess/Trojan link, or 3x-ui/Xray JSON here.')
-						})
+							'placeholder': _('Paste a subscription URL, VLESS/VMess/Trojan link, or 3x-ui/Xray JSON here.'),
+							'input': L.bind(function(ev) {
+								this.handleDraftInput('source', ev);
+							}, this)
+						}, [ this.addDraft.source ])
 					])
 				])
 			]),
 			E('div', { 'class': 'routeflux-add-actions' }, [
 				E('button', {
 					'class': 'cbi-button cbi-button-apply',
-					'click': ui.createHandlerFn(this, 'handleAdd')
+					'click': ui.createHandlerFn(this, 'handleAdd'),
+					'disabled': addBusy ? 'disabled' : null
 				}, [ _('Add Subscription') ]),
 				E('button', {
 					'class': 'cbi-button cbi-button-negative',
 					'click': ui.createHandlerFn(this, 'handleRemoveAll'),
-					'disabled': subscriptions.length === 0 ? 'disabled' : null
+					'disabled': subscriptions.length === 0 || removeAllBusy ? 'disabled' : null
 				}, [ _('Remove All') ])
-			])
+			]),
+			addActionMessage !== '' ? E('div', { 'class': 'routeflux-action-status' }, [ addActionMessage ]) : ''
 		]));
 
 		if (subscriptions.length === 0) {
 			content.push(E('div', { 'class': 'cbi-section' }, [
-				E('p', {}, [ _('No subscriptions imported yet.') ])
+				E('p', {}, [ _('No subscriptions imported yet.') ]),
+				this.pageLoading ? E('p', { 'class': 'routeflux-action-status' }, [ _('Waiting for RouteFlux data...') ]) : ''
 			]));
 			return content;
 		}
@@ -897,7 +1333,13 @@ return view.extend({
 	},
 
 	render: function(data) {
-		return E('div', { 'id': 'routeflux-subscriptions-root' }, this.renderPageContent(data));
+		this.ensureState();
+		if (Array.isArray(data))
+			this.pageData = data;
+		return E('div', {
+			'id': 'routeflux-subscriptions-root',
+			'class': 'routeflux-subscriptions-shell'
+		}, this.renderPageContent(this.pageData));
 	},
 
 	handleSave: null,
