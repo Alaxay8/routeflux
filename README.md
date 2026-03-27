@@ -26,14 +26,19 @@ RouteFlux ships one runtime with three operator surfaces: CLI, LuCI, and TUI. On
 
 ## Quick Start
 
-Install the current beta release from your computer. Set `ROUTEFLUX_TAG` to the release tag you want to install:
+Install the current stable release from your computer:
 
 ```bash
-ROUTEFLUX_TAG=v0.1.3-beta.10
+wget -O /tmp/routeflux-install.sh "https://github.com/Alaxay8/routeflux/releases/latest/download/install.sh" && sh /tmp/routeflux-install.sh
+```
+
+If you need a pinned stable version instead of the latest stable release, use the release tag directly:
+
+```bash
+ROUTEFLUX_TAG=v0.1.4
 wget -O /tmp/routeflux-install.sh "https://github.com/Alaxay8/routeflux/releases/download/${ROUTEFLUX_TAG}/install.sh" && sh /tmp/routeflux-install.sh
 ```
 
-GitHub does not serve prerelease assets from `releases/latest/download`. While RouteFlux is still published as a beta prerelease, use a tag-pinned release URL.
 If Xray is missing, the installer automatically downloads and installs the bundled Xray runtime for the matching release and architecture before installing RouteFlux.
 
 Current easy-install release assets are provided for:
@@ -41,10 +46,10 @@ Current easy-install release assets are provided for:
 - `mipsel_24kc`
 - `x86_64`
 
-To remove RouteFlux, the bundled Xray runtime, and LuCI assets from the router, use the same `ROUTEFLUX_TAG` value that you used for installation:
+To remove RouteFlux, the bundled Xray runtime, and LuCI assets from the router, use the uninstall script from the current stable release:
 
 ```bash
-wget -O /tmp/routeflux-uninstall.sh "https://github.com/Alaxay8/routeflux/releases/download/${ROUTEFLUX_TAG}/uninstall.sh" && sh /tmp/routeflux-uninstall.sh
+wget -O /tmp/routeflux-uninstall.sh "https://github.com/Alaxay8/routeflux/releases/latest/download/uninstall.sh" && sh /tmp/routeflux-uninstall.sh
 ```
 
 After install:
@@ -57,14 +62,19 @@ See [Installation](#installation) and [Usage](#usage).
 
 ## Installation
 
-1. Fastest path: use the installer from the current beta GitHub release:
+1. Fastest path: use the installer from the current stable GitHub release:
 
 ```bash
-ROUTEFLUX_TAG=v0.1.3-beta.10
+wget -O /tmp/routeflux-install.sh "https://github.com/Alaxay8/routeflux/releases/latest/download/install.sh" && sh /tmp/routeflux-install.sh
+```
+
+If you need a pinned stable installer instead of the moving latest stable alias, use the release tag directly:
+
+```bash
+ROUTEFLUX_TAG=v0.1.4
 wget -O /tmp/routeflux-install.sh "https://github.com/Alaxay8/routeflux/releases/download/${ROUTEFLUX_TAG}/install.sh" && sh /tmp/routeflux-install.sh
 ```
 
-If you publish a non-prerelease stable release later, you can switch this command back to `releases/latest/download/install.sh`.
 The installer will auto-install the bundled Xray runtime when `/usr/bin/xray` or `/etc/init.d/xray` is missing.
 
 1. For local builds, install Go `1.26` or later.
