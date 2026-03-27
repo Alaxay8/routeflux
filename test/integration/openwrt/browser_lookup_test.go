@@ -3,6 +3,8 @@ package openwrt_test
 import (
 	"errors"
 	"testing"
+
+	"github.com/chromedp/cdproto/network"
 )
 
 func TestResolveBrowserBinaryPrefersEnvOverride(t *testing.T) {
@@ -82,5 +84,13 @@ func TestResolveBrowserBinaryErrorsWhenNoBrowserFound(t *testing.T) {
 	)
 	if err == nil {
 		t.Fatal("expected resolve browser binary to fail")
+	}
+}
+
+func TestCDPBindingsSupportLoopbackIPAddressSpace(t *testing.T) {
+	t.Parallel()
+
+	if got := network.IPAddressSpaceLoopback.String(); got != "Loopback" {
+		t.Fatalf("got %q, want Loopback", got)
 	}
 }

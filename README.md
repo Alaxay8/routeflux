@@ -67,7 +67,7 @@ wget -O /tmp/routeflux-install.sh "https://github.com/Alaxay8/routeflux/releases
 If you publish a non-prerelease stable release later, you can switch this command back to `releases/latest/download/install.sh`.
 The installer will auto-install the bundled Xray runtime when `/usr/bin/xray` or `/etc/init.d/xray` is missing.
 
-1. For local builds, install Go `1.22` or later.
+1. For local builds, install Go `1.26` or later.
 2. Use OpenWrt or ImmortalWrt with `nftables` available. OpenWrt `22.03+` is the practical baseline for the current firewall integration.
 3. Build RouteFlux from source:
 

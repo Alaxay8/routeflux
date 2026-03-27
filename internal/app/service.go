@@ -6,6 +6,7 @@ import (
 	"encoding/base64"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"html"
 	"io"
@@ -604,7 +605,7 @@ func (s *Service) connectAuto(ctx context.Context, subscriptionID string) (domai
 		if err := s.store.SaveState(state); err != nil {
 			return domain.Node{}, fmt.Errorf("save state: %w", err)
 		}
-		return domain.Node{}, fmt.Errorf(decision.Reason)
+		return domain.Node{}, errors.New(decision.Reason)
 	}
 
 	selectedNode, err := s.commitAutoSelection(ctx, sub, decision)
@@ -753,7 +754,7 @@ func (s *Service) restoreRuntime(ctx context.Context) error {
 		if persistErr := s.persistRestoreFailure(ctx, reason); persistErr != nil {
 			return fmt.Errorf("%s: %v", reason, persistErr)
 		}
-		return fmt.Errorf(reason)
+		return errors.New(reason)
 	}
 
 	settings, err := s.store.LoadSettings()
@@ -1894,7 +1895,7 @@ func (s *Service) ensureBackendRunning(ctx context.Context, subscriptionID, node
 	}
 	s.logWarn("backend reported not running", "subscription", subscriptionID, "node", nodeID, "mode", mode, "service_state", status.ServiceState)
 	_ = s.markConnectionFailed(ctx, subscriptionID, nodeID, mode, reason)
-	return fmt.Errorf(reason)
+	return errors.New(reason)
 }
 
 func (s *Service) waitForBackendRunning(ctx context.Context, subscriptionID, nodeID string, mode domain.SelectionMode) (backend.RuntimeStatus, error) {
