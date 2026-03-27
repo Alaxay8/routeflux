@@ -8,7 +8,7 @@ RouteFlux is a lightweight OpenWrt-native Go application for managing Xray and V
 
 RouteFlux imports subscription URLs, raw `vless://`, `vmess://`, and `trojan://` links, plus valid 3x-ui or Xray JSON configs. It normalizes supported proxy outbounds into one node model, stores local state safely, and generates runtime configuration for Xray on OpenWrt and compatible forks such as ImmortalWrt.
 
-The current production claim is the CLI and runtime path. The TUI and LuCI frontend remain MVP or experimental surfaces while the router runtime, persisted state, and OpenWrt backend path are hardened first.
+RouteFlux ships one runtime with three operator surfaces: CLI, LuCI, and TUI. On OpenWrt, the primary day-to-day surfaces are the CLI and LuCI web interface, while the TUI remains a keyboard-first local interface for SSH sessions and terminal-driven workflows.
 
 ## Features
 
@@ -39,6 +39,12 @@ Current easy-install release assets are provided for:
 
 - `mipsel_24kc`
 - `x86_64`
+
+To remove RouteFlux, the bundled Xray runtime, and LuCI assets from the router:
+
+```bash
+wget -O /tmp/routeflux-uninstall.sh https://github.com/Alaxay8/routeflux/releases/download/v0.1.3-beta.10/uninstall.sh && sh /tmp/routeflux-uninstall.sh
+```
 
 After install:
 
@@ -118,6 +124,7 @@ This creates:
 - `dist/xray_${VERSION}_mipsel_24kc.tar.gz`
 - `dist/xray_${VERSION}_x86_64.tar.gz`
 - `dist/install.sh`
+- `dist/uninstall.sh`
 
 For a reliable manual install, copy the tarball to the router and extract it at `/`:
 
@@ -376,7 +383,7 @@ The codebase is split into domain, parser, store, probe, backend, app, CLI, and 
 
 ## TUI
 
-The TUI is still an MVP surface. It is keyboard-driven and focuses on provider-first navigation:
+The TUI is a keyboard-driven interface that focuses on provider-first navigation:
 
 - `j` / `k`: move between VPN services
 - `h` / `l`: move between profiles inside the selected service
@@ -414,16 +421,16 @@ Placeholder screenshots:
 - Xray is required for connect, disconnect, and runtime config generation.
 - 3x-ui/Xray JSON import reads supported proxy outbounds only. It does not preserve full `dns`, `routing`, `inbounds`, outbound chaining, or other auxiliary runtime sections.
 - The current Xray backend connects VLESS, VMess, and Trojan nodes.
-- Transparent router traffic interception is not fully automated in MVP.
+- Transparent router traffic interception still requires explicit firewall configuration for the traffic you want to route through RouteFlux.
 - Automatic subscription refresh, continuous auto-mode health checks, and live failover require the RouteFlux daemon or OpenWrt `/etc/init.d/routeflux` service to be running.
 - Simple firewall routing currently supports destination IPv4 targets, source IPv4 hosts, CIDR pools, IPv4 ranges, and the `all` or `*` LAN-wide shortcut. QUIC blocking is host-mode only.
-- The CLI and runtime path are the supported production surface today.
-- The TUI and LuCI frontend remain MVP or experimental surfaces. A LuCI MVP lives in `luci-app-routeflux` with `Overview`, `Subscriptions`, `Firewall`, `DNS`, `Settings`, `Diagnostics`, and `Logs` pages.
+- CLI, LuCI, and TUI all operate on the same persisted state and runtime backend.
+- The LuCI frontend lives in `luci-app-routeflux` with `Overview`, `Subscriptions`, `Firewall`, `DNS`, `Settings`, `Diagnostics`, and `Logs` pages.
 
 ## Support Matrix
 
-- Supported production surface: CLI and runtime path.
-- Experimental surfaces: TUI and LuCI.
+- Primary operator surfaces: CLI and LuCI on OpenWrt.
+- Additional operator surface: TUI for keyboard-first local workflows.
 - Supported router family: OpenWrt and compatible forks such as ImmortalWrt.
 - Practical runtime baseline: OpenWrt `22.03+` with `nftables` available.
 - Runtime dependency: Xray service script available at `/etc/init.d/xray` unless overridden.
