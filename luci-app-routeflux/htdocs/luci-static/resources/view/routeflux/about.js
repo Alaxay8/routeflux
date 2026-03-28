@@ -68,10 +68,7 @@ return view.extend({
 		]));
 
 		content.push(E('div', { 'class': 'routeflux-overview-grid' }, [
-			routefluxUI.renderSummaryCard(_('Version'), version, {
-				'tone': 'connected',
-				'primary': true
-			}),
+			routefluxUI.renderSummaryCard(_('Version'), version),
 			routefluxUI.renderSummaryCard(_('Commit'), commit),
 			routefluxUI.renderSummaryCard(_('Build Date'), buildDate)
 		]));
