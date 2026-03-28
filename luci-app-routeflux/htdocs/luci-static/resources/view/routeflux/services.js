@@ -237,10 +237,7 @@ return view.extend({
 		]));
 
 		content.push(E('div', { 'class': 'routeflux-overview-grid' }, [
-			routefluxUI.renderSummaryCard(_('Built-in Presets'), String(builtinServices.length), {
-				'primary': true,
-				'tone': 'connected'
-			}),
+			routefluxUI.renderSummaryCard(_('Built-in Presets'), String(builtinServices.length)),
 			routefluxUI.renderSummaryCard(_('Custom Services'), String(customServices.length)),
 			routefluxUI.renderSummaryCard(_('Alias Rules'), _('lowercase, digits, hyphens'))
 		]));
