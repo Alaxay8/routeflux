@@ -75,12 +75,6 @@ func (Generator) Generate(req backend.ConfigRequest) ([]byte, error) {
 		cfg.Routing.Rules = append(cfg.Routing.Rules, *rule)
 	}
 
-	cfg.Routing.Rules = append(cfg.Routing.Rules, xrayRouteRule{
-		Type:        "field",
-		OutboundTag: "selected",
-		Network:     "tcp,udp",
-	})
-
 	if req.TransparentProxy {
 		cfg.Inbounds = append(cfg.Inbounds, xrayInbound{
 			Tag:      "transparent-in",
@@ -103,12 +97,80 @@ func (Generator) Generate(req backend.ConfigRequest) ([]byte, error) {
 		})
 	}
 
+	cfg.Routing.Rules = append(cfg.Routing.Rules, transparentRoutingRules(req)...)
+	cfg.Routing.Rules = append(cfg.Routing.Rules, xrayRouteRule{
+		Type:        "field",
+		OutboundTag: "selected",
+		InboundTag:  []string{"socks-in", "http-in"},
+		Network:     "tcp,udp",
+	})
+
 	rendered, err := json.MarshalIndent(cfg, "", "  ")
 	if err != nil {
 		return nil, fmt.Errorf("marshal xray config: %w", err)
 	}
 
 	return rendered, nil
+}
+
+func transparentRoutingRules(req backend.ConfigRequest) []xrayRouteRule {
+	if !req.TransparentProxy {
+		return nil
+	}
+
+	rules := make([]xrayRouteRule, 0, 3)
+
+	if len(req.TransparentTargetDomains) > 0 {
+		rules = append(rules, xrayRouteRule{
+			Type:        "field",
+			OutboundTag: "selected",
+			InboundTag:  []string{"transparent-in"},
+			Network:     "tcp",
+			Domain:      routeDomainMatchers(req.TransparentTargetDomains),
+		})
+	}
+
+	if len(req.TransparentTargetCIDRs) > 0 {
+		rules = append(rules, xrayRouteRule{
+			Type:        "field",
+			OutboundTag: "selected",
+			InboundTag:  []string{"transparent-in"},
+			Network:     "tcp",
+			IP:          cleanStringList(req.TransparentTargetCIDRs),
+		})
+	}
+
+	if len(req.TransparentTargetDomains) > 0 || len(req.TransparentTargetCIDRs) > 0 {
+		rules = append(rules, xrayRouteRule{
+			Type:        "field",
+			OutboundTag: "direct",
+			InboundTag:  []string{"transparent-in"},
+			Network:     "tcp",
+		})
+		return rules
+	}
+
+	rules = append(rules, xrayRouteRule{
+		Type:        "field",
+		OutboundTag: "selected",
+		InboundTag:  []string{"transparent-in"},
+		Network:     "tcp",
+	})
+
+	return rules
+}
+
+func routeDomainMatchers(domains []string) []string {
+	cleaned := cleanStringList(domains)
+	if len(cleaned) == 0 {
+		return nil
+	}
+
+	out := make([]string, 0, len(cleaned))
+	for _, domain := range cleaned {
+		out = append(out, "domain:"+domain)
+	}
+	return out
 }
 
 func selectedNode(nodes []domain.Node, selectedID string) (domain.Node, error) {

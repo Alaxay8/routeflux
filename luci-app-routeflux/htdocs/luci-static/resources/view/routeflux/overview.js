@@ -439,7 +439,8 @@ return view.extend({
 		if (firewall.enabled === true) {
 			if (Array.isArray(firewall.source_cidrs) && firewall.source_cidrs.length > 0)
 				firewallMode = 'hosts';
-			else if (Array.isArray(firewall.target_cidrs) && firewall.target_cidrs.length > 0)
+			else if ((Array.isArray(firewall.target_cidrs) && firewall.target_cidrs.length > 0) ||
+				(Array.isArray(firewall.target_domains) && firewall.target_domains.length > 0))
 				firewallMode = 'targets';
 			else
 				firewallMode = 'enabled';

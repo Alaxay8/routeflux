@@ -1,0 +1,301 @@
+package openwrt
+
+import (
+	"bufio"
+	"context"
+	"fmt"
+	"os"
+	"os/exec"
+	"path/filepath"
+	"sort"
+	"strings"
+
+	"github.com/Alaxay8/routeflux/internal/domain"
+)
+
+const (
+	defaultDNSMasqBinaryPath  = "/usr/sbin/dnsmasq"
+	defaultDNSMasqServicePath = "/etc/init.d/dnsmasq"
+)
+
+func dnsmasqBinaryPath() string {
+	if path := os.Getenv("ROUTEFLUX_DNSMASQ_BINARY"); path != "" {
+		return path
+	}
+	return defaultDNSMasqBinaryPath
+}
+
+func dnsmasqServicePath() string {
+	if path := os.Getenv("ROUTEFLUX_DNSMASQ_SERVICE"); path != "" {
+		return path
+	}
+	return defaultDNSMasqServicePath
+}
+
+func dnsmasqSnippetOverridePath() string {
+	return os.Getenv("ROUTEFLUX_DNSMASQ_SNIPPET")
+}
+
+func (m FirewallManager) ensureDNSMasqNFTSetSupport(ctx context.Context) error {
+	path := firstNonEmpty(m.DNSMasqPath, dnsmasqBinaryPath())
+	supported, err := dnsmasqSupportsNFTSet(ctx, path)
+	if err != nil {
+		return fmt.Errorf("inspect dnsmasq features: %w", err)
+	}
+	if supported {
+		return nil
+	}
+	return fmt.Errorf("domain targets require dnsmasq with nftset support; install dnsmasq-full")
+}
+
+func dnsmasqSupportsNFTSet(ctx context.Context, path string) (bool, error) {
+	tmp, err := os.CreateTemp("", "routeflux-dnsmasq-*.conf")
+	if err != nil {
+		return false, err
+	}
+	tmpPath := tmp.Name()
+	defer func() { _ = os.Remove(tmpPath) }()
+
+	if _, err := tmp.WriteString("port=0\nnftset=/routeflux-test.invalid/4#inet#routeflux#target_v4\n"); err != nil {
+		_ = tmp.Close()
+		return false, err
+	}
+	if err := tmp.Close(); err != nil {
+		return false, err
+	}
+
+	cmd := exec.CommandContext(ctx, path, "--test", "--conf-file="+tmpPath)
+	output, err := cmd.CombinedOutput()
+	if err == nil {
+		return true, nil
+	}
+
+	normalized := strings.ToLower(string(output))
+	if strings.Contains(normalized, "have_nftset") ||
+		strings.Contains(normalized, "no-nftset") ||
+		strings.Contains(normalized, "enable nftset directives") ||
+		strings.Contains(normalized, "bad option") ||
+		strings.Contains(normalized, "unknown option") {
+		return false, nil
+	}
+
+	return false, fmt.Errorf("%w: %s", err, strings.TrimSpace(string(output)))
+}
+
+func (m FirewallManager) dnsmasqSnippetPath() (string, error) {
+	if path := firstNonEmpty(m.DNSMasqSnippetPath, dnsmasqSnippetOverridePath()); path != "" {
+		return path, nil
+	}
+
+	dir, err := m.runningDNSMasqConfDir()
+	if err != nil {
+		return "", err
+	}
+	return filepath.Join(dir, "routeflux.conf"), nil
+}
+
+func (m FirewallManager) runningDNSMasqConfDir() (string, error) {
+	procRoot := firstNonEmpty(m.ProcRoot, "/proc")
+	entries, err := os.ReadDir(procRoot)
+	if err != nil {
+		return "", fmt.Errorf("read %s: %w", procRoot, err)
+	}
+
+	for _, entry := range entries {
+		if !entry.IsDir() || !isNumeric(entry.Name()) {
+			continue
+		}
+
+		pidDir := filepath.Join(procRoot, entry.Name())
+		comm, err := os.ReadFile(filepath.Join(pidDir, "comm"))
+		if err == nil && strings.TrimSpace(string(comm)) != "dnsmasq" {
+			continue
+		}
+
+		args, err := readNullSeparated(filepath.Join(pidDir, "cmdline"))
+		if err != nil {
+			continue
+		}
+		if dir := dnsmasqConfDirFromArgs(args); dir != "" {
+			return dir, nil
+		}
+	}
+
+	matches, err := filepath.Glob("/tmp/dnsmasq*.d")
+	if err == nil && len(matches) > 0 {
+		sort.Strings(matches)
+		return matches[0], nil
+	}
+
+	return "", fmt.Errorf("detect dnsmasq conf-dir: no running dnsmasq instance with conf-dir found")
+}
+
+func dnsmasqConfDirFromArgs(args []string) string {
+	var configPath string
+
+	for idx := 0; idx < len(args); idx++ {
+		arg := args[idx]
+		switch {
+		case strings.HasPrefix(arg, "--conf-dir="):
+			return parseConfDirSpec(strings.TrimPrefix(arg, "--conf-dir="))
+		case arg == "--conf-dir" && idx+1 < len(args):
+			return parseConfDirSpec(args[idx+1])
+		case strings.HasPrefix(arg, "--conf-file="):
+			configPath = strings.TrimPrefix(arg, "--conf-file=")
+		case (arg == "--conf-file" || arg == "-C") && idx+1 < len(args):
+			configPath = args[idx+1]
+		}
+	}
+
+	if configPath == "" {
+		return ""
+	}
+
+	return dnsmasqConfDirFromConfig(configPath)
+}
+
+func dnsmasqConfDirFromConfig(path string) string {
+	file, err := os.Open(path)
+	if err != nil {
+		return ""
+	}
+	defer file.Close()
+
+	scanner := bufio.NewScanner(file)
+	for scanner.Scan() {
+		line := strings.TrimSpace(scanner.Text())
+		if strings.HasPrefix(line, "#") {
+			continue
+		}
+		if strings.HasPrefix(line, "conf-dir=") {
+			return parseConfDirSpec(strings.TrimSpace(strings.TrimPrefix(line, "conf-dir=")))
+		}
+	}
+
+	return ""
+}
+
+func parseConfDirSpec(value string) string {
+	value = strings.TrimSpace(value)
+	if value == "" {
+		return ""
+	}
+
+	if idx := strings.Index(value, ","); idx >= 0 {
+		value = value[:idx]
+	}
+
+	return strings.TrimSpace(value)
+}
+
+func buildDNSMasqNFTSetConfig(domains []string) string {
+	if len(domains) == 0 {
+		return ""
+	}
+
+	sorted := append([]string(nil), domains...)
+	sort.Strings(sorted)
+
+	var builder strings.Builder
+	builder.WriteString("# Generated by RouteFlux. Matches domains and subdomains.\n")
+	for _, domain := range sorted {
+		fmt.Fprintf(&builder, "nftset=/%s/4#inet#routeflux#target_v4\n", domain)
+	}
+	return builder.String()
+}
+
+func (m FirewallManager) syncDNSMasqTargets(ctx context.Context, domains []string) error {
+	snippetPath, err := m.dnsmasqSnippetPath()
+	if err != nil {
+		if len(domains) == 0 {
+			return nil
+		}
+		return err
+	}
+
+	trimmedDomains := make([]string, 0, len(domains))
+	for _, domain := range domain.ExpandFirewallTargetDomains(domains) {
+		domain = strings.TrimSpace(domain)
+		if domain == "" {
+			continue
+		}
+		trimmedDomains = append(trimmedDomains, domain)
+	}
+
+	if len(trimmedDomains) == 0 {
+		if err := os.Remove(snippetPath); err != nil && !os.IsNotExist(err) {
+			return fmt.Errorf("remove dnsmasq nftset snippet: %w", err)
+		}
+		return m.reloadDNSMasq(ctx)
+	}
+
+	if err := atomicWriteText(snippetPath, buildDNSMasqNFTSetConfig(trimmedDomains), 0o644); err != nil {
+		return fmt.Errorf("write dnsmasq nftset snippet: %w", err)
+	}
+
+	return m.reloadDNSMasq(ctx)
+}
+
+func (m FirewallManager) reloadDNSMasq(ctx context.Context) error {
+	script := firstNonEmpty(m.DNSMasqServicePath, dnsmasqServicePath())
+	if script == "" {
+		return nil
+	}
+
+	if err := runCommand(ctx, script, "reload"); err == nil {
+		return nil
+	}
+
+	if err := runCommand(ctx, script, "restart"); err != nil {
+		return fmt.Errorf("reload dnsmasq service: %w", err)
+	}
+
+	return nil
+}
+
+func readNullSeparated(path string) ([]string, error) {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return nil, err
+	}
+	parts := strings.Split(string(data), "\x00")
+	out := make([]string, 0, len(parts))
+	for _, part := range parts {
+		part = strings.TrimSpace(part)
+		if part == "" {
+			continue
+		}
+		out = append(out, part)
+	}
+	return out, nil
+}
+
+func isNumeric(value string) bool {
+	if value == "" {
+		return false
+	}
+	for _, r := range value {
+		if r < '0' || r > '9' {
+			return false
+		}
+	}
+	return true
+}
+
+func firstNonEmpty(values ...string) string {
+	for _, value := range values {
+		if strings.TrimSpace(value) != "" {
+			return strings.TrimSpace(value)
+		}
+	}
+	return ""
+}
+
+func runCommand(ctx context.Context, path string, args ...string) error {
+	cmd := exec.CommandContext(ctx, path, args...)
+	output, err := cmd.CombinedOutput()
+	if err != nil {
+		return fmt.Errorf("%s %s: %w: %s", path, strings.Join(args, " "), err, strings.TrimSpace(string(output)))
+	}
+	return nil
+}

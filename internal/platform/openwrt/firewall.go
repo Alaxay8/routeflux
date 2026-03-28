@@ -45,20 +45,46 @@ func FirewallRulesPath() string {
 
 // FirewallManager applies transient nftables rules for transparent proxy routing.
 type FirewallManager struct {
-	NFTPath   string
-	RulesPath string
+	NFTPath            string
+	RulesPath          string
+	DNSMasqPath        string
+	DNSMasqServicePath string
+	DNSMasqSnippetPath string
+	ProcRoot           string
 }
 
 // NewFirewallManager creates an OpenWrt nftables-based firewall manager.
 func NewFirewallManager() FirewallManager {
 	return FirewallManager{
-		NFTPath:   "/usr/sbin/nft",
-		RulesPath: FirewallRulesPath(),
+		NFTPath:            "/usr/sbin/nft",
+		RulesPath:          FirewallRulesPath(),
+		DNSMasqPath:        dnsmasqBinaryPath(),
+		DNSMasqServicePath: dnsmasqServicePath(),
+		DNSMasqSnippetPath: dnsmasqSnippetOverridePath(),
+		ProcRoot:           "/proc",
 	}
+}
+
+// Validate ensures the current platform supports the requested firewall mode.
+func (m FirewallManager) Validate(ctx context.Context, settings domain.FirewallSettings) error {
+	if len(settings.TargetDomains) == 0 {
+		return nil
+	}
+	if err := m.ensureDNSMasqNFTSetSupport(ctx); err != nil {
+		return err
+	}
+	if _, err := m.dnsmasqSnippetPath(); err != nil {
+		return err
+	}
+	return nil
 }
 
 // Apply renders and loads nftables rules.
 func (m FirewallManager) Apply(ctx context.Context, settings domain.FirewallSettings) error {
+	if err := m.Validate(ctx, settings); err != nil {
+		return err
+	}
+
 	rules, err := BuildNFTablesRules(settings)
 	if err != nil {
 		return err
@@ -72,6 +98,10 @@ func (m FirewallManager) Apply(ctx context.Context, settings domain.FirewallSett
 		return fmt.Errorf("apply nftables rules: %w", err)
 	}
 
+	if err := m.syncDNSMasqTargets(ctx, settings.TargetDomains); err != nil {
+		return fmt.Errorf("sync dnsmasq targets: %w", err)
+	}
+
 	return nil
 }
 
@@ -82,6 +112,9 @@ func (m FirewallManager) Disable(ctx context.Context) error {
 		return err
 	}
 	_ = os.Remove(m.RulesPath)
+	if err := m.syncDNSMasqTargets(ctx, nil); err != nil {
+		return err
+	}
 	return nil
 }
 
@@ -95,8 +128,17 @@ func BuildNFTablesRules(settings domain.FirewallSettings) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	if len(targets) == 0 && len(sources) == 0 {
-		return "", fmt.Errorf("at least one target IP/CIDR or one source host is required")
+	targetMode := len(targets) > 0 || len(settings.TargetDomains) > 0
+	if !targetMode && len(sources) == 0 {
+		return "", fmt.Errorf("at least one target domain/IP/CIDR or one source host is required")
+	}
+
+	redirectSources := sources
+	if targetMode {
+		redirectSources, err = normalizeFirewallTargets(allLANSourceCIDRs)
+		if err != nil {
+			return "", err
+		}
 	}
 
 	port := settings.TransparentPort
@@ -106,19 +148,20 @@ func BuildNFTablesRules(settings domain.FirewallSettings) (string, error) {
 
 	var builder strings.Builder
 	builder.WriteString("table inet routeflux {\n")
-	if len(targets) > 0 {
-		fmt.Fprintf(&builder, "  set target_v4 {\n    type ipv4_addr\n    flags interval\n    elements = { %s }\n  }\n\n", strings.Join(targets, ", "))
+	if len(targets) > 0 || len(settings.TargetDomains) > 0 {
+		builder.WriteString("  set target_v4 {\n    type ipv4_addr\n    flags interval\n")
+		if len(targets) > 0 {
+			fmt.Fprintf(&builder, "    elements = { %s }\n", strings.Join(targets, ", "))
+		}
+		builder.WriteString("  }\n\n")
 	}
-	if len(sources) > 0 {
-		fmt.Fprintf(&builder, "  set source_v4 {\n    type ipv4_addr\n    flags interval\n    elements = { %s }\n  }\n\n", strings.Join(sources, ", "))
+	if len(redirectSources) > 0 {
+		fmt.Fprintf(&builder, "  set source_v4 {\n    type ipv4_addr\n    flags interval\n    elements = { %s }\n  }\n\n", strings.Join(redirectSources, ", "))
 		fmt.Fprintf(&builder, "  set bypass_v4 {\n    type ipv4_addr\n    flags interval\n    elements = { %s }\n  }\n\n", strings.Join(bypassDestinationCIDRs, ", "))
 	}
 
 	builder.WriteString("  chain prerouting {\n    type nat hook prerouting priority dstnat; policy accept;\n")
-	if len(targets) > 0 {
-		fmt.Fprintf(&builder, "    ip daddr @target_v4 tcp dport != %d redirect to :%d\n", port, port)
-	}
-	if len(sources) > 0 {
+	if len(redirectSources) > 0 {
 		builder.WriteString("    ip daddr @bypass_v4 return\n")
 		fmt.Fprintf(&builder, "    ip saddr @source_v4 tcp dport != %d redirect to :%d\n", port, port)
 		if settings.BlockQUIC {
@@ -127,7 +170,7 @@ func BuildNFTablesRules(settings domain.FirewallSettings) (string, error) {
 	}
 	builder.WriteString("  }\n")
 
-	if len(targets) > 0 {
+	if targetMode {
 		fmt.Fprintf(&builder, "\n  chain output {\n    type nat hook output priority -100; policy accept;\n    ip daddr @target_v4 tcp dport != %d redirect to :%d\n  }\n", port, port)
 	}
 

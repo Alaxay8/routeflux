@@ -118,6 +118,7 @@ type FirewallSettings struct {
 	Enabled         bool     `json:"enabled"`
 	TransparentPort int      `json:"transparent_port"`
 	TargetCIDRs     []string `json:"target_cidrs"`
+	TargetDomains   []string `json:"target_domains"`
 	SourceCIDRs     []string `json:"source_cidrs"`
 	BlockQUIC       bool     `json:"block_quic"`
 }
@@ -125,7 +126,7 @@ type FirewallSettings struct {
 // DefaultSettings returns the baseline configuration used on first start.
 func DefaultSettings() Settings {
 	return Settings{
-		SchemaVersion:       2,
+		SchemaVersion:       3,
 		RefreshInterval:     NewDuration(time.Hour),
 		HealthCheckInterval: NewDuration(30 * time.Second),
 		SwitchCooldown:      NewDuration(5 * time.Minute),
@@ -135,6 +136,7 @@ func DefaultSettings() Settings {
 			Enabled:         false,
 			TransparentPort: 12345,
 			TargetCIDRs:     nil,
+			TargetDomains:   nil,
 			SourceCIDRs:     nil,
 			BlockQUIC:       true,
 		},

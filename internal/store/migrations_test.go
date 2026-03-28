@@ -60,6 +60,36 @@ func TestLoadSettingsMigratesMissingSchemaVersion(t *testing.T) {
 	}
 }
 
+func TestLoadSettingsPreservesLegacyFirewallTargetsWithoutDomains(t *testing.T) {
+	t.Parallel()
+
+	root := t.TempDir()
+	fileStore := store.NewFileStore(root)
+
+	settingsJSON := `{
+  "schema_version": 2,
+  "firewall": {
+    "enabled": true,
+    "target_cidrs": ["1.1.1.1", "8.8.8.8/32"]
+  }
+}`
+	if err := os.WriteFile(filepath.Join(root, "settings.json"), []byte(settingsJSON), 0o644); err != nil {
+		t.Fatalf("write settings file: %v", err)
+	}
+
+	settings, err := fileStore.LoadSettings()
+	if err != nil {
+		t.Fatalf("load settings: %v", err)
+	}
+
+	if !reflect.DeepEqual(settings.Firewall.TargetCIDRs, []string{"1.1.1.1", "8.8.8.8/32"}) {
+		t.Fatalf("unexpected target cidrs: %+v", settings.Firewall.TargetCIDRs)
+	}
+	if len(settings.Firewall.TargetDomains) != 0 {
+		t.Fatalf("expected no target domains, got %+v", settings.Firewall.TargetDomains)
+	}
+}
+
 func TestLoadSettingsRejectsFutureSchemaVersion(t *testing.T) {
 	t.Parallel()
 

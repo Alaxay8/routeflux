@@ -27,6 +27,7 @@ func decodeSettings(data []byte, path string) (domain.Settings, error) {
 		Enabled         *bool     `json:"enabled"`
 		TransparentPort *int      `json:"transparent_port"`
 		TargetCIDRs     *[]string `json:"target_cidrs"`
+		TargetDomains   *[]string `json:"target_domains"`
 		SourceCIDRs     *[]string `json:"source_cidrs"`
 		BlockQUIC       *bool     `json:"block_quic"`
 	}
@@ -107,6 +108,9 @@ func decodeSettings(data []byte, path string) (domain.Settings, error) {
 		}
 		if raw.Firewall.TargetCIDRs != nil {
 			settings.Firewall.TargetCIDRs = append([]string(nil), (*raw.Firewall.TargetCIDRs)...)
+		}
+		if raw.Firewall.TargetDomains != nil {
+			settings.Firewall.TargetDomains = append([]string(nil), (*raw.Firewall.TargetDomains)...)
 		}
 		if raw.Firewall.SourceCIDRs != nil {
 			settings.Firewall.SourceCIDRs = append([]string(nil), (*raw.Firewall.SourceCIDRs)...)

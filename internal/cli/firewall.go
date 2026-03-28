@@ -20,7 +20,7 @@ Firewall controls which traffic RouteFlux redirects into the transparent proxy.
 
 Think of it like this:
 - mode answers "what do you want to match?"
-- targets means selected destination IPs go through RouteFlux
+- targets means selected services, domains, or destination IPv4 targets go through RouteFlux
 - hosts means all TCP traffic from selected LAN clients goes through RouteFlux
 `),
 		Example: strings.TrimSpace(`
@@ -29,7 +29,7 @@ routeflux firewall explain
 routeflux firewall set hosts 192.168.1.150
 routeflux firewall set hosts 192.168.1.0/24
 routeflux firewall set hosts all
-routeflux firewall set targets 1.1.1.1 8.8.8.8/32
+routeflux firewall set targets youtube.com instagram.com 1.1.1.1
 routeflux firewall set port 12345
 routeflux firewall set block-quic true
 routeflux firewall disable
@@ -77,9 +77,10 @@ Firewall modes:
 - disabled: Do not redirect router traffic through RouteFlux.
   Example: the proxy is installed, but no device or destination is forced through it.
   Command: routeflux firewall disable
-- targets: Send traffic through RouteFlux only when the destination matches selected IPs.
-  Example: only traffic to 1.1.1.1 or 8.8.8.8/32 goes through RouteFlux.
-  Command: routeflux firewall set targets 1.1.1.1 8.8.8.8/32
+- targets: Send traffic through RouteFlux only when the destination matches selected services, domains, or IPv4 targets.
+  Example: routeflux firewall set targets youtube.com means "YouTube traffic only", not "every Google domain".
+  Popular targets like youtube.com and instagram.com auto-expand to the domain families they need.
+  Command: routeflux firewall set targets youtube.com instagram.com 1.1.1.1
 - hosts: Send all TCP traffic from selected LAN devices through RouteFlux.
   Example: route one TV, phone, or laptop through the proxy.
   Command: routeflux firewall set hosts 192.168.1.150
@@ -92,7 +93,7 @@ Hosts selectors:
 
 Other options:
 - port: port used for transparent redirect
-- block-quic: block UDP/443 in host mode so apps do not bypass TCP routing through QUIC
+- block-quic: block UDP/443 from matched hosts in host mode, or from LAN clients in targets mode, so apps do not bypass TCP routing through QUIC
 `))
 		},
 	}
@@ -106,13 +107,13 @@ func newFirewallSetCmd(opts *rootOptions) *cobra.Command {
 		Short: "Change firewall routing settings",
 		Long: strings.TrimSpace(`
 Firewall options:
-- targets: selected destination IPv4 addresses, CIDRs, or ranges
+- targets: selected services, domains, IPv4 addresses, CIDRs, or ranges
 - hosts: LAN clients whose TCP traffic should go through RouteFlux
 - port: transparent redirect port
 - block-quic: true or false
 
 Legacy compatibility:
-- routeflux firewall set 1.1.1.1 8.8.8.8/32
+- routeflux firewall set youtube.com 1.1.1.1 8.8.8.8/32
   still works and is treated as routeflux firewall set targets ...
 `),
 		Example: strings.TrimSpace(`
@@ -120,10 +121,10 @@ routeflux firewall set hosts 192.168.1.150
 routeflux firewall set hosts 192.168.1.0/24
 routeflux firewall set hosts 192.168.1.150-192.168.1.159
 routeflux firewall set hosts all
-routeflux firewall set targets 1.1.1.1 8.8.8.8/32
+routeflux firewall set targets youtube.com instagram.com 1.1.1.1
 routeflux firewall set port 12345
 routeflux firewall set block-quic true
-routeflux firewall set 1.1.1.1 8.8.8.8/32
+routeflux firewall set youtube.com 1.1.1.1
 `),
 		Args: cobra.MinimumNArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
@@ -147,7 +148,7 @@ routeflux firewall set 1.1.1.1 8.8.8.8/32
 				if err != nil {
 					return err
 				}
-				return printOutput(cmd, opts.jsonOutput, updated, fmt.Sprintf("Firewall targets set to %s", strings.Join(updated.TargetCIDRs, ", ")))
+				return printOutput(cmd, opts.jsonOutput, updated, fmt.Sprintf("Firewall targets set to %s", firewallTargetsSummary(updated)))
 			case "hosts":
 				settings, err := opts.service.GetFirewallSettings()
 				if err != nil {
@@ -283,7 +284,9 @@ func renderFirewallSettingsText(settings domain.FirewallSettings) string {
 		fmt.Sprintf("mode=%s", firewallMode(settings)),
 		fmt.Sprintf("mode-help=%s", firewallModeHelp(settings)),
 		fmt.Sprintf("transparent-port=%d", settings.TransparentPort),
-		fmt.Sprintf("targets=%s", strings.Join(settings.TargetCIDRs, ", ")),
+		fmt.Sprintf("targets=%s", firewallTargetsSummary(settings)),
+		fmt.Sprintf("target-domains=%s", strings.Join(settings.TargetDomains, ", ")),
+		fmt.Sprintf("target-ips=%s", strings.Join(settings.TargetCIDRs, ", ")),
 		fmt.Sprintf("hosts=%s", strings.Join(settings.SourceCIDRs, ", ")),
 		fmt.Sprintf("block-quic=%t", settings.BlockQUIC),
 	}, "\n")
@@ -291,11 +294,11 @@ func renderFirewallSettingsText(settings domain.FirewallSettings) string {
 
 func firewallMode(settings domain.FirewallSettings) string {
 	switch {
-	case !settings.Enabled || (len(settings.TargetCIDRs) == 0 && len(settings.SourceCIDRs) == 0):
+	case !settings.Enabled || (len(settings.TargetCIDRs) == 0 && len(settings.TargetDomains) == 0 && len(settings.SourceCIDRs) == 0):
 		return "disabled"
-	case len(settings.TargetCIDRs) > 0 && len(settings.SourceCIDRs) == 0:
+	case (len(settings.TargetCIDRs) > 0 || len(settings.TargetDomains) > 0) && len(settings.SourceCIDRs) == 0:
 		return "targets"
-	case len(settings.SourceCIDRs) > 0 && len(settings.TargetCIDRs) == 0:
+	case len(settings.SourceCIDRs) > 0 && len(settings.TargetCIDRs) == 0 && len(settings.TargetDomains) == 0:
 		return "hosts"
 	default:
 		return "mixed"
@@ -307,10 +310,17 @@ func firewallModeHelp(settings domain.FirewallSettings) string {
 	case "disabled":
 		return "No traffic is being redirected through RouteFlux."
 	case "targets":
-		return "Only traffic to selected destination IPs goes through RouteFlux."
+		return "Only traffic to selected services, domains, or destination IPv4 targets goes through RouteFlux."
 	case "hosts":
 		return "All TCP traffic from selected LAN devices goes through RouteFlux."
 	default:
 		return "Both destination targets and source hosts are active."
 	}
+}
+
+func firewallTargetsSummary(settings domain.FirewallSettings) string {
+	values := make([]string, 0, len(settings.TargetDomains)+len(settings.TargetCIDRs))
+	values = append(values, settings.TargetDomains...)
+	values = append(values, settings.TargetCIDRs...)
+	return strings.Join(values, ", ")
 }

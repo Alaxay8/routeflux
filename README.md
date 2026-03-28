@@ -151,7 +151,7 @@ routeflux dns explain
 
 routeflux firewall get
 routeflux firewall set hosts 192.168.1.150
-routeflux firewall set targets 1.1.1.1 8.8.8.8/32
+routeflux firewall set targets youtube.com instagram.com 1.1.1.1
 routeflux firewall explain
 ```
 
@@ -295,12 +295,27 @@ What does not happen when firewall is disabled:
 
 In simple words: RouteFlux still manages subscriptions and the active Xray runtime, but it does not capture traffic from the router or your LAN by itself.
 
-- `targets`: send traffic through RouteFlux only when the destination matches selected IPs
+- `targets`: send traffic through RouteFlux only when the destination matches selected services, domains, or IPv4 targets
   Example: only traffic to specific services should go through the proxy.
 
 ```bash
-routeflux firewall set targets 1.1.1.1 8.8.8.8/32
+routeflux firewall set targets youtube.com instagram.com 1.1.1.1
 ```
+
+Target selectors:
+
+- domain: `youtube.com`
+- IPv4 address: `1.1.1.1`
+- subnet: `8.8.8.0/24`
+- range: `203.0.113.10-203.0.113.20`
+
+Notes for domain targets:
+
+- RouteFlux treats `youtube.com` as the domain and its subdomains.
+- Popular targets like `youtube.com` and `instagram.com` auto-expand to the domain families they need, so only those services go through RouteFlux.
+- Domain targets require `dnsmasq` with `nftset` support, which usually means `dnsmasq-full` on OpenWrt.
+- Domain targets depend on router-visible DNS answers. If clients use their own DoH or DoT directly, target IP sets may stay empty.
+- On shared CDNs, RouteFlux now falls back to direct routing for non-matching transparent traffic instead of sending every matched IP through the selected node.
 
 - `hosts`: send all TCP traffic from selected LAN devices through RouteFlux
   Example: route one phone, TV, or laptop through the proxy.
@@ -326,7 +341,7 @@ routeflux firewall set hosts all
 
 Other firewall options:
 
-- `block-quic`: blocks UDP/443 in `hosts` mode so apps do not bypass proxy routing through QUIC
+- `block-quic`: blocks UDP/443 in `hosts` mode, or from LAN clients in `targets` mode, so apps do not bypass proxy routing through QUIC
 - `port`: changes the transparent redirect port
 
 ## Development

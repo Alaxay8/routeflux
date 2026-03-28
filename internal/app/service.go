@@ -40,8 +40,9 @@ type Store interface {
 	SaveState(domain.RuntimeState) error
 }
 
-// Firewaller applies OpenWrt destination-based transparent proxy rules.
+// Firewaller applies OpenWrt transparent proxy rules.
 type Firewaller interface {
+	Validate(ctx context.Context, settings domain.FirewallSettings) error
 	Apply(ctx context.Context, settings domain.FirewallSettings) error
 	Disable(ctx context.Context) error
 }
@@ -789,11 +790,21 @@ func (s *Service) configureFirewall(ctx context.Context, targets []string, enabl
 		return domain.FirewallSettings{}, fmt.Errorf("load settings: %w", err)
 	}
 
+	parsedTargets, err := domain.ParseFirewallTargets(targets)
+	if err != nil {
+		return domain.FirewallSettings{}, err
+	}
+
 	settings.Firewall.Enabled = enabled
-	settings.Firewall.TargetCIDRs = slices.Clone(targets)
+	settings.Firewall.TargetCIDRs = slices.Clone(parsedTargets.CIDRs)
+	settings.Firewall.TargetDomains = slices.Clone(parsedTargets.Domains)
 	settings.Firewall.SourceCIDRs = nil
 	if port > 0 {
 		settings.Firewall.TransparentPort = port
+	}
+
+	if err := s.validateFirewall(ctx, settings.Firewall); err != nil {
+		return domain.FirewallSettings{}, err
 	}
 
 	if err := s.store.SaveSettings(settings); err != nil {
@@ -823,8 +834,13 @@ func (s *Service) configureFirewallHosts(ctx context.Context, sources []string, 
 	settings.Firewall.Enabled = enabled
 	settings.Firewall.SourceCIDRs = normalizeFirewallSources(sources)
 	settings.Firewall.TargetCIDRs = nil
+	settings.Firewall.TargetDomains = nil
 	if port > 0 {
 		settings.Firewall.TransparentPort = port
+	}
+
+	if err := s.validateFirewall(ctx, settings.Firewall); err != nil {
+		return domain.FirewallSettings{}, err
 	}
 
 	if err := s.store.SaveSettings(settings); err != nil {
@@ -856,6 +872,9 @@ func (s *Service) updateFirewallPort(ctx context.Context, port int) (domain.Fire
 	}
 
 	settings.Firewall.TransparentPort = port
+	if err := s.validateFirewall(ctx, settings.Firewall); err != nil {
+		return domain.FirewallSettings{}, err
+	}
 	if err := s.store.SaveSettings(settings); err != nil {
 		return domain.FirewallSettings{}, fmt.Errorf("save settings: %w", err)
 	}
@@ -881,6 +900,9 @@ func (s *Service) updateFirewallBlockQUIC(ctx context.Context, enabled bool) (do
 	}
 
 	settings.Firewall.BlockQUIC = enabled
+	if err := s.validateFirewall(ctx, settings.Firewall); err != nil {
+		return domain.FirewallSettings{}, err
+	}
 	if err := s.store.SaveSettings(settings); err != nil {
 		return domain.FirewallSettings{}, fmt.Errorf("save settings: %w", err)
 	}
@@ -907,6 +929,7 @@ func (s *Service) disableFirewall(ctx context.Context) (domain.FirewallSettings,
 
 	settings.Firewall.Enabled = false
 	settings.Firewall.TargetCIDRs = nil
+	settings.Firewall.TargetDomains = nil
 	settings.Firewall.SourceCIDRs = nil
 	if err := s.store.SaveSettings(settings); err != nil {
 		return domain.FirewallSettings{}, fmt.Errorf("save settings: %w", err)
@@ -917,6 +940,13 @@ func (s *Service) disableFirewall(ctx context.Context) (domain.FirewallSettings,
 	}
 
 	return settings.Firewall, nil
+}
+
+func (s *Service) validateFirewall(ctx context.Context, settings domain.FirewallSettings) error {
+	if s.firewall == nil {
+		return nil
+	}
+	return s.firewall.Validate(ctx, settings)
 }
 
 // SetSetting updates a single setting key.
@@ -1369,20 +1399,22 @@ func (s *Service) subscriptionNode(subscriptionID, nodeID string) (domain.Subscr
 
 func (s *Service) backendConfigRequest(settings domain.Settings, node domain.Node, mode domain.SelectionMode, socksPort, httpPort int, transparent bool) backend.ConfigRequest {
 	return backend.ConfigRequest{
-		Mode:             mode,
-		Nodes:            []domain.Node{node},
-		SelectedNodeID:   node.ID,
-		LogLevel:         settings.LogLevel,
-		DNS:              settings.DNS,
-		SOCKSPort:        socksPort,
-		HTTPPort:         httpPort,
-		TransparentProxy: transparent,
-		TransparentPort:  settings.Firewall.TransparentPort,
+		Mode:                     mode,
+		Nodes:                    []domain.Node{node},
+		SelectedNodeID:           node.ID,
+		LogLevel:                 settings.LogLevel,
+		DNS:                      settings.DNS,
+		SOCKSPort:                socksPort,
+		HTTPPort:                 httpPort,
+		TransparentProxy:         transparent,
+		TransparentPort:          settings.Firewall.TransparentPort,
+		TransparentTargetDomains: domain.ExpandFirewallTargetDomains(settings.Firewall.TargetDomains),
+		TransparentTargetCIDRs:   slices.Clone(settings.Firewall.TargetCIDRs),
 	}
 }
 
 func firewallEnabled(settings domain.FirewallSettings) bool {
-	return settings.Enabled && (len(settings.TargetCIDRs) > 0 || len(settings.SourceCIDRs) > 0)
+	return settings.Enabled && (len(settings.TargetCIDRs) > 0 || len(settings.TargetDomains) > 0 || len(settings.SourceCIDRs) > 0)
 }
 
 func pickFreeTCPPort() (int, error) {
@@ -1423,8 +1455,8 @@ func (s *Service) applyNodeSelection(ctx context.Context, sub domain.Subscriptio
 	}
 
 	if s.firewall != nil {
-		if settings.Firewall.Enabled && (len(settings.Firewall.TargetCIDRs) > 0 || len(settings.Firewall.SourceCIDRs) > 0) {
-			s.logInfo("apply firewall rules", "subscription", sub.ID, "node", node.ID, "targets", settings.Firewall.TargetCIDRs, "hosts", settings.Firewall.SourceCIDRs)
+		if settings.Firewall.Enabled && (len(settings.Firewall.TargetCIDRs) > 0 || len(settings.Firewall.TargetDomains) > 0 || len(settings.Firewall.SourceCIDRs) > 0) {
+			s.logInfo("apply firewall rules", "subscription", sub.ID, "node", node.ID, "target_cidrs", settings.Firewall.TargetCIDRs, "target_domains", settings.Firewall.TargetDomains, "hosts", settings.Firewall.SourceCIDRs)
 			if err := s.firewall.Apply(ctx, settings.Firewall); err != nil {
 				s.logWarn("apply firewall failed", "subscription", sub.ID, "node", node.ID, "error", err.Error())
 				_ = s.markConnectionFailed(ctx, sub.ID, node.ID, mode, fmt.Sprintf("apply firewall: %v", err))
