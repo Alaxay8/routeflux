@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"net/url"
+	"reflect"
 	"strings"
 	"testing"
 	"time"
@@ -46,11 +47,213 @@ func TestConfigureFirewallHostsClearsDestinationTargets(t *testing.T) {
 	if len(settings.TargetCIDRs) != 0 {
 		t.Fatalf("expected destination targets to be cleared, got %v", settings.TargetCIDRs)
 	}
+	if len(settings.TargetDomains) != 0 {
+		t.Fatalf("expected destination target domains to be cleared, got %v", settings.TargetDomains)
+	}
+	if len(settings.TargetServices) != 0 {
+		t.Fatalf("expected destination target services to be cleared, got %v", settings.TargetServices)
+	}
 	if len(settings.SourceCIDRs) != 1 || settings.SourceCIDRs[0] != "192.168.1.150" {
 		t.Fatalf("unexpected source hosts: %v", settings.SourceCIDRs)
 	}
 	if !settings.BlockQUIC {
 		t.Fatal("expected QUIC blocking to be enabled for host routing")
+	}
+}
+
+func TestConfigureFirewallParsesMixedTargetsAndValidatesBeforeSave(t *testing.T) {
+	t.Parallel()
+
+	store := &memoryStore{
+		settings: domain.DefaultSettings(),
+		state:    domain.DefaultRuntimeState(),
+	}
+	firewall := &recordingFirewaller{
+		validateErr: fmt.Errorf("dnsmasq-full is required for domain targets"),
+	}
+
+	service := NewService(Dependencies{Store: store, Firewaller: firewall})
+
+	_, err := service.ConfigureFirewall(context.Background(), []string{"youtube", "youtube.com", "1.1.1.1"}, true, 23456)
+	if err == nil {
+		t.Fatal("expected configure firewall to fail")
+	}
+	if !strings.Contains(err.Error(), "dnsmasq-full") {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(firewall.validated) != 1 {
+		t.Fatalf("expected validate to be called once, got %d", len(firewall.validated))
+	}
+	if !reflect.DeepEqual(firewall.validated[0].TargetServices, []string{"youtube"}) {
+		t.Fatalf("unexpected validated target services: %+v", firewall.validated[0].TargetServices)
+	}
+	if !reflect.DeepEqual(firewall.validated[0].TargetCIDRs, []string{"1.1.1.1"}) {
+		t.Fatalf("unexpected validated target cidrs: %+v", firewall.validated[0].TargetCIDRs)
+	}
+	if !reflect.DeepEqual(firewall.validated[0].TargetDomains, []string{"youtube.com"}) {
+		t.Fatalf("unexpected validated target domains: %+v", firewall.validated[0].TargetDomains)
+	}
+	if len(store.settings.Firewall.TargetServices) != 0 || len(store.settings.Firewall.TargetCIDRs) != 0 || len(store.settings.Firewall.TargetDomains) != 0 {
+		t.Fatalf("expected settings to stay unchanged on validate failure, got %+v", store.settings.Firewall)
+	}
+}
+
+func TestConfigureFirewallClearsHostsAndStoresTargetSelectors(t *testing.T) {
+	t.Parallel()
+
+	store := &memoryStore{
+		settings: domain.DefaultSettings(),
+		state:    domain.DefaultRuntimeState(),
+	}
+	store.settings.Firewall.SourceCIDRs = []string{"192.168.1.150"}
+
+	service := NewService(Dependencies{Store: store, Firewaller: &recordingFirewaller{}})
+
+	settings, err := service.ConfigureFirewall(context.Background(), []string{"YouTube", "YouTube.com", "1.1.1.1"}, true, 23456)
+	if err != nil {
+		t.Fatalf("configure firewall: %v", err)
+	}
+
+	if len(settings.SourceCIDRs) != 0 {
+		t.Fatalf("expected hosts to be cleared, got %v", settings.SourceCIDRs)
+	}
+	if !reflect.DeepEqual(settings.TargetServices, []string{"youtube"}) {
+		t.Fatalf("unexpected target services: %+v", settings.TargetServices)
+	}
+	if !reflect.DeepEqual(settings.TargetCIDRs, []string{"1.1.1.1"}) {
+		t.Fatalf("unexpected target cidrs: %+v", settings.TargetCIDRs)
+	}
+	if !reflect.DeepEqual(settings.TargetDomains, []string{"youtube.com"}) {
+		t.Fatalf("unexpected target domains: %+v", settings.TargetDomains)
+	}
+}
+
+func TestConfigureFirewallSupportsCustomServiceAliases(t *testing.T) {
+	t.Parallel()
+
+	store := &memoryStore{
+		settings: domain.DefaultSettings(),
+		state:    domain.DefaultRuntimeState(),
+	}
+	store.settings.Firewall.TargetServiceCatalog = map[string]domain.FirewallTargetDefinition{
+		"openai": {
+			Domains: []string{"openai.com", "chatgpt.com"},
+		},
+	}
+
+	service := NewService(Dependencies{Store: store, Firewaller: &recordingFirewaller{}})
+
+	settings, err := service.ConfigureFirewall(context.Background(), []string{"openai"}, true, 23456)
+	if err != nil {
+		t.Fatalf("configure firewall: %v", err)
+	}
+
+	if !reflect.DeepEqual(settings.TargetServices, []string{"openai"}) {
+		t.Fatalf("unexpected target services: %+v", settings.TargetServices)
+	}
+}
+
+func TestConfigureFirewallHostsPreservesTargetServiceCatalog(t *testing.T) {
+	t.Parallel()
+
+	store := &memoryStore{
+		settings: domain.DefaultSettings(),
+		state:    domain.DefaultRuntimeState(),
+	}
+	store.settings.Firewall.TargetServiceCatalog = map[string]domain.FirewallTargetDefinition{
+		"openai": {Domains: []string{"openai.com"}},
+	}
+
+	service := NewService(Dependencies{Store: store, Firewaller: &recordingFirewaller{}})
+
+	settings, err := service.ConfigureFirewallHosts(context.Background(), []string{"192.168.1.150"}, true, 23456)
+	if err != nil {
+		t.Fatalf("configure firewall hosts: %v", err)
+	}
+
+	if !reflect.DeepEqual(settings.TargetServiceCatalog, map[string]domain.FirewallTargetDefinition{
+		"openai": {Domains: []string{"openai.com"}},
+	}) {
+		t.Fatalf("unexpected target service catalog: %+v", settings.TargetServiceCatalog)
+	}
+}
+
+func TestSetFirewallTargetServiceReappliesConnectedRuntime(t *testing.T) {
+	t.Parallel()
+
+	store := &memoryStore{
+		settings: domain.DefaultSettings(),
+		state:    domain.DefaultRuntimeState(),
+		subs: []domain.Subscription{
+			{
+				ID: "sub-1",
+				Nodes: []domain.Node{
+					{
+						ID:       "node-1",
+						Name:     "Germany",
+						Protocol: domain.ProtocolVLESS,
+						Address:  "de.example.com",
+						Port:     443,
+						UUID:     "11111111-1111-1111-1111-111111111111",
+					},
+				},
+			},
+		},
+	}
+	store.settings.Firewall.Enabled = true
+	store.settings.Firewall.TargetServices = []string{"openai"}
+	store.state.Connected = true
+	store.state.ActiveSubscriptionID = "sub-1"
+	store.state.ActiveNodeID = "node-1"
+	store.state.Mode = domain.SelectionModeManual
+
+	runtimeBackend := &recordingBackend{}
+	firewall := &recordingFirewaller{}
+	service := NewService(Dependencies{
+		Store:      store,
+		Backend:    runtimeBackend,
+		Firewaller: firewall,
+	})
+
+	entry, err := service.SetFirewallTargetService(context.Background(), "openai", []string{"openai.com", "chatgpt.com"})
+	if err != nil {
+		t.Fatalf("set firewall target service: %v", err)
+	}
+
+	if entry.Name != "openai" || entry.Source != domain.FirewallTargetServiceSourceCustom || entry.ReadOnly {
+		t.Fatalf("unexpected target service entry: %+v", entry)
+	}
+	if len(runtimeBackend.requests) != 1 {
+		t.Fatalf("expected one backend reapply, got %d", len(runtimeBackend.requests))
+	}
+	if want := []string{"openai.com", "chatgpt.com"}; !reflect.DeepEqual(runtimeBackend.requests[0].TransparentTargetDomains, want) {
+		t.Fatalf("unexpected transparent target domains:\nwant: %+v\n got: %+v", want, runtimeBackend.requests[0].TransparentTargetDomains)
+	}
+	if len(firewall.applied) != 1 {
+		t.Fatalf("expected firewall apply once, got %d", len(firewall.applied))
+	}
+}
+
+func TestDeleteFirewallTargetServiceRejectsUsedAlias(t *testing.T) {
+	t.Parallel()
+
+	store := &memoryStore{
+		settings: domain.DefaultSettings(),
+		state:    domain.DefaultRuntimeState(),
+	}
+	store.settings.Firewall.TargetServices = []string{"openai"}
+	store.settings.Firewall.TargetServiceCatalog = map[string]domain.FirewallTargetDefinition{
+		"openai": {Domains: []string{"openai.com"}},
+	}
+
+	service := NewService(Dependencies{Store: store, Firewaller: &recordingFirewaller{}})
+
+	err := service.DeleteFirewallTargetService(context.Background(), "openai")
+	if err == nil {
+		t.Fatal("expected delete to fail while alias is in use")
+	}
+	if !strings.Contains(strings.ToLower(err.Error()), "remove it from firewall targets first") {
+		t.Fatalf("unexpected error: %v", err)
 	}
 }
 
@@ -941,6 +1144,77 @@ func TestConnectManualAppliesHostFirewallRouting(t *testing.T) {
 	}
 }
 
+func TestConnectManualPassesExpandedTargetSelectorsToBackend(t *testing.T) {
+	t.Parallel()
+
+	store := &memoryStore{
+		settings: domain.DefaultSettings(),
+		state:    domain.DefaultRuntimeState(),
+		subs: []domain.Subscription{
+			{
+				ID: "sub-1",
+				Nodes: []domain.Node{
+					{
+						ID:       "node-1",
+						Name:     "Germany",
+						Protocol: domain.ProtocolVLESS,
+						Address:  "de.example.com",
+						Port:     443,
+						UUID:     "11111111-1111-1111-1111-111111111111",
+					},
+				},
+			},
+		},
+	}
+	store.settings.Firewall.Enabled = true
+	store.settings.Firewall.TargetServices = []string{"youtube", "telegram"}
+	store.settings.Firewall.TransparentPort = 12345
+
+	runtimeBackend := &recordingBackend{}
+	firewall := &recordingFirewaller{}
+	service := NewService(Dependencies{
+		Store:      store,
+		Backend:    runtimeBackend,
+		Firewaller: firewall,
+	})
+
+	if err := service.ConnectManual(context.Background(), "sub-1", "node-1"); err != nil {
+		t.Fatalf("connect manual: %v", err)
+	}
+
+	if len(runtimeBackend.requests) != 1 {
+		t.Fatalf("expected one backend apply, got %d", len(runtimeBackend.requests))
+	}
+
+	wantDomains := []string{
+		"youtube.com",
+		"youtu.be",
+		"youtube-nocookie.com",
+		"youtubei.googleapis.com",
+		"youtube.googleapis.com",
+		"googlevideo.com",
+		"ytimg.com",
+		"ggpht.com",
+		"telegram.org",
+		"t.me",
+		"telegram.me",
+		"web.telegram.org",
+		"desktop.telegram.org",
+		"core.telegram.org",
+	}
+	if !reflect.DeepEqual(runtimeBackend.requests[0].TransparentTargetDomains, wantDomains) {
+		t.Fatalf("unexpected transparent target domains:\nwant: %+v\n got: %+v", wantDomains, runtimeBackend.requests[0].TransparentTargetDomains)
+	}
+
+	wantCIDRs := []string{
+		"91.108.0.0/16",
+		"149.154.0.0/16",
+	}
+	if !reflect.DeepEqual(runtimeBackend.requests[0].TransparentTargetCIDRs, wantCIDRs) {
+		t.Fatalf("unexpected transparent target cidrs:\nwant: %+v\n got: %+v", wantCIDRs, runtimeBackend.requests[0].TransparentTargetCIDRs)
+	}
+}
+
 func TestGetSettingsSyncsConnectedRuntimeMode(t *testing.T) {
 	t.Parallel()
 
@@ -1679,7 +1953,14 @@ func (b *recordingBackend) Status(context.Context) (backend.RuntimeStatus, error
 
 type recordingFirewaller struct {
 	applied      []domain.FirewallSettings
+	validated    []domain.FirewallSettings
 	disableCalls int
+	validateErr  error
+}
+
+func (f *recordingFirewaller) Validate(_ context.Context, settings domain.FirewallSettings) error {
+	f.validated = append(f.validated, settings)
+	return f.validateErr
 }
 
 func (f *recordingFirewaller) Apply(_ context.Context, settings domain.FirewallSettings) error {

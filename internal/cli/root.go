@@ -70,6 +70,7 @@ func newRootCmd() *cobra.Command {
 		newRefreshCmd(opts),
 		newConnectCmd(opts),
 		newDisconnectCmd(opts),
+		newServicesCmd(opts),
 		newStatusCmd(opts),
 		newSettingsCmd(opts),
 		newTUICmd(opts),

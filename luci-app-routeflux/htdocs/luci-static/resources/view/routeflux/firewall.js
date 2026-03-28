@@ -303,7 +303,7 @@ function hasItems(values) {
 
 function firewallMode(settings) {
 	var hasSources = hasItems(settings.source_cidrs);
-	var hasTargets = hasItems(settings.target_cidrs);
+	var hasTargets = hasItems(settings.target_services) || hasItems(settings.target_cidrs) || hasItems(settings.target_domains);
 
 	if (settings.enabled !== true || (!hasSources && !hasTargets))
 		return 'disabled';
@@ -330,8 +330,18 @@ function selectorsForMode(settings, mode) {
 	if (mode === 'hosts' && hasItems(settings.source_cidrs))
 		return settings.source_cidrs.join('\n');
 
-	if (mode === 'targets' && hasItems(settings.target_cidrs))
-		return settings.target_cidrs.join('\n');
+	if (mode === 'targets') {
+		var values = [];
+
+		if (hasItems(settings.target_services))
+			values = values.concat(settings.target_services);
+		if (hasItems(settings.target_domains))
+			values = values.concat(settings.target_domains);
+		if (hasItems(settings.target_cidrs))
+			values = values.concat(settings.target_cidrs);
+
+		return values.join('\n');
+	}
 
 	return '';
 }
@@ -460,11 +470,11 @@ return view.extend({
 
 		if (mode === 'targets') {
 			label.textContent = _('Targets');
-			textarea.placeholder = _('Examples: 1.1.1.1 8.8.8.8/32 203.0.113.10-203.0.113.20');
+			textarea.placeholder = _('Examples: youtube instagram openai discord 1.1.1.1 203.0.113.10-203.0.113.20');
 			textarea.disabled = false;
 			row.style.opacity = '1';
-			help.textContent = _('Route only selected destination IPv4 addresses, CIDRs, or ranges through RouteFlux.');
-			blockHelp.textContent = _('This value is stored now and becomes effective when you switch back to host mode.');
+			help.textContent = _('Route only selected services, domains, or destination IPv4 targets through RouteFlux. Built-in presets: youtube, instagram, discord, whatsapp, telegram-web, telegram, facetime. Create any custom alias on the Services tab, then use it here like openai or netflix. Popular root domains like youtube.com and instagram.com still auto-expand to the domain families they need. Domains match subdomains and work best when clients use the router DNS.');
+			blockHelp.textContent = _('When enabled, RouteFlux drops LAN UDP/443 in targets mode so selected services cannot bypass domain matching through QUIC.');
 			return;
 		}
 
@@ -502,7 +512,7 @@ return view.extend({
 				ui.addNotification(null, notificationParagraph(
 					mode === 'hosts'
 						? _('Enter at least one LAN host, CIDR, range, or all.')
-						: _('Enter at least one destination IPv4 address, CIDR, or range.')
+						: _('Enter at least one service preset, domain, IPv4 address, CIDR, or range.')
 				));
 				return Promise.resolve();
 			}
@@ -575,7 +585,7 @@ return view.extend({
 
 		content.push(E('h2', {}, [ _('RouteFlux - Firewall') ]));
 		content.push(E('p', { 'class': 'cbi-section-descr' }, [
-			_('Manage transparent routing for selected LAN hosts or destination IPv4 targets without leaving LuCI.')
+			_('Manage transparent routing for selected LAN hosts or service/domain/IPv4 targets without leaving LuCI. Use the Services tab to create custom target aliases for any service.')
 		]));
 
 		content.push(E('div', { 'class': 'routeflux-overview-grid' }, [
@@ -621,7 +631,7 @@ return view.extend({
 						])
 					]),
 					E('div', { 'class': 'cbi-value-description' }, [
-						_('Hosts routes all TCP traffic from selected LAN clients. Targets routes only selected destination IPv4 addresses or ranges.')
+						_('Hosts routes all TCP traffic from selected LAN clients. Targets routes only selected services, domains, or destination IPv4 targets.')
 					])
 				]),
 				E('div', { 'class': 'cbi-value' }, [

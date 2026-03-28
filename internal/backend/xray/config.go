@@ -40,6 +40,7 @@ type xrayRouting struct {
 type xrayRouteRule struct {
 	Type        string   `json:"type"`
 	OutboundTag string   `json:"outboundTag"`
+	InboundTag  []string `json:"inboundTag,omitempty"`
 	Network     string   `json:"network,omitempty"`
 	Domain      []string `json:"domain,omitempty"`
 	IP          []string `json:"ip,omitempty"`

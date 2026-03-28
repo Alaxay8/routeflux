@@ -8,15 +8,17 @@ import (
 
 // ConfigRequest defines the inputs required to build a backend config.
 type ConfigRequest struct {
-	Mode             domain.SelectionMode
-	Nodes            []domain.Node
-	SelectedNodeID   string
-	LogLevel         string
-	DNS              domain.DNSSettings
-	SOCKSPort        int
-	HTTPPort         int
-	TransparentProxy bool
-	TransparentPort  int
+	Mode                     domain.SelectionMode
+	Nodes                    []domain.Node
+	SelectedNodeID           string
+	LogLevel                 string
+	DNS                      domain.DNSSettings
+	SOCKSPort                int
+	HTTPPort                 int
+	TransparentProxy         bool
+	TransparentPort          int
+	TransparentTargetDomains []string
+	TransparentTargetCIDRs   []string
 }
 
 // RuntimeStatus describes backend runtime state.

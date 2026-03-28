@@ -93,6 +93,18 @@
       {
         "type": "field",
         "outboundTag": "selected",
+        "inboundTag": [
+          "transparent-in"
+        ],
+        "network": "tcp"
+      },
+      {
+        "type": "field",
+        "outboundTag": "selected",
+        "inboundTag": [
+          "socks-in",
+          "http-in"
+        ],
         "network": "tcp,udp"
       }
     ]

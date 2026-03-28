@@ -71,6 +71,10 @@
       {
         "type": "field",
         "outboundTag": "selected",
+        "inboundTag": [
+          "socks-in",
+          "http-in"
+        ],
         "network": "tcp,udp"
       }
     ]

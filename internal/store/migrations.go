@@ -24,11 +24,14 @@ func decodeSettings(data []byte, path string) (domain.Settings, error) {
 	}
 
 	type rawFirewallSettings struct {
-		Enabled         *bool     `json:"enabled"`
-		TransparentPort *int      `json:"transparent_port"`
-		TargetCIDRs     *[]string `json:"target_cidrs"`
-		SourceCIDRs     *[]string `json:"source_cidrs"`
-		BlockQUIC       *bool     `json:"block_quic"`
+		Enabled              *bool                                       `json:"enabled"`
+		TransparentPort      *int                                        `json:"transparent_port"`
+		TargetServices       *[]string                                   `json:"target_services"`
+		TargetServiceCatalog *map[string]domain.FirewallTargetDefinition `json:"target_service_catalog"`
+		TargetCIDRs          *[]string                                   `json:"target_cidrs"`
+		TargetDomains        *[]string                                   `json:"target_domains"`
+		SourceCIDRs          *[]string                                   `json:"source_cidrs"`
+		BlockQUIC            *bool                                       `json:"block_quic"`
 	}
 
 	type rawSettings struct {
@@ -105,8 +108,17 @@ func decodeSettings(data []byte, path string) (domain.Settings, error) {
 		if raw.Firewall.TransparentPort != nil {
 			settings.Firewall.TransparentPort = *raw.Firewall.TransparentPort
 		}
+		if raw.Firewall.TargetServices != nil {
+			settings.Firewall.TargetServices = append([]string(nil), (*raw.Firewall.TargetServices)...)
+		}
+		if raw.Firewall.TargetServiceCatalog != nil {
+			settings.Firewall.TargetServiceCatalog = domain.CloneFirewallTargetCatalog(*raw.Firewall.TargetServiceCatalog)
+		}
 		if raw.Firewall.TargetCIDRs != nil {
 			settings.Firewall.TargetCIDRs = append([]string(nil), (*raw.Firewall.TargetCIDRs)...)
+		}
+		if raw.Firewall.TargetDomains != nil {
+			settings.Firewall.TargetDomains = append([]string(nil), (*raw.Firewall.TargetDomains)...)
 		}
 		if raw.Firewall.SourceCIDRs != nil {
 			settings.Firewall.SourceCIDRs = append([]string(nil), (*raw.Firewall.SourceCIDRs)...)
