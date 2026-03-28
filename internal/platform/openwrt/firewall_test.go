@@ -73,6 +73,56 @@ func TestBuildNFTablesRulesSupportsTargetDomainsWithoutStaticCIDRs(t *testing.T)
 	}
 }
 
+func TestBuildNFTablesRulesSupportsTargetServicesWithPresetCIDRs(t *testing.T) {
+	t.Parallel()
+
+	rules, err := BuildNFTablesRules(domain.FirewallSettings{
+		Enabled:         true,
+		TransparentPort: 12345,
+		TargetServices:  []string{"telegram"},
+	})
+	if err != nil {
+		t.Fatalf("build rules: %v", err)
+	}
+
+	for _, want := range []string{
+		"91.108.0.0/16",
+		"149.154.0.0/16",
+		"ip saddr @source_v4 tcp dport != 12345 redirect to :12345",
+	} {
+		if !strings.Contains(rules, want) {
+			t.Fatalf("rules missing %q\n%s", want, rules)
+		}
+	}
+}
+
+func TestBuildNFTablesRulesSupportsCustomTargetServices(t *testing.T) {
+	t.Parallel()
+
+	rules, err := BuildNFTablesRules(domain.FirewallSettings{
+		Enabled:         true,
+		TransparentPort: 12345,
+		TargetServices:  []string{"openai"},
+		TargetServiceCatalog: map[string]domain.FirewallTargetDefinition{
+			"openai": {
+				CIDRs: []string{"104.18.0.0/15"},
+			},
+		},
+	})
+	if err != nil {
+		t.Fatalf("build rules: %v", err)
+	}
+
+	for _, want := range []string{
+		"104.18.0.0/15",
+		"ip saddr @source_v4 tcp dport != 12345 redirect to :12345",
+	} {
+		if !strings.Contains(rules, want) {
+			t.Fatalf("rules missing %q\n%s", want, rules)
+		}
+	}
+}
+
 func TestBuildNFTablesRulesRejectsInvalidTargets(t *testing.T) {
 	t.Parallel()
 

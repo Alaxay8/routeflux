@@ -777,6 +777,119 @@ func (s *Service) GetFirewallSettings() (domain.FirewallSettings, error) {
 	return settings.Firewall, nil
 }
 
+// ListFirewallTargetServices returns built-in and custom target services.
+func (s *Service) ListFirewallTargetServices() ([]domain.FirewallTargetService, error) {
+	settings, err := s.store.LoadSettings()
+	if err != nil {
+		return nil, fmt.Errorf("load settings: %w", err)
+	}
+
+	return domain.FirewallTargetServices(settings.Firewall.TargetServiceCatalog), nil
+}
+
+// GetFirewallTargetService returns one target service by name.
+func (s *Service) GetFirewallTargetService(name string) (domain.FirewallTargetService, error) {
+	settings, err := s.store.LoadSettings()
+	if err != nil {
+		return domain.FirewallTargetService{}, fmt.Errorf("load settings: %w", err)
+	}
+
+	entry, ok := domain.LookupFirewallTargetService(settings.Firewall.TargetServiceCatalog, name)
+	if !ok {
+		return domain.FirewallTargetService{}, fmt.Errorf("target service %q not found", name)
+	}
+
+	return entry, nil
+}
+
+// SetFirewallTargetService creates or updates a custom target service.
+func (s *Service) SetFirewallTargetService(ctx context.Context, name string, selectors []string) (domain.FirewallTargetService, error) {
+	return runStoreWriteLockedResult(s, func() (domain.FirewallTargetService, error) {
+		return s.setFirewallTargetService(ctx, name, selectors)
+	})
+}
+
+func (s *Service) setFirewallTargetService(ctx context.Context, name string, selectors []string) (domain.FirewallTargetService, error) {
+	settings, err := s.store.LoadSettings()
+	if err != nil {
+		return domain.FirewallTargetService{}, fmt.Errorf("load settings: %w", err)
+	}
+
+	normalizedName, definition, err := domain.ParseFirewallTargetDefinition(name, selectors)
+	if err != nil {
+		return domain.FirewallTargetService{}, err
+	}
+
+	if settings.Firewall.TargetServiceCatalog == nil {
+		settings.Firewall.TargetServiceCatalog = make(map[string]domain.FirewallTargetDefinition)
+	}
+	settings.Firewall.TargetServiceCatalog[normalizedName] = definition
+
+	if err := s.validateFirewall(ctx, settings.Firewall); err != nil {
+		return domain.FirewallTargetService{}, err
+	}
+	if err := s.store.SaveSettings(settings); err != nil {
+		return domain.FirewallTargetService{}, fmt.Errorf("save settings: %w", err)
+	}
+
+	if settings.Firewall.Enabled {
+		if err := s.reapplyCurrentConnection(ctx); err != nil {
+			return domain.FirewallTargetService{}, err
+		}
+	}
+
+	entry, ok := domain.LookupFirewallTargetService(settings.Firewall.TargetServiceCatalog, normalizedName)
+	if !ok {
+		return domain.FirewallTargetService{}, fmt.Errorf("target service %q not found after save", normalizedName)
+	}
+	return entry, nil
+}
+
+// DeleteFirewallTargetService removes a custom target service.
+func (s *Service) DeleteFirewallTargetService(ctx context.Context, name string) error {
+	return runStoreWriteLocked(s, func() error {
+		return s.deleteFirewallTargetService(ctx, name)
+	})
+}
+
+func (s *Service) deleteFirewallTargetService(ctx context.Context, name string) error {
+	settings, err := s.store.LoadSettings()
+	if err != nil {
+		return fmt.Errorf("load settings: %w", err)
+	}
+
+	entry, ok := domain.LookupFirewallTargetService(settings.Firewall.TargetServiceCatalog, name)
+	if !ok {
+		return fmt.Errorf("target service %q not found", name)
+	}
+	if entry.ReadOnly {
+		return fmt.Errorf("target service %q is readonly and cannot be deleted", entry.Name)
+	}
+	if slices.Contains(settings.Firewall.TargetServices, entry.Name) {
+		return fmt.Errorf("target service %q is still used by firewall targets; remove it from firewall targets first", entry.Name)
+	}
+
+	delete(settings.Firewall.TargetServiceCatalog, entry.Name)
+	if len(settings.Firewall.TargetServiceCatalog) == 0 {
+		settings.Firewall.TargetServiceCatalog = nil
+	}
+
+	if err := s.validateFirewall(ctx, settings.Firewall); err != nil {
+		return err
+	}
+	if err := s.store.SaveSettings(settings); err != nil {
+		return fmt.Errorf("save settings: %w", err)
+	}
+
+	if settings.Firewall.Enabled {
+		if err := s.reapplyCurrentConnection(ctx); err != nil {
+			return err
+		}
+	}
+
+	return nil
+}
+
 // ConfigureFirewall updates firewall targets and enabled state.
 func (s *Service) ConfigureFirewall(ctx context.Context, targets []string, enabled bool, port int) (domain.FirewallSettings, error) {
 	return runStoreWriteLockedResult(s, func() (domain.FirewallSettings, error) {
@@ -790,12 +903,13 @@ func (s *Service) configureFirewall(ctx context.Context, targets []string, enabl
 		return domain.FirewallSettings{}, fmt.Errorf("load settings: %w", err)
 	}
 
-	parsedTargets, err := domain.ParseFirewallTargets(targets)
+	parsedTargets, err := domain.ParseFirewallTargets(targets, settings.Firewall.TargetServiceCatalog)
 	if err != nil {
 		return domain.FirewallSettings{}, err
 	}
 
 	settings.Firewall.Enabled = enabled
+	settings.Firewall.TargetServices = slices.Clone(parsedTargets.Services)
 	settings.Firewall.TargetCIDRs = slices.Clone(parsedTargets.CIDRs)
 	settings.Firewall.TargetDomains = slices.Clone(parsedTargets.Domains)
 	settings.Firewall.SourceCIDRs = nil
@@ -833,6 +947,7 @@ func (s *Service) configureFirewallHosts(ctx context.Context, sources []string, 
 
 	settings.Firewall.Enabled = enabled
 	settings.Firewall.SourceCIDRs = normalizeFirewallSources(sources)
+	settings.Firewall.TargetServices = nil
 	settings.Firewall.TargetCIDRs = nil
 	settings.Firewall.TargetDomains = nil
 	if port > 0 {
@@ -928,6 +1043,7 @@ func (s *Service) disableFirewall(ctx context.Context) (domain.FirewallSettings,
 	}
 
 	settings.Firewall.Enabled = false
+	settings.Firewall.TargetServices = nil
 	settings.Firewall.TargetCIDRs = nil
 	settings.Firewall.TargetDomains = nil
 	settings.Firewall.SourceCIDRs = nil
@@ -1408,13 +1524,13 @@ func (s *Service) backendConfigRequest(settings domain.Settings, node domain.Nod
 		HTTPPort:                 httpPort,
 		TransparentProxy:         transparent,
 		TransparentPort:          settings.Firewall.TransparentPort,
-		TransparentTargetDomains: domain.ExpandFirewallTargetDomains(settings.Firewall.TargetDomains),
-		TransparentTargetCIDRs:   slices.Clone(settings.Firewall.TargetCIDRs),
+		TransparentTargetDomains: domain.ExpandFirewallTargetDomains(settings.Firewall.TargetServiceCatalog, settings.Firewall.TargetServices, settings.Firewall.TargetDomains),
+		TransparentTargetCIDRs:   domain.ExpandFirewallTargetCIDRs(settings.Firewall.TargetServiceCatalog, settings.Firewall.TargetServices, settings.Firewall.TargetCIDRs),
 	}
 }
 
 func firewallEnabled(settings domain.FirewallSettings) bool {
-	return settings.Enabled && (len(settings.TargetCIDRs) > 0 || len(settings.TargetDomains) > 0 || len(settings.SourceCIDRs) > 0)
+	return settings.Enabled && (len(settings.TargetServices) > 0 || len(settings.TargetCIDRs) > 0 || len(settings.TargetDomains) > 0 || len(settings.SourceCIDRs) > 0)
 }
 
 func pickFreeTCPPort() (int, error) {
@@ -1455,8 +1571,8 @@ func (s *Service) applyNodeSelection(ctx context.Context, sub domain.Subscriptio
 	}
 
 	if s.firewall != nil {
-		if settings.Firewall.Enabled && (len(settings.Firewall.TargetCIDRs) > 0 || len(settings.Firewall.TargetDomains) > 0 || len(settings.Firewall.SourceCIDRs) > 0) {
-			s.logInfo("apply firewall rules", "subscription", sub.ID, "node", node.ID, "target_cidrs", settings.Firewall.TargetCIDRs, "target_domains", settings.Firewall.TargetDomains, "hosts", settings.Firewall.SourceCIDRs)
+		if settings.Firewall.Enabled && (len(settings.Firewall.TargetServices) > 0 || len(settings.Firewall.TargetCIDRs) > 0 || len(settings.Firewall.TargetDomains) > 0 || len(settings.Firewall.SourceCIDRs) > 0) {
+			s.logInfo("apply firewall rules", "subscription", sub.ID, "node", node.ID, "target_services", settings.Firewall.TargetServices, "target_cidrs", settings.Firewall.TargetCIDRs, "target_domains", settings.Firewall.TargetDomains, "hosts", settings.Firewall.SourceCIDRs)
 			if err := s.firewall.Apply(ctx, settings.Firewall); err != nil {
 				s.logWarn("apply firewall failed", "subscription", sub.ID, "node", node.ID, "error", err.Error())
 				_ = s.markConnectionFailed(ctx, sub.ID, node.ID, mode, fmt.Sprintf("apply firewall: %v", err))

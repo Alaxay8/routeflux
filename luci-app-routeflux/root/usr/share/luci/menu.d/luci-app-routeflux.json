@@ -68,6 +68,14 @@
 			"path": "routeflux/logs"
 		}
 	},
+	"admin/services/routeflux/services": {
+		"title": "Services",
+		"order": 75,
+		"action": {
+			"type": "view",
+			"path": "routeflux/services"
+		}
+	},
 	"admin/services/routeflux/about": {
 		"title": "About",
 		"order": 80,

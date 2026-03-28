@@ -22,8 +22,8 @@ func TestFirewallManagerValidateRejectsDNSMasqWithoutNFTSet(t *testing.T) {
 	}
 
 	err := manager.Validate(context.Background(), domain.FirewallSettings{
-		Enabled:       true,
-		TargetDomains: []string{"youtube.com"},
+		Enabled:        true,
+		TargetServices: []string{"youtube"},
 	})
 	if err == nil {
 		t.Fatal("expected dnsmasq validation to fail")
@@ -54,9 +54,15 @@ func TestFirewallManagerApplyWritesDNSMasqSnippetAndReloads(t *testing.T) {
 	settings := domain.FirewallSettings{
 		Enabled:         true,
 		TransparentPort: 12345,
+		TargetServices:  []string{"youtube", "telegram"},
 		TargetCIDRs:     []string{"1.1.1.1"},
 		TargetDomains:   []string{"youtube.com"},
-		BlockQUIC:       true,
+		TargetServiceCatalog: map[string]domain.FirewallTargetDefinition{
+			"openai": {
+				Domains: []string{"openai.com", "chatgpt.com"},
+			},
+		},
+		BlockQUIC: true,
 	}
 
 	if err := manager.Apply(context.Background(), settings); err != nil {
@@ -75,6 +81,8 @@ func TestFirewallManagerApplyWritesDNSMasqSnippetAndReloads(t *testing.T) {
 		"nftset=/youtubei.googleapis.com/4#inet#routeflux#target_v4",
 		"nftset=/youtube.googleapis.com/4#inet#routeflux#target_v4",
 		"nftset=/googlevideo.com/4#inet#routeflux#target_v4",
+		"nftset=/telegram.org/4#inet#routeflux#target_v4",
+		"nftset=/t.me/4#inet#routeflux#target_v4",
 		"nftset=/ytimg.com/4#inet#routeflux#target_v4",
 		"nftset=/ggpht.com/4#inet#routeflux#target_v4",
 	} {
@@ -90,6 +98,54 @@ func TestFirewallManagerApplyWritesDNSMasqSnippetAndReloads(t *testing.T) {
 
 	if !strings.Contains(string(calls), "reload") {
 		t.Fatalf("expected dnsmasq reload, got %q", calls)
+	}
+}
+
+func TestFirewallManagerApplyWritesDNSMasqSnippetForCustomServices(t *testing.T) {
+	t.Parallel()
+
+	dir := t.TempDir()
+	logPath := filepath.Join(dir, "calls.log")
+	nftPath := writeExecutable(t, filepath.Join(dir, "nft"), "#!/bin/sh\nprintf 'nft %s\\n' \"$*\" >> \""+logPath+"\"\nexit 0\n")
+	dnsmasqPath := writeExecutable(t, filepath.Join(dir, "dnsmasq"), "#!/bin/sh\nif [ \"$1\" = \"--test\" ]; then\n  exit 0\nfi\necho 'Dnsmasq test binary'\n")
+	servicePath := writeExecutable(t, filepath.Join(dir, "dnsmasq-service"), "#!/bin/sh\nprintf '%s\\n' \"$1\" >> \""+logPath+"\"\nexit 0\n")
+	snippetPath := filepath.Join(dir, "routeflux.conf")
+
+	manager := FirewallManager{
+		NFTPath:            nftPath,
+		RulesPath:          filepath.Join(dir, "routeflux-firewall.nft"),
+		DNSMasqPath:        dnsmasqPath,
+		DNSMasqServicePath: servicePath,
+		DNSMasqSnippetPath: snippetPath,
+	}
+
+	settings := domain.FirewallSettings{
+		Enabled:         true,
+		TransparentPort: 12345,
+		TargetServices:  []string{"openai"},
+		TargetServiceCatalog: map[string]domain.FirewallTargetDefinition{
+			"openai": {
+				Domains: []string{"openai.com", "chatgpt.com"},
+			},
+		},
+	}
+
+	if err := manager.Apply(context.Background(), settings); err != nil {
+		t.Fatalf("apply firewall: %v", err)
+	}
+
+	snippet, err := os.ReadFile(snippetPath)
+	if err != nil {
+		t.Fatalf("read dnsmasq snippet: %v", err)
+	}
+
+	for _, want := range []string{
+		"nftset=/openai.com/4#inet#routeflux#target_v4",
+		"nftset=/chatgpt.com/4#inet#routeflux#target_v4",
+	} {
+		if !strings.Contains(string(snippet), want) {
+			t.Fatalf("snippet missing %q\n%s", want, snippet)
+		}
 	}
 }
 

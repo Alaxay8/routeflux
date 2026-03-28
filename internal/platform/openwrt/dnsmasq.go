@@ -45,7 +45,7 @@ func (m FirewallManager) ensureDNSMasqNFTSetSupport(ctx context.Context) error {
 	if supported {
 		return nil
 	}
-	return fmt.Errorf("domain targets require dnsmasq with nftset support; install dnsmasq-full")
+	return fmt.Errorf("domain targets and service presets require dnsmasq with nftset support; install dnsmasq-full")
 }
 
 func dnsmasqSupportsNFTSet(ctx context.Context, path string) (bool, error) {
@@ -204,17 +204,18 @@ func buildDNSMasqNFTSetConfig(domains []string) string {
 	return builder.String()
 }
 
-func (m FirewallManager) syncDNSMasqTargets(ctx context.Context, domains []string) error {
+func (m FirewallManager) syncDNSMasqTargets(ctx context.Context, catalog map[string]domain.FirewallTargetDefinition, services []string, domains []string) error {
+	expandedDomains := domain.ExpandFirewallTargetDomains(catalog, services, domains)
 	snippetPath, err := m.dnsmasqSnippetPath()
 	if err != nil {
-		if len(domains) == 0 {
+		if len(expandedDomains) == 0 {
 			return nil
 		}
 		return err
 	}
 
-	trimmedDomains := make([]string, 0, len(domains))
-	for _, domain := range domain.ExpandFirewallTargetDomains(domains) {
+	trimmedDomains := make([]string, 0, len(expandedDomains))
+	for _, domain := range expandedDomains {
 		domain = strings.TrimSpace(domain)
 		if domain == "" {
 			continue

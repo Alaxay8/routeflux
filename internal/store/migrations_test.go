@@ -85,8 +85,79 @@ func TestLoadSettingsPreservesLegacyFirewallTargetsWithoutDomains(t *testing.T) 
 	if !reflect.DeepEqual(settings.Firewall.TargetCIDRs, []string{"1.1.1.1", "8.8.8.8/32"}) {
 		t.Fatalf("unexpected target cidrs: %+v", settings.Firewall.TargetCIDRs)
 	}
+	if len(settings.Firewall.TargetServices) != 0 {
+		t.Fatalf("expected no target services, got %+v", settings.Firewall.TargetServices)
+	}
 	if len(settings.Firewall.TargetDomains) != 0 {
 		t.Fatalf("expected no target domains, got %+v", settings.Firewall.TargetDomains)
+	}
+}
+
+func TestLoadSettingsDecodesTargetServices(t *testing.T) {
+	t.Parallel()
+
+	root := t.TempDir()
+	fileStore := store.NewFileStore(root)
+
+	settingsJSON := `{
+  "schema_version": 3,
+  "firewall": {
+    "enabled": true,
+    "target_services": ["youtube", "telegram"],
+    "target_domains": ["example.com"]
+  }
+}`
+	if err := os.WriteFile(filepath.Join(root, "settings.json"), []byte(settingsJSON), 0o644); err != nil {
+		t.Fatalf("write settings file: %v", err)
+	}
+
+	settings, err := fileStore.LoadSettings()
+	if err != nil {
+		t.Fatalf("load settings: %v", err)
+	}
+
+	if !reflect.DeepEqual(settings.Firewall.TargetServices, []string{"youtube", "telegram"}) {
+		t.Fatalf("unexpected target services: %+v", settings.Firewall.TargetServices)
+	}
+	if !reflect.DeepEqual(settings.Firewall.TargetDomains, []string{"example.com"}) {
+		t.Fatalf("unexpected target domains: %+v", settings.Firewall.TargetDomains)
+	}
+}
+
+func TestLoadSettingsDecodesTargetServiceCatalog(t *testing.T) {
+	t.Parallel()
+
+	root := t.TempDir()
+	fileStore := store.NewFileStore(root)
+
+	settingsJSON := `{
+  "schema_version": 4,
+  "firewall": {
+    "target_service_catalog": {
+      "openai": {
+        "domains": ["openai.com", "chatgpt.com"],
+        "cidrs": ["104.18.0.0/15"]
+      }
+    }
+  }
+}`
+	if err := os.WriteFile(filepath.Join(root, "settings.json"), []byte(settingsJSON), 0o644); err != nil {
+		t.Fatalf("write settings file: %v", err)
+	}
+
+	settings, err := fileStore.LoadSettings()
+	if err != nil {
+		t.Fatalf("load settings: %v", err)
+	}
+
+	want := map[string]domain.FirewallTargetDefinition{
+		"openai": {
+			Domains: []string{"openai.com", "chatgpt.com"},
+			CIDRs:   []string{"104.18.0.0/15"},
+		},
+	}
+	if !reflect.DeepEqual(settings.Firewall.TargetServiceCatalog, want) {
+		t.Fatalf("unexpected target service catalog:\nwant: %+v\n got: %+v", want, settings.Firewall.TargetServiceCatalog)
 	}
 }
 

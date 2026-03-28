@@ -151,7 +151,9 @@ routeflux dns explain
 
 routeflux firewall get
 routeflux firewall set hosts 192.168.1.150
-routeflux firewall set targets youtube.com instagram.com 1.1.1.1
+routeflux firewall set targets youtube instagram 1.1.1.1
+routeflux services set openai openai.com chatgpt.com oaistatic.com
+routeflux services list
 routeflux firewall explain
 ```
 
@@ -162,6 +164,7 @@ routeflux refresh --all
 routeflux diagnostics
 routeflux logs
 routeflux settings get
+routeflux services list
 routeflux version
 routeflux tui
 ```
@@ -198,6 +201,13 @@ Use encrypted DNS for external domains while keeping local names on the router:
 
 ```bash
 routeflux dns set default
+```
+
+Create a custom target alias once and reuse it in firewall targets:
+
+```bash
+routeflux services set openai openai.com chatgpt.com oaistatic.com
+routeflux firewall set targets openai youtube
 ```
 
 ## Configuration
@@ -299,11 +309,13 @@ In simple words: RouteFlux still manages subscriptions and the active Xray runti
   Example: only traffic to specific services should go through the proxy.
 
 ```bash
-routeflux firewall set targets youtube.com instagram.com 1.1.1.1
+routeflux firewall set targets youtube instagram 1.1.1.1
 ```
 
 Target selectors:
 
+- service preset: `youtube`, `instagram`, `discord`, `whatsapp`, `telegram-web`, `telegram`, `facetime`
+- custom service alias: `openai`
 - domain: `youtube.com`
 - IPv4 address: `1.1.1.1`
 - subnet: `8.8.8.0/24`
@@ -311,8 +323,13 @@ Target selectors:
 
 Notes for domain targets:
 
+- Create your own aliases with `routeflux services set <name> <domain-or-ip...>`, then use that alias in `routeflux firewall set targets ...`.
+- Custom aliases can contain only domains, IPv4 addresses, CIDRs, and IPv4 ranges.
+- Built-in preset names are reserved and stay read-only.
 - RouteFlux treats `youtube.com` as the domain and its subdomains.
-- Popular targets like `youtube.com` and `instagram.com` auto-expand to the domain families they need, so only those services go through RouteFlux.
+- Popular presets like `youtube`, `instagram`, `discord`, and `whatsapp` expand to the domain families they need.
+- Popular root domains like `youtube.com` and `instagram.com` still auto-expand to the domain families they need.
+- `telegram` and `facetime` are best-effort presets because those apps may use direct IPs or broader vendor infrastructure.
 - Domain targets require `dnsmasq` with `nftset` support, which usually means `dnsmasq-full` on OpenWrt.
 - Domain targets depend on router-visible DNS answers. If clients use their own DoH or DoT directly, target IP sets may stay empty.
 - On shared CDNs, RouteFlux now falls back to direct routing for non-matching transparent traffic instead of sending every matched IP through the selected node.

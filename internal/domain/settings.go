@@ -115,30 +115,34 @@ type DNSSettings struct {
 
 // FirewallSettings stores transparent proxy routing preferences.
 type FirewallSettings struct {
-	Enabled         bool     `json:"enabled"`
-	TransparentPort int      `json:"transparent_port"`
-	TargetCIDRs     []string `json:"target_cidrs"`
-	TargetDomains   []string `json:"target_domains"`
-	SourceCIDRs     []string `json:"source_cidrs"`
-	BlockQUIC       bool     `json:"block_quic"`
+	Enabled              bool                                `json:"enabled"`
+	TransparentPort      int                                 `json:"transparent_port"`
+	TargetServices       []string                            `json:"target_services"`
+	TargetServiceCatalog map[string]FirewallTargetDefinition `json:"target_service_catalog"`
+	TargetCIDRs          []string                            `json:"target_cidrs"`
+	TargetDomains        []string                            `json:"target_domains"`
+	SourceCIDRs          []string                            `json:"source_cidrs"`
+	BlockQUIC            bool                                `json:"block_quic"`
 }
 
 // DefaultSettings returns the baseline configuration used on first start.
 func DefaultSettings() Settings {
 	return Settings{
-		SchemaVersion:       3,
+		SchemaVersion:       4,
 		RefreshInterval:     NewDuration(time.Hour),
 		HealthCheckInterval: NewDuration(30 * time.Second),
 		SwitchCooldown:      NewDuration(5 * time.Minute),
 		LatencyThreshold:    NewDuration(50 * time.Millisecond),
 		DNS:                 DefaultDNSSettings(),
 		Firewall: FirewallSettings{
-			Enabled:         false,
-			TransparentPort: 12345,
-			TargetCIDRs:     nil,
-			TargetDomains:   nil,
-			SourceCIDRs:     nil,
-			BlockQUIC:       true,
+			Enabled:              false,
+			TransparentPort:      12345,
+			TargetServices:       nil,
+			TargetServiceCatalog: nil,
+			TargetCIDRs:          nil,
+			TargetDomains:        nil,
+			SourceCIDRs:          nil,
+			BlockQUIC:            true,
 		},
 		AutoMode: false,
 		Mode:     SelectionModeManual,

@@ -67,7 +67,8 @@ func NewFirewallManager() FirewallManager {
 
 // Validate ensures the current platform supports the requested firewall mode.
 func (m FirewallManager) Validate(ctx context.Context, settings domain.FirewallSettings) error {
-	if len(settings.TargetDomains) == 0 {
+	expandedDomains := domain.ExpandFirewallTargetDomains(settings.TargetServiceCatalog, settings.TargetServices, settings.TargetDomains)
+	if len(expandedDomains) == 0 {
 		return nil
 	}
 	if err := m.ensureDNSMasqNFTSetSupport(ctx); err != nil {
@@ -98,7 +99,7 @@ func (m FirewallManager) Apply(ctx context.Context, settings domain.FirewallSett
 		return fmt.Errorf("apply nftables rules: %w", err)
 	}
 
-	if err := m.syncDNSMasqTargets(ctx, settings.TargetDomains); err != nil {
+	if err := m.syncDNSMasqTargets(ctx, settings.TargetServiceCatalog, settings.TargetServices, settings.TargetDomains); err != nil {
 		return fmt.Errorf("sync dnsmasq targets: %w", err)
 	}
 
@@ -112,7 +113,7 @@ func (m FirewallManager) Disable(ctx context.Context) error {
 		return err
 	}
 	_ = os.Remove(m.RulesPath)
-	if err := m.syncDNSMasqTargets(ctx, nil); err != nil {
+	if err := m.syncDNSMasqTargets(ctx, nil, nil, nil); err != nil {
 		return err
 	}
 	return nil
@@ -120,7 +121,9 @@ func (m FirewallManager) Disable(ctx context.Context) error {
 
 // BuildNFTablesRules returns an nftables ruleset for the provided targets.
 func BuildNFTablesRules(settings domain.FirewallSettings) (string, error) {
-	targets, err := normalizeFirewallTargets(settings.TargetCIDRs)
+	targetCIDRs := domain.ExpandFirewallTargetCIDRs(settings.TargetServiceCatalog, settings.TargetServices, settings.TargetCIDRs)
+	targetDomains := domain.ExpandFirewallTargetDomains(settings.TargetServiceCatalog, settings.TargetServices, settings.TargetDomains)
+	targets, err := normalizeFirewallTargets(targetCIDRs)
 	if err != nil {
 		return "", err
 	}
@@ -128,9 +131,9 @@ func BuildNFTablesRules(settings domain.FirewallSettings) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	targetMode := len(targets) > 0 || len(settings.TargetDomains) > 0
+	targetMode := len(targets) > 0 || len(targetDomains) > 0
 	if !targetMode && len(sources) == 0 {
-		return "", fmt.Errorf("at least one target domain/IP/CIDR or one source host is required")
+		return "", fmt.Errorf("at least one target service/domain/IP/CIDR or one source host is required")
 	}
 
 	redirectSources := sources
@@ -148,7 +151,7 @@ func BuildNFTablesRules(settings domain.FirewallSettings) (string, error) {
 
 	var builder strings.Builder
 	builder.WriteString("table inet routeflux {\n")
-	if len(targets) > 0 || len(settings.TargetDomains) > 0 {
+	if len(targets) > 0 || len(targetDomains) > 0 {
 		builder.WriteString("  set target_v4 {\n    type ipv4_addr\n    flags interval\n")
 		if len(targets) > 0 {
 			fmt.Fprintf(&builder, "    elements = { %s }\n", strings.Join(targets, ", "))

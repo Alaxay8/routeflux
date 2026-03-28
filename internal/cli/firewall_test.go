@@ -161,7 +161,8 @@ func TestFirewallExplainOutputsFriendlyGuide(t *testing.T) {
 	wants := []string{
 		"disabled: Do not redirect router traffic through RouteFlux.",
 		"targets: Send traffic through RouteFlux only when the destination matches selected services, domains, or IPv4 targets.",
-		"Popular targets like youtube.com and instagram.com auto-expand to the domain families they need.",
+		"Service presets: youtube, instagram, discord, whatsapp, telegram-web, telegram, facetime.",
+		"Popular root domains like youtube.com and instagram.com still auto-expand to the domain families they need.",
 		"hosts: Send all TCP traffic from selected LAN devices through RouteFlux.",
 		"all or *: all common private LAN ranges",
 		"routeflux firewall set hosts 192.168.1.150",
@@ -181,6 +182,7 @@ func TestSettingsGetIncludesFirewallHosts(t *testing.T) {
 		state:    domain.DefaultRuntimeState(),
 	}
 	store.settings.Firewall.Enabled = true
+	store.settings.Firewall.TargetServices = []string{"youtube"}
 	store.settings.Firewall.TargetCIDRs = []string{"1.1.1.1"}
 	store.settings.Firewall.TargetDomains = []string{"youtube.com"}
 	store.settings.Firewall.SourceCIDRs = []string{"192.168.1.150"}
@@ -198,8 +200,10 @@ func TestSettingsGetIncludesFirewallHosts(t *testing.T) {
 
 	output := stdout.String()
 	wants := []string{
-		"firewall-targets=1.1.1.1",
+		"firewall-targets=youtube, youtube.com, 1.1.1.1",
+		"firewall-target-services=youtube",
 		"firewall-target-domains=youtube.com",
+		"firewall-target-cidrs=1.1.1.1",
 		"firewall-hosts=192.168.1.150",
 		"firewall-block-quic=true",
 	}
@@ -210,7 +214,7 @@ func TestSettingsGetIncludesFirewallHosts(t *testing.T) {
 	}
 }
 
-func TestFirewallSetTargetsSupportsDomains(t *testing.T) {
+func TestFirewallSetTargetsSupportsServicesAndDomains(t *testing.T) {
 	t.Parallel()
 
 	store := &cliMemoryStore{
@@ -223,7 +227,7 @@ func TestFirewallSetTargetsSupportsDomains(t *testing.T) {
 	var stdout bytes.Buffer
 	cmd.SetOut(&stdout)
 	cmd.SetErr(new(bytes.Buffer))
-	cmd.SetArgs([]string{"set", "targets", "YouTube.com", "1.1.1.1"})
+	cmd.SetArgs([]string{"set", "targets", "YouTube", "YouTube.com", "1.1.1.1"})
 
 	if err := cmd.Execute(); err != nil {
 		t.Fatalf("execute firewall set targets: %v", err)
@@ -232,6 +236,9 @@ func TestFirewallSetTargetsSupportsDomains(t *testing.T) {
 	settings, err := service.GetFirewallSettings()
 	if err != nil {
 		t.Fatalf("get firewall settings: %v", err)
+	}
+	if len(settings.TargetServices) != 1 || settings.TargetServices[0] != "youtube" {
+		t.Fatalf("unexpected target services: %v", settings.TargetServices)
 	}
 	if len(settings.TargetDomains) != 1 || settings.TargetDomains[0] != "youtube.com" {
 		t.Fatalf("unexpected target domains: %v", settings.TargetDomains)

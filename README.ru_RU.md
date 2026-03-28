@@ -151,7 +151,9 @@ routeflux dns explain
 
 routeflux firewall get
 routeflux firewall set hosts 192.168.1.150
-routeflux firewall set targets youtube.com instagram.com 1.1.1.1
+routeflux firewall set targets youtube instagram 1.1.1.1
+routeflux services set openai openai.com chatgpt.com oaistatic.com
+routeflux services list
 routeflux firewall explain
 ```
 
@@ -162,6 +164,7 @@ routeflux refresh --all
 routeflux diagnostics
 routeflux logs
 routeflux settings get
+routeflux services list
 routeflux version
 routeflux tui
 ```
@@ -198,6 +201,13 @@ routeflux connect --subscription sub-1234567890 --node 90c42d5dd302
 
 ```bash
 routeflux dns set default
+```
+
+Создайте свой alias для targets один раз и затем переиспользуйте его:
+
+```bash
+routeflux services set openai openai.com chatgpt.com oaistatic.com
+routeflux firewall set targets openai youtube
 ```
 
 ## Конфигурация
@@ -299,11 +309,13 @@ routeflux firewall disable
 Пример: через прокси должен идти трафик только к конкретным сервисам.
 
 ```bash
-routeflux firewall set targets youtube.com instagram.com 1.1.1.1
+routeflux firewall set targets youtube instagram 1.1.1.1
 ```
 
 Селекторы targets:
 
+- service preset: `youtube`, `instagram`, `discord`, `whatsapp`, `telegram-web`, `telegram`, `facetime`
+- пользовательский alias сервиса: `openai`
 - домен: `youtube.com`
 - IPv4-адрес: `1.1.1.1`
 - подсеть: `8.8.8.0/24`
@@ -311,8 +323,13 @@ routeflux firewall set targets youtube.com instagram.com 1.1.1.1
 
 Замечания для доменных targets:
 
+- Создавайте свои alias через `routeflux services set <name> <domain-or-ip...>`, а затем используйте это имя в `routeflux firewall set targets ...`.
+- Пользовательский alias может содержать только домены, IPv4-адреса, CIDR и IPv4-диапазоны.
+- Имена встроенных preset-ов зарезервированы и остаются read-only.
 - RouteFlux трактует `youtube.com` как сам домен и его поддомены.
-- Популярные targets вроде `youtube.com` и `instagram.com` автоматически разворачиваются во внутренние доменные семейства, поэтому через RouteFlux идёт только соответствующий сервис.
+- Популярные preset-ы вроде `youtube`, `instagram`, `discord` и `whatsapp` автоматически разворачиваются во внутренние доменные семейства.
+- Популярные root-домены вроде `youtube.com` и `instagram.com` тоже автоматически разворачиваются во внутренние доменные семейства.
+- `telegram` и `facetime` это best-effort preset-ы, потому что их приложения могут использовать прямые IP или более широкую инфраструктуру вендора.
 - Для доменных targets нужен `dnsmasq` с поддержкой `nftset`, обычно это `dnsmasq-full` на OpenWrt.
 - Доменные targets зависят от DNS-ответов, которые видит роутер. Если клиенты используют собственный DoH или DoT напрямую, набор IP может остаться пустым.
 - На shared CDN RouteFlux теперь откатывает несоответствующий прозрачный трафик на `direct`, а не отправляет весь совпавший IP через выбранную ноду.
