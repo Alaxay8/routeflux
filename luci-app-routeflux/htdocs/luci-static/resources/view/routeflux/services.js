@@ -126,7 +126,10 @@ return view.extend({
 		});
 	},
 
-	handleSaveService: function() {
+	handleSaveService: function(ev) {
+		if (ev)
+			ev.preventDefault();
+
 		var nameElement = document.querySelector('#routeflux-service-name');
 		var selectorsElement = document.querySelector('#routeflux-service-selectors');
 		var name = trim(nameElement && nameElement.value);
@@ -147,7 +150,10 @@ return view.extend({
 		], _('Target service saved.'));
 	},
 
-	handleDeleteService: function(name) {
+	handleDeleteService: function(name, ev) {
+		if (ev)
+			ev.preventDefault();
+
 		if (!window.confirm(_('Delete target service %s?').format(name)))
 			return Promise.resolve();
 
@@ -156,7 +162,10 @@ return view.extend({
 		], _('Target service deleted.'));
 	},
 
-	handleEditService: function(service) {
+	handleEditService: function(service, ev) {
+		if (ev)
+			ev.preventDefault();
+
 		var nameElement = document.querySelector('#routeflux-service-name');
 		var selectorsElement = document.querySelector('#routeflux-service-selectors');
 
@@ -171,7 +180,10 @@ return view.extend({
 		window.scrollTo({ top: 0, behavior: 'smooth' });
 	},
 
-	handleClearForm: function() {
+	handleClearForm: function(ev) {
+		if (ev)
+			ev.preventDefault();
+
 		var nameElement = document.querySelector('#routeflux-service-name');
 		var selectorsElement = document.querySelector('#routeflux-service-selectors');
 
@@ -189,10 +201,12 @@ return view.extend({
 		if (!readonly) {
 			actions.push(E('button', {
 				'class': 'cbi-button',
+				'type': 'button',
 				'click': ui.createHandlerFn(this, 'handleEditService', service)
 			}, [ _('Edit') ]));
 			actions.push(E('button', {
 				'class': 'cbi-button cbi-button-remove',
+				'type': 'button',
 				'click': ui.createHandlerFn(this, 'handleDeleteService', service.name)
 			}, [ _('Delete') ]));
 		}
@@ -276,10 +290,12 @@ return view.extend({
 			E('div', { 'class': 'routeflux-services-actions' }, [
 				E('button', {
 					'class': 'cbi-button cbi-button-apply',
+					'type': 'button',
 					'click': ui.createHandlerFn(this, 'handleSaveService')
 				}, [ _('Save Service') ]),
 				E('button', {
 					'class': 'cbi-button',
+					'type': 'button',
 					'click': ui.createHandlerFn(this, 'handleClearForm')
 				}, [ _('Clear Form') ])
 			])
