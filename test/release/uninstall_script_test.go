@@ -20,6 +20,7 @@ func TestUninstallScriptRemovesRouteFluxAndXrayArtifacts(t *testing.T) {
 	writeServiceStub(t, filepath.Join(installRoot, "etc", "init.d", "routeflux"))
 	writeExecutable(t, filepath.Join(installRoot, "usr", "bin", "xray"), "#!/bin/sh\nexit 0\n")
 	writeServiceStub(t, filepath.Join(installRoot, "etc", "init.d", "xray"))
+	writeServiceStub(t, filepath.Join(installRoot, "etc", "init.d", "cron"))
 	writeServiceStub(t, filepath.Join(installRoot, "etc", "init.d", "rpcd"))
 	writeServiceStub(t, filepath.Join(installRoot, "etc", "init.d", "uhttpd"))
 
@@ -29,6 +30,18 @@ func TestUninstallScriptRemovesRouteFluxAndXrayArtifacts(t *testing.T) {
 	writeFile(t, filepath.Join(installRoot, "etc", "routeflux", "speedtest.lock"), "", 0o644)
 	writeFile(t, filepath.Join(installRoot, "etc", "xray", "config.json"), "{}\n", 0o644)
 	writeFile(t, filepath.Join(installRoot, "etc", "xray", "config.json.last-known-good"), "{}\n", 0o644)
+	cronHelper, err := os.ReadFile(filepath.Join(repoRoot(t), "openwrt", "root", "usr", "libexec", "routeflux-cron"))
+	if err != nil {
+		t.Fatalf("read routeflux cron helper: %v", err)
+	}
+	writeExecutable(t, filepath.Join(installRoot, "usr", "libexec", "routeflux-cron"), string(cronHelper))
+	writeFile(t, filepath.Join(installRoot, "etc", "crontabs", "root"), strings.Join([]string{
+		"15 4 * * * echo keep",
+		"# routeflux:xray-log-retention:start",
+		"0 * * * * [ -f /var/log/xray.log ] && : > /var/log/xray.log",
+		"# routeflux:xray-log-retention:end",
+		"",
+	}, "\n"), 0o644)
 	writeFile(t, filepath.Join(installRoot, "var", "log", "xray.log"), "log\n", 0o644)
 	writeFile(t, filepath.Join(installRoot, "var", "run", "xray.pid"), "123\n", 0o644)
 	writeFile(t, filepath.Join(installRoot, "usr", "share", "luci", "menu.d", "luci-app-routeflux.json"), "{}\n", 0o644)
@@ -55,6 +68,7 @@ func TestUninstallScriptRemovesRouteFluxAndXrayArtifacts(t *testing.T) {
 		filepath.Join(installRoot, "usr", "bin", "xray"),
 		filepath.Join(installRoot, "etc", "init.d", "xray"),
 		filepath.Join(installRoot, "etc", "xray"),
+		filepath.Join(installRoot, "usr", "libexec", "routeflux-cron"),
 		filepath.Join(installRoot, "var", "log", "xray.log"),
 		filepath.Join(installRoot, "var", "run", "xray.pid"),
 		filepath.Join(installRoot, "usr", "share", "luci", "menu.d", "luci-app-routeflux.json"),
@@ -83,6 +97,7 @@ func TestUninstallScriptRemovesRouteFluxAndXrayArtifacts(t *testing.T) {
 		"routeflux-bin:--root ",
 		" disconnect",
 		" firewall disable",
+		"cron:restart",
 		"routeflux:stop",
 		"routeflux:disable",
 		"xray:stop",
@@ -97,6 +112,18 @@ func TestUninstallScriptRemovesRouteFluxAndXrayArtifacts(t *testing.T) {
 
 	if !strings.Contains(stdout, "RouteFlux and bundled Xray removed.") {
 		t.Fatalf("expected completion message in stdout, got %q", stdout)
+	}
+
+	crontabPath := filepath.Join(installRoot, "etc", "crontabs", "root")
+	contents, err := os.ReadFile(crontabPath)
+	if err != nil {
+		t.Fatalf("read crontab: %v", err)
+	}
+	if strings.Contains(string(contents), "routeflux:xray-log-retention") {
+		t.Fatalf("expected managed cron block to be removed, got %q", string(contents))
+	}
+	if !strings.Contains(string(contents), "15 4 * * * echo keep") {
+		t.Fatalf("expected unrelated cron entry to remain, got %q", string(contents))
 	}
 }
 

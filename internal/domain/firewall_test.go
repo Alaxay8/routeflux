@@ -121,15 +121,134 @@ func TestExpandFirewallTargetCIDRsSupportsTelegramPreset(t *testing.T) {
 	}
 }
 
+func TestExpandFirewallTargetCIDRsSupportsGoogleAIMobilePresets(t *testing.T) {
+	t.Parallel()
+
+	expanded := ExpandFirewallTargetCIDRs(nil, []string{
+		"gemini-mobile",
+		"notebooklm-mobile",
+	}, nil)
+
+	want := []string{
+		"74.125.205.0/24",
+		"173.194.73.0/24",
+	}
+
+	if !reflect.DeepEqual(expanded, want) {
+		t.Fatalf("unexpected expanded mobile target cidrs:\nwant: %+v\n got: %+v", want, expanded)
+	}
+}
+
+func TestExpandFirewallTargetDomainsSupportsGoogleAIPresets(t *testing.T) {
+	t.Parallel()
+
+	expanded := ExpandFirewallTargetDomains(nil, []string{
+		"gemini",
+		"notebooklm",
+	}, []string{
+		"gemini.google.com",
+		"notebooklm.google.com",
+	})
+
+	want := []string{
+		"accounts.google.com",
+		"content.googleapis.com",
+		"gemini.google.com",
+		"geminiweb-pa.clients6.google.com",
+		"generativelanguage.googleapis.com",
+		"lh3.googleusercontent.com",
+		"myaccount.google.com",
+		"ogads-pa.clients6.google.com",
+		"one.google.com",
+		"ssl.gstatic.com",
+		"support.google.com",
+		"waa-pa.clients6.google.com",
+		"www.google.com",
+		"www.gstatic.com",
+		"notebooklm.google.com",
+	}
+
+	if !reflect.DeepEqual(expanded, want) {
+		t.Fatalf("unexpected expanded target domains:\nwant: %+v\n got: %+v", want, expanded)
+	}
+}
+
+func TestExpandFirewallTargetDomainsSupportsGoogleAIMobilePresets(t *testing.T) {
+	t.Parallel()
+
+	expanded := ExpandFirewallTargetDomains(nil, []string{
+		"gemini-mobile",
+		"notebooklm-mobile",
+	}, nil)
+
+	want := []string{
+		"accounts.google.com",
+		"gemini.google.com",
+		"myaccount.google.com",
+		"one.google.com",
+		"support.google.com",
+		"www.google.com",
+		"mtalk.google.com",
+		"dns.google.com",
+		"dns.google",
+		"googleapis.com",
+		"clients6.google.com",
+		"gstatic.com",
+		"googleusercontent.com",
+		"notebooklm.google.com",
+	}
+
+	if !reflect.DeepEqual(expanded, want) {
+		t.Fatalf("unexpected expanded mobile target domains:\nwant: %+v\n got: %+v", want, expanded)
+	}
+}
+
+func TestExpandFirewallTargetDomainsSupportsNetflixAndTwitterFamilies(t *testing.T) {
+	t.Parallel()
+
+	expanded := ExpandFirewallTargetDomains(nil, []string{
+		"twitter",
+	}, []string{
+		"netflix.com",
+		"x.com",
+	})
+
+	want := []string{
+		"x.com",
+		"twitter.com",
+		"t.co",
+		"twimg.com",
+		"netflix.com",
+		"netflix.net",
+		"nflxvideo.net",
+		"nflximg.net",
+		"nflximg.com",
+		"nflxso.net",
+		"nflxext.com",
+		"nflxsearch.net",
+		"fast.com",
+	}
+
+	if !reflect.DeepEqual(expanded, want) {
+		t.Fatalf("unexpected expanded target domains:\nwant: %+v\n got: %+v", want, expanded)
+	}
+}
+
 func TestFirewallTargetServiceNamesIsSorted(t *testing.T) {
 	t.Parallel()
 
 	want := []string{
 		"discord",
 		"facetime",
+		"gemini",
+		"gemini-mobile",
 		"instagram",
+		"netflix",
+		"notebooklm",
+		"notebooklm-mobile",
 		"telegram",
 		"telegram-web",
+		"twitter",
 		"whatsapp",
 		"youtube",
 	}
@@ -169,6 +288,25 @@ func TestParseFirewallTargetsSupportsCustomServices(t *testing.T) {
 	}
 }
 
+func TestParseFirewallTargetsSupportsHyphenatedDomains(t *testing.T) {
+	t.Parallel()
+
+	targets, err := ParseFirewallTargets([]string{
+		"waa-pa.clients6.google.com",
+		"geminiweb-pa.clients6.google.com",
+	}, nil)
+	if err != nil {
+		t.Fatalf("parse firewall targets: %v", err)
+	}
+
+	if want := []string{
+		"waa-pa.clients6.google.com",
+		"geminiweb-pa.clients6.google.com",
+	}; !reflect.DeepEqual(targets.Domains, want) {
+		t.Fatalf("unexpected target domains:\nwant: %+v\n got: %+v", want, targets.Domains)
+	}
+}
+
 func TestParseFirewallTargetsRejectsUnknownBareAlias(t *testing.T) {
 	t.Parallel()
 
@@ -194,6 +332,31 @@ func TestParseFirewallTargetDefinitionRejectsReservedNamesAndAliases(t *testing.
 	}
 	if !strings.Contains(strings.ToLower(err.Error()), "domain") {
 		t.Fatalf("unexpected error: %v", err)
+	}
+}
+
+func TestParseFirewallTargetDefinitionSupportsHyphenatedDomains(t *testing.T) {
+	t.Parallel()
+
+	name, definition, err := ParseFirewallTargetDefinition("google-ai-mobile", []string{
+		"waa-pa.clients6.google.com",
+		"geminiweb-pa.clients6.google.com",
+		"www.google.com",
+	})
+	if err != nil {
+		t.Fatalf("parse target definition: %v", err)
+	}
+
+	if name != "google-ai-mobile" {
+		t.Fatalf("unexpected name: %q", name)
+	}
+
+	if want := []string{
+		"waa-pa.clients6.google.com",
+		"geminiweb-pa.clients6.google.com",
+		"www.google.com",
+	}; !reflect.DeepEqual(definition.Domains, want) {
+		t.Fatalf("unexpected target domains:\nwant: %+v\n got: %+v", want, definition.Domains)
 	}
 }
 

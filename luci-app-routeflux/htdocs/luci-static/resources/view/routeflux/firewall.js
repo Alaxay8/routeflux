@@ -473,7 +473,7 @@ return view.extend({
 			textarea.placeholder = _('Examples: youtube instagram openai discord 1.1.1.1 203.0.113.10-203.0.113.20');
 			textarea.disabled = false;
 			row.style.opacity = '1';
-			help.textContent = _('Route only selected services, domains, or destination IPv4 targets through RouteFlux. Built-in presets: youtube, instagram, discord, whatsapp, telegram-web, telegram, facetime. Create any custom alias on the Services tab, then use it here like openai or netflix. Popular root domains like youtube.com and instagram.com still auto-expand to the domain families they need. Domains match subdomains and work best when clients use the router DNS.');
+			help.textContent = _('Route only selected services, domains, or destination IPv4 targets through RouteFlux. Built-in presets: discord, facetime, gemini, gemini-mobile, instagram, netflix, notebooklm, notebooklm-mobile, telegram, telegram-web, twitter, whatsapp, youtube. Create any custom alias on the Services tab, then use it here like openai or work-chat. Popular root domains like youtube.com, instagram.com, netflix.com, x.com, gemini.google.com, and notebooklm.google.com still auto-expand to the domain families they need. Use gemini-mobile or notebooklm-mobile for the Android or iOS apps when the web preset is too narrow. The mobile presets are broader and may also catch shared Google infrastructure and direct IPv4 endpoints. Domains match subdomains and work best when clients use the router DNS.');
 			blockHelp.textContent = _('When enabled, RouteFlux drops LAN UDP/443 in targets mode so selected services cannot bypass domain matching through QUIC.');
 			return;
 		}

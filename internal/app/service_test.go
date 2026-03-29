@@ -1847,6 +1847,8 @@ type memoryStore struct {
 	subs     []domain.Subscription
 	settings domain.Settings
 	state    domain.RuntimeState
+
+	saveStateCalls int
 }
 
 type rewriteURLRoundTripper struct {
@@ -1899,6 +1901,7 @@ func (s *memoryStore) LoadState() (domain.RuntimeState, error) {
 
 func (s *memoryStore) SaveState(state domain.RuntimeState) error {
 	s.state = state
+	s.saveStateCalls++
 	return nil
 }
 

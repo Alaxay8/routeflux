@@ -3,7 +3,10 @@ package cli
 import (
 	"bytes"
 	"context"
+	"errors"
 	"fmt"
+	"io"
+	"os"
 	"os/exec"
 	"strings"
 
@@ -12,10 +15,12 @@ import (
 
 const (
 	logreadPath     = "/sbin/logread"
+	xrayLogPath     = "/var/log/xray.log"
 	defaultLogLimit = 200
 )
 
 var runLogread = defaultRunLogread
+var readLogTail = defaultReadLogTail
 
 type logsSnapshot struct {
 	Available bool     `json:"available"`
@@ -50,18 +55,37 @@ func buildLogsSnapshot(ctx context.Context, limit int) logsSnapshot {
 		Xray:      []string{},
 		System:    []string{},
 	}
+	var errorsList []string
+	var sources []string
 
 	output, err := runLogread(ctx)
-	if err != nil {
-		snapshot.Error = err.Error()
-		return snapshot
+	if err == nil {
+		lines := splitLogLines(output)
+		snapshot.RouteFlux = lastN(filterLogLines(lines, []string{"routeflux["}), limit)
+		snapshot.Xray = lastN(filterLogLines(lines, []string{"xray["}), limit)
+		snapshot.System = lastN(lines, limit)
+		sources = append(sources, logreadPath)
+	} else {
+		errorsList = append(errorsList, err.Error())
 	}
 
-	lines := splitLogLines(output)
-	snapshot.Available = true
-	snapshot.RouteFlux = lastN(filterLogLines(lines, []string{"routeflux["}), limit)
-	snapshot.Xray = lastN(filterLogLines(lines, []string{"xray["}), limit)
-	snapshot.System = lastN(lines, limit)
+	xrayLines, err := readLogTail(xrayLogPath, limit)
+	switch {
+	case err == nil:
+		snapshot.Xray = xrayLines
+		sources = append(sources, xrayLogPath)
+	case errors.Is(err, os.ErrNotExist):
+	default:
+		errorsList = append(errorsList, fmt.Sprintf("read %s: %v", xrayLogPath, err))
+	}
+
+	if len(sources) > 0 {
+		snapshot.Available = true
+		snapshot.Source = strings.Join(sources, " + ")
+	}
+	if len(errorsList) > 0 {
+		snapshot.Error = strings.Join(errorsList, "; ")
+	}
 
 	return snapshot
 }
@@ -73,6 +97,61 @@ func defaultRunLogread(ctx context.Context) ([]byte, error) {
 		return nil, fmt.Errorf("run %s: %w: %s", logreadPath, err, strings.TrimSpace(string(output)))
 	}
 	return output, nil
+}
+
+func defaultReadLogTail(path string, limit int) ([]string, error) {
+	if limit <= 0 {
+		return []string{}, nil
+	}
+
+	file, err := os.Open(path)
+	if err != nil {
+		return nil, err
+	}
+	defer file.Close()
+
+	info, err := file.Stat()
+	if err != nil {
+		return nil, err
+	}
+	if info.Size() == 0 {
+		return []string{}, nil
+	}
+
+	const chunkSize int64 = 4096
+	var chunks [][]byte
+	var newlineCount int
+
+	for offset := info.Size(); offset > 0 && newlineCount <= limit; {
+		readSize := chunkSize
+		if offset < readSize {
+			readSize = offset
+		}
+
+		start := offset - readSize
+		chunk := make([]byte, readSize)
+		n, readErr := file.ReadAt(chunk, start)
+		if readErr != nil && !errors.Is(readErr, io.EOF) {
+			return nil, readErr
+		}
+
+		chunk = chunk[:n]
+		newlineCount += bytes.Count(chunk, []byte{'\n'})
+		chunks = append(chunks, chunk)
+		offset = start
+	}
+
+	totalSize := 0
+	for _, chunk := range chunks {
+		totalSize += len(chunk)
+	}
+
+	combined := make([]byte, 0, totalSize)
+	for i := len(chunks) - 1; i >= 0; i-- {
+		combined = append(combined, chunks[i]...)
+	}
+
+	return lastN(splitLogLines(combined), limit), nil
 }
 
 func splitLogLines(output []byte) []string {

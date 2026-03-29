@@ -30,6 +30,25 @@ type FirewallTargetService struct {
 	CIDRs    []string                    `json:"cidrs"`
 }
 
+var googleAIMobileSharedDomains = []string{
+	"myaccount.google.com",
+	"one.google.com",
+	"support.google.com",
+	"www.google.com",
+	"mtalk.google.com",
+	"dns.google.com",
+	"dns.google",
+	"googleapis.com",
+	"clients6.google.com",
+	"gstatic.com",
+	"googleusercontent.com",
+}
+
+var googleAIMobileSharedCIDRs = []string{
+	"74.125.205.0/24",
+	"173.194.73.0/24",
+}
+
 var firewallTargetServicePresets = map[string]FirewallTargetDefinition{
 	"youtube": {
 		Domains: []string{
@@ -48,6 +67,19 @@ var firewallTargetServicePresets = map[string]FirewallTargetDefinition{
 			"instagram.com",
 			"cdninstagram.com",
 			"fbcdn.net",
+		},
+	},
+	"netflix": {
+		Domains: []string{
+			"netflix.com",
+			"netflix.net",
+			"nflxvideo.net",
+			"nflximg.net",
+			"nflximg.com",
+			"nflxso.net",
+			"nflxext.com",
+			"nflxsearch.net",
+			"fast.com",
 		},
 	},
 	"discord": {
@@ -96,6 +128,14 @@ var firewallTargetServicePresets = map[string]FirewallTargetDefinition{
 			"149.154.0.0/16",
 		},
 	},
+	"twitter": {
+		Domains: []string{
+			"x.com",
+			"twitter.com",
+			"t.co",
+			"twimg.com",
+		},
+	},
 	"facetime": {
 		Domains: []string{
 			"facetime.apple.com",
@@ -106,16 +146,56 @@ var firewallTargetServicePresets = map[string]FirewallTargetDefinition{
 			"courier.push.apple.com",
 		},
 	},
+	"gemini": {
+		Domains: []string{
+			"accounts.google.com",
+			"content.googleapis.com",
+			"gemini.google.com",
+			"geminiweb-pa.clients6.google.com",
+			"generativelanguage.googleapis.com",
+			"lh3.googleusercontent.com",
+			"myaccount.google.com",
+			"ogads-pa.clients6.google.com",
+			"one.google.com",
+			"ssl.gstatic.com",
+			"support.google.com",
+			"waa-pa.clients6.google.com",
+			"www.google.com",
+			"www.gstatic.com",
+		},
+	},
+	"gemini-mobile": {
+		Domains: googleAIMobileDomains("gemini.google.com"),
+		CIDRs:   slices.Clone(googleAIMobileSharedCIDRs),
+	},
+	"notebooklm": {
+		Domains: []string{
+			"accounts.google.com",
+			"content.googleapis.com",
+			"generativelanguage.googleapis.com",
+			"lh3.googleusercontent.com",
+			"notebooklm.google.com",
+		},
+	},
+	"notebooklm-mobile": {
+		Domains: googleAIMobileDomains("notebooklm.google.com"),
+		CIDRs:   slices.Clone(googleAIMobileSharedCIDRs),
+	},
 }
 
 var firewallTargetDomainFamilies = map[string]string{
-	"youtube.com":        "youtube",
-	"instagram.com":      "instagram",
-	"discord.com":        "discord",
-	"whatsapp.com":       "whatsapp",
-	"telegram.org":       "telegram-web",
-	"web.telegram.org":   "telegram-web",
-	"facetime.apple.com": "facetime",
+	"youtube.com":           "youtube",
+	"instagram.com":         "instagram",
+	"netflix.com":           "netflix",
+	"discord.com":           "discord",
+	"whatsapp.com":          "whatsapp",
+	"x.com":                 "twitter",
+	"twitter.com":           "twitter",
+	"gemini.google.com":     "gemini",
+	"notebooklm.google.com": "notebooklm",
+	"telegram.org":          "telegram-web",
+	"web.telegram.org":      "telegram-web",
+	"facetime.apple.com":    "facetime",
 }
 
 // FirewallTargets stores validated transparent proxy selectors.
@@ -477,7 +557,7 @@ func normalizeFirewallIPv4Selector(value string) (string, bool, error) {
 	switch {
 	case parseIPv4(value), parseIPv4CIDR(value):
 		return value, true, nil
-	case strings.Contains(value, "-"):
+	case looksLikeIPv4Range(value):
 		if err := validateIPv4Range(value); err != nil {
 			return "", false, err
 		}
@@ -566,4 +646,26 @@ func validateIPv4Range(value string) error {
 	}
 
 	return nil
+}
+
+func looksLikeIPv4Range(value string) bool {
+	parts := strings.SplitN(value, "-", 2)
+	if len(parts) != 2 {
+		return false
+	}
+
+	start := strings.TrimSpace(parts[0])
+	end := strings.TrimSpace(parts[1])
+	if start == "" || end == "" {
+		return false
+	}
+
+	return parseIPv4(start) && parseIPv4(end)
+}
+
+func googleAIMobileDomains(primaryHost string) []string {
+	domains := make([]string, 0, len(googleAIMobileSharedDomains)+2)
+	domains = append(domains, "accounts.google.com", primaryHost)
+	domains = append(domains, googleAIMobileSharedDomains...)
+	return domains
 }
