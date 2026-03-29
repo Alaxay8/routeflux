@@ -72,16 +72,18 @@ func newFirewallExplainCmd(opts *rootOptions) *cobra.Command {
 		Use:   "explain",
 		Short: "Explain firewall routing settings in plain language",
 		RunE: func(cmd *cobra.Command, args []string) error {
-			return printOutput(cmd, false, nil, strings.TrimSpace(`
+			return printOutput(cmd, false, nil, strings.TrimSpace(fmt.Sprintf(`
 Firewall modes:
 - disabled: Do not redirect router traffic through RouteFlux.
   Example: the proxy is installed, but no device or destination is forced through it.
   Command: routeflux firewall disable
 - targets: Send traffic through RouteFlux only when the destination matches selected services, domains, or IPv4 targets.
   Example: routeflux firewall set targets youtube telegram discord means "those services only".
-  Service presets: youtube, instagram, discord, whatsapp, telegram-web, telegram, facetime.
+  Service presets: %s.
   Create your own aliases with routeflux services set openai openai.com chatgpt.com.
-  Popular root domains like youtube.com and instagram.com still auto-expand to the domain families they need.
+  Popular root domains like youtube.com, instagram.com, netflix.com, x.com, gemini.google.com, and notebooklm.google.com still auto-expand to the domain families they need.
+  Use gemini-mobile or notebooklm-mobile for the Android or iOS apps when the web preset is too narrow.
+  Gemini and NotebookLM mobile presets are broader and still best-effort because Google apps can use extra shared infrastructure and direct IPv4 endpoints.
   Command: routeflux firewall set targets youtube telegram discord 1.1.1.1
 - hosts: Send all TCP traffic from selected LAN devices through RouteFlux.
   Example: route one TV, phone, or laptop through the proxy.
@@ -96,9 +98,13 @@ Hosts selectors:
 Other options:
 - port: port used for transparent redirect
 - block-quic: block UDP/443 from matched hosts in host mode, or from LAN clients in targets mode, so apps do not bypass TCP routing through QUIC
-`))
+`, firewallPresetSummary())))
 		},
 	}
+}
+
+func firewallPresetSummary() string {
+	return strings.Join(domain.FirewallTargetServiceNames(), ", ")
 }
 
 func newFirewallSetCmd(opts *rootOptions) *cobra.Command {
