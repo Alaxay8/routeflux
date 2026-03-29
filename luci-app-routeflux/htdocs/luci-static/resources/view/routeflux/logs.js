@@ -560,8 +560,8 @@ return view.extend({
 				'primary': true
 			}),
 			this.renderCard(_('Mode'), firstNonEmpty([ state.mode ], _('disconnected'))),
-			this.renderCard(_('Log Source'), firstNonEmpty([ logs.source ], _('/sbin/logread'))),
-			this.renderCard(_('logread'), logs.available === true ? _('Available') : _('Unavailable')),
+			this.renderCard(_('Log Sources'), firstNonEmpty([ logs.source ], _('/sbin/logread'))),
+			this.renderCard(_('Logs'), logs.available === true ? _('Available') : _('Unavailable')),
 			this.renderCard(_('Active Provider'), activeProvider),
 			this.renderCard(_('Active Profile'), activeProfile),
 			this.renderCard(_('Active Node'), activeNodeName)
@@ -658,7 +658,7 @@ return view.extend({
 		);
 		this.updatePreformattedBlock(
 			'#routeflux-logs-xray-pre',
-			this.logText('xray', _('No recent Xray log lines matched in logread.')),
+			this.logText('xray', _('No recent Xray log lines are available.')),
 			forceScroll
 		);
 		this.updatePreformattedBlock(
@@ -874,7 +874,7 @@ return view.extend({
 		content.push(this.renderLogSection(
 			_('Xray'),
 			'xray',
-			_('No recent Xray log lines matched in logread.')
+			_('No recent Xray log lines are available.')
 		));
 		content.push(this.renderLogSection(
 			_('System Tail'),
