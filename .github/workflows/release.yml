@@ -40,7 +40,6 @@ jobs:
           generate_release_notes: true
           prerelease: ${{ contains(github.ref_name, '-beta.') }}
           files: |
-            dist/*.ipk
             dist/*.tar.gz
             dist/install.sh
             dist/uninstall.sh
