@@ -34,10 +34,11 @@ func (s *Service) runAutoHealthCheck(ctx context.Context) error {
 		return fmt.Errorf("load settings: %w", err)
 	}
 
-	state, err := s.store.LoadState()
+	persistedState, err := s.store.LoadState()
 	if err != nil {
 		return fmt.Errorf("load state: %w", err)
 	}
+	state := s.mergeAutoHealthState(persistedState)
 	if state.Mode != domain.SelectionModeAuto || state.ActiveSubscriptionID == "" {
 		return nil
 	}
@@ -61,8 +62,12 @@ func (s *Service) runAutoHealthCheck(ctx context.Context) error {
 	if !decision.Reconnect && !decision.Switch {
 		state.Health = decision.Health
 		state.LastFailureReason = ""
-		if err := s.store.SaveState(state); err != nil {
-			return fmt.Errorf("save state: %w", err)
+		if s.shouldPersistAutoHealthState(persistedState, state) {
+			if err := s.saveState(state); err != nil {
+				return fmt.Errorf("save state: %w", err)
+			}
+		} else {
+			s.rememberAutoHealthState(state, false)
 		}
 		return nil
 	}
@@ -153,7 +158,7 @@ func (s *Service) commitAutoSelection(ctx context.Context, sub domain.Subscripti
 		state.LastSwitchAt = time.Now().UTC()
 	}
 
-	if err := s.store.SaveState(state); err != nil {
+	if err := s.saveState(state); err != nil {
 		return domain.Node{}, fmt.Errorf("save state: %w", err)
 	}
 
@@ -188,7 +193,7 @@ func (s *Service) persistAutoFailure(ctx context.Context, sub domain.Subscriptio
 	}
 	state.LastFailureReason = decision.Reason
 
-	if err := s.store.SaveState(state); err != nil {
+	if err := s.saveState(state); err != nil {
 		return fmt.Errorf("save state: %w", err)
 	}
 

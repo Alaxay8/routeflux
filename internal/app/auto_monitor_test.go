@@ -97,6 +97,43 @@ func TestSchedulerRunHealthOnceSkipsSwitchWhenImprovementBelowThreshold(t *testi
 	}
 }
 
+func TestSchedulerRunHealthOnceBuffersRepeatedHealthyStateWrites(t *testing.T) {
+	t.Parallel()
+
+	currentNode, candidateNode, sub := testAutoSubscription()
+	store := &memoryStore{
+		subs:     []domain.Subscription{sub},
+		settings: domain.DefaultSettings(),
+		state: domain.RuntimeState{
+			ActiveSubscriptionID: sub.ID,
+			ActiveNodeID:         currentNode.ID,
+			Mode:                 domain.SelectionModeAuto,
+			Connected:            true,
+			LastSwitchAt:         time.Now().Add(-time.Hour),
+			Health:               map[string]domain.NodeHealth{},
+		},
+	}
+
+	service := NewService(Dependencies{
+		Store: store,
+		Checker: fakeChecker{results: map[string]probe.Result{
+			currentNode.ID:   {Healthy: true, Latency: 120 * time.Millisecond},
+			candidateNode.ID: {Healthy: true, Latency: 85 * time.Millisecond},
+		}},
+	})
+
+	scheduler := NewScheduler(service)
+	scheduler.RunHealthOnce(context.Background())
+	scheduler.RunHealthOnce(context.Background())
+
+	if store.saveStateCalls != 1 {
+		t.Fatalf("expected one persisted healthy-state write, got %d", store.saveStateCalls)
+	}
+	if store.state.ActiveNodeID != currentNode.ID {
+		t.Fatalf("expected current node to remain active, got %s", store.state.ActiveNodeID)
+	}
+}
+
 func TestSchedulerRunHealthOnceSwitchesImmediatelyWhenCurrentNodeIsUnhealthy(t *testing.T) {
 	t.Parallel()
 

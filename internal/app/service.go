@@ -18,6 +18,7 @@ import (
 	"regexp"
 	"slices"
 	"strings"
+	"sync"
 	"time"
 	"unicode"
 
@@ -79,6 +80,9 @@ type Service struct {
 	resolver           HostResolver
 	backendReadyChecks int
 	backendReadyDelay  time.Duration
+	now                func() time.Time
+	autoHealthStateMu  sync.Mutex
+	autoHealthState    *autoHealthStateCache
 }
 
 // Dependencies groups the service construction inputs.
@@ -144,6 +148,7 @@ func NewService(deps Dependencies) *Service {
 		resolver:           resolver,
 		backendReadyChecks: backendReadyMaxChecks,
 		backendReadyDelay:  backendReadyCheckDelay,
+		now:                time.Now,
 	}
 }
 
@@ -211,7 +216,7 @@ func (s *Service) addSubscription(ctx context.Context, req AddSubscriptionReques
 			state.LastRefreshAt = make(map[string]time.Time)
 		}
 		state.LastRefreshAt[sub.ID] = now
-		_ = s.store.SaveState(state)
+		_ = s.saveState(state)
 	}
 
 	return sub, nil
@@ -316,7 +321,7 @@ func (s *Service) persistDisconnectedState(state domain.RuntimeState) error {
 	state.ActiveNodeID = ""
 	state.Mode = domain.SelectionModeDisconnected
 	state.Connected = false
-	if err := s.store.SaveState(state); err != nil {
+	if err := s.saveState(state); err != nil {
 		return fmt.Errorf("save state: %w", err)
 	}
 
@@ -505,7 +510,7 @@ func (s *Service) refreshSubscription(ctx context.Context, subscriptionID string
 			state.LastRefreshAt = make(map[string]time.Time)
 		}
 		state.LastRefreshAt[sub.ID] = sub.LastUpdatedAt
-		_ = s.store.SaveState(state)
+		_ = s.saveState(state)
 	}
 
 	return sub, nil
@@ -589,7 +594,7 @@ func (s *Service) connectAuto(ctx context.Context, subscriptionID string) (domai
 		return domain.Node{}, fmt.Errorf("load settings: %w", err)
 	}
 
-	state, err := s.store.LoadState()
+	state, err := s.loadStateWithAutoHealthCache()
 	if err != nil {
 		return domain.Node{}, fmt.Errorf("load state: %w", err)
 	}
@@ -603,7 +608,7 @@ func (s *Service) connectAuto(ctx context.Context, subscriptionID string) (domai
 
 	if !decision.HasHealthyCandidate {
 		state.Health = decision.Health
-		if err := s.store.SaveState(state); err != nil {
+		if err := s.saveState(state); err != nil {
 			return domain.Node{}, fmt.Errorf("save state: %w", err)
 		}
 		return domain.Node{}, errors.New(decision.Reason)
@@ -644,7 +649,7 @@ func (s *Service) disconnect(ctx context.Context) error {
 	state.ActiveSubscriptionID = ""
 	state.Mode = domain.SelectionModeDisconnected
 	state.Connected = false
-	if err := s.store.SaveState(state); err != nil {
+	if err := s.saveState(state); err != nil {
 		return fmt.Errorf("save state: %w", err)
 	}
 
@@ -1599,7 +1604,7 @@ func (s *Service) applyNodeSelection(ctx context.Context, sub domain.Subscriptio
 	state.LastSuccessAt = time.Now().UTC()
 	state.LastFailureReason = ""
 
-	if err := s.store.SaveState(state); err != nil {
+	if err := s.saveState(state); err != nil {
 		return fmt.Errorf("save state: %w", err)
 	}
 
@@ -2131,7 +2136,7 @@ func (s *Service) markConnectionFailed(ctx context.Context, subscriptionID, node
 	state.Connected = false
 	state.LastFailureReason = reason
 
-	if err := s.store.SaveState(state); err != nil {
+	if err := s.saveState(state); err != nil {
 		return fmt.Errorf("save state after backend failure: %w", err)
 	}
 
@@ -2156,7 +2161,7 @@ func (s *Service) persistRestoreFailure(ctx context.Context, reason string) erro
 	state.Mode = domain.SelectionModeDisconnected
 	state.Connected = false
 	state.LastFailureReason = reason
-	if err := s.store.SaveState(state); err != nil {
+	if err := s.saveState(state); err != nil {
 		return fmt.Errorf("save state after restore failure: %w", err)
 	}
 
