@@ -59,14 +59,22 @@ routeflux connect --auto --subscription sub-1234567890
 wget -O /tmp/routeflux-install.sh "https://github.com/Alaxay8/routeflux/releases/latest/download/install.sh" && sh /tmp/routeflux-install.sh
 ```
 
+Чтобы обновить уже установленный RouteFlux поверх текущей версии без потери подписок, пользовательских service alias и preset-ов из `/etc/routeflux`:
+
+```bash
+ROUTEFLUX_TAG=v0.1.5
+wget -O /tmp/routeflux-install.sh "https://github.com/Alaxay8/routeflux/releases/download/${ROUTEFLUX_TAG}/install.sh" && sh /tmp/routeflux-install.sh
+```
+
 Если нужен зафиксированный релиз:
 
 ```bash
-ROUTEFLUX_TAG=v0.1.4
+ROUTEFLUX_TAG=v0.1.5
 wget -O /tmp/routeflux-install.sh "https://github.com/Alaxay8/routeflux/releases/download/${ROUTEFLUX_TAG}/install.sh" && sh /tmp/routeflux-install.sh
 ```
 
 Установщик автоматически ставит встроенный runtime Xray, если роутер ещё не предоставляет рабочий бинарный файл Xray и сервис.
+Он обновляет RouteFlux поверх текущей установки и сохраняет существующие state-файлы в `/etc/routeflux`.
 
 Сейчас готовые артефакты для простой установки публикуются для:
 
@@ -314,7 +322,7 @@ routeflux firewall set targets youtube instagram 1.1.1.1
 
 Селекторы targets:
 
-- service preset: `youtube`, `instagram`, `discord`, `whatsapp`, `telegram-web`, `telegram`, `facetime`
+- service preset: `discord`, `facetime`, `gemini`, `gemini-mobile`, `instagram`, `netflix`, `notebooklm`, `notebooklm-mobile`, `telegram`, `telegram-web`, `twitter`, `whatsapp`, `youtube`
 - пользовательский alias сервиса: `openai`
 - домен: `youtube.com`
 - IPv4-адрес: `1.1.1.1`
@@ -327,9 +335,12 @@ routeflux firewall set targets youtube instagram 1.1.1.1
 - Пользовательский alias может содержать только домены, IPv4-адреса, CIDR и IPv4-диапазоны.
 - Имена встроенных preset-ов зарезервированы и остаются read-only.
 - RouteFlux трактует `youtube.com` как сам домен и его поддомены.
-- Популярные preset-ы вроде `youtube`, `instagram`, `discord` и `whatsapp` автоматически разворачиваются во внутренние доменные семейства.
-- Популярные root-домены вроде `youtube.com` и `instagram.com` тоже автоматически разворачиваются во внутренние доменные семейства.
-- `telegram` и `facetime` это best-effort preset-ы, потому что их приложения могут использовать прямые IP или более широкую инфраструктуру вендора.
+- Популярные preset-ы вроде `youtube`, `instagram`, `discord`, `twitter`, `netflix`, `whatsapp`, `gemini`, `gemini-mobile`, `notebooklm` и `notebooklm-mobile` автоматически разворачиваются во внутренние доменные семейства.
+- Популярные root-домены вроде `youtube.com`, `instagram.com`, `netflix.com`, `x.com`, `gemini.google.com` и `notebooklm.google.com` тоже автоматически разворачиваются во внутренние доменные семейства.
+- Используйте `gemini-mobile` и `notebooklm-mobile` для Android и iOS приложений, когда web preset оказывается слишком узким.
+- Для mobile preset-ов Google AI может добавляться небольшой набор IPv4 targets поверх доменов, потому что часть трафика приложения не раскрывает пригодный hostname.
+- `gemini`, `gemini-mobile`, `notebooklm`, `notebooklm-mobile`, `telegram`, `facetime`, `twitter` и `netflix` это best-effort preset-ы, потому что их приложения могут использовать прямые IP или более широкую общую инфраструктуру вендора.
+- Мобильные Google AI preset-ы намеренно шире и могут зацеплять общую Google-инфраструктуру. Если и этого недостаточно, добавьте недостающие Google-домены в свой custom alias и маршрутизируйте уже его.
 - Для доменных targets нужен `dnsmasq` с поддержкой `nftset`, обычно это `dnsmasq-full` на OpenWrt.
 - Доменные targets зависят от DNS-ответов, которые видит роутер. Если клиенты используют собственный DoH или DoT напрямую, набор IP может остаться пустым.
 - На shared CDN RouteFlux теперь откатывает несоответствующий прозрачный трафик на `direct`, а не отправляет весь совпавший IP через выбранную ноду.

@@ -59,14 +59,22 @@ Use the latest stable installer:
 wget -O /tmp/routeflux-install.sh "https://github.com/Alaxay8/routeflux/releases/latest/download/install.sh" && sh /tmp/routeflux-install.sh
 ```
 
+To update an existing router install in place without losing subscriptions, custom service aliases, or presets stored in `/etc/routeflux`:
+
+```bash
+ROUTEFLUX_TAG=v0.1.5
+wget -O /tmp/routeflux-install.sh "https://github.com/Alaxay8/routeflux/releases/download/${ROUTEFLUX_TAG}/install.sh" && sh /tmp/routeflux-install.sh
+```
+
 If you need a pinned release:
 
 ```bash
-ROUTEFLUX_TAG=v0.1.4
+ROUTEFLUX_TAG=v0.1.5
 wget -O /tmp/routeflux-install.sh "https://github.com/Alaxay8/routeflux/releases/download/${ROUTEFLUX_TAG}/install.sh" && sh /tmp/routeflux-install.sh
 ```
 
 The installer automatically installs the bundled Xray runtime when the router does not already provide a usable Xray binary and service.
+It updates RouteFlux in place and preserves existing `/etc/routeflux` state files.
 
 Current easy-install release assets are published for:
 
@@ -314,7 +322,7 @@ routeflux firewall set targets youtube instagram 1.1.1.1
 
 Target selectors:
 
-- service preset: `youtube`, `instagram`, `discord`, `whatsapp`, `telegram-web`, `telegram`, `facetime`
+- service preset: `discord`, `facetime`, `gemini`, `gemini-mobile`, `instagram`, `netflix`, `notebooklm`, `notebooklm-mobile`, `telegram`, `telegram-web`, `twitter`, `whatsapp`, `youtube`
 - custom service alias: `openai`
 - domain: `youtube.com`
 - IPv4 address: `1.1.1.1`
@@ -327,9 +335,12 @@ Notes for domain targets:
 - Custom aliases can contain only domains, IPv4 addresses, CIDRs, and IPv4 ranges.
 - Built-in preset names are reserved and stay read-only.
 - RouteFlux treats `youtube.com` as the domain and its subdomains.
-- Popular presets like `youtube`, `instagram`, `discord`, and `whatsapp` expand to the domain families they need.
-- Popular root domains like `youtube.com` and `instagram.com` still auto-expand to the domain families they need.
-- `telegram` and `facetime` are best-effort presets because those apps may use direct IPs or broader vendor infrastructure.
+- Popular presets like `youtube`, `instagram`, `discord`, `twitter`, `netflix`, `whatsapp`, `gemini`, `gemini-mobile`, `notebooklm`, and `notebooklm-mobile` expand to the domain families they need.
+- Popular root domains like `youtube.com`, `instagram.com`, `netflix.com`, `x.com`, `gemini.google.com`, and `notebooklm.google.com` still auto-expand to the domain families they need.
+- Use `gemini-mobile` and `notebooklm-mobile` for the Android or iOS apps when the web presets are too narrow.
+- The mobile Google AI presets may include a small set of IPv4 targets in addition to domains because some app traffic does not expose a usable hostname.
+- `gemini`, `gemini-mobile`, `notebooklm`, `notebooklm-mobile`, `telegram`, `facetime`, `twitter`, and `netflix` are best-effort presets because those apps may use direct IPs or broader shared vendor infrastructure.
+- The mobile Google AI presets are intentionally broader and may also catch shared Google infrastructure. If they are still not enough for your device, add the missing Google domains as a custom alias and route that alias instead.
 - Domain targets require `dnsmasq` with `nftset` support, which usually means `dnsmasq-full` on OpenWrt.
 - Domain targets depend on router-visible DNS answers. If clients use their own DoH or DoT directly, target IP sets may stay empty.
 - On shared CDNs, RouteFlux now falls back to direct routing for non-matching transparent traffic instead of sending every matched IP through the selected node.
