@@ -34,8 +34,8 @@ TARBALL_PATH="${ROOT_DIR}/dist/${PACKAGE_NAME}_${VERSION}_${ARCH}.tar.gz"
 rm -rf "${PKG_DIR}"
 mkdir -p "${ROOT_DIR}/dist"
 mkdir -p \
+	"${DATA_DIR}" \
 	"${DATA_DIR}/usr/bin" \
-	"${DATA_DIR}/etc/init.d" \
 	"${DATA_DIR}/usr/share/luci/menu.d" \
 	"${DATA_DIR}/usr/share/rpcd/acl.d" \
 	"${DATA_DIR}/www/luci-static/resources/routeflux" \
@@ -44,8 +44,9 @@ mkdir -p \
 	"${WORK_DIR}"
 
 cp "${BINARY_PATH}" "${DATA_DIR}/usr/bin/routeflux"
-cp "${ROOT_DIR}/openwrt/root/etc/init.d/routeflux" "${DATA_DIR}/etc/init.d/routeflux"
-chmod 0755 "${DATA_DIR}/etc/init.d/routeflux"
+cp -R "${ROOT_DIR}/openwrt/root/." "${DATA_DIR}/"
+[ -d "${DATA_DIR}/etc/init.d" ] && find "${DATA_DIR}/etc/init.d" -type f -exec chmod 0755 {} \;
+[ -d "${DATA_DIR}/usr/libexec" ] && find "${DATA_DIR}/usr/libexec" -type f -exec chmod 0755 {} \;
 cp "${ROOT_DIR}/luci-app-routeflux/root/usr/share/luci/menu.d/luci-app-routeflux.json" \
 	"${DATA_DIR}/usr/share/luci/menu.d/luci-app-routeflux.json"
 cp "${ROOT_DIR}/luci-app-routeflux/root/usr/share/rpcd/acl.d/luci-app-routeflux.json" \
@@ -72,6 +73,8 @@ set -eu
 
 if [ -z "${IPKG_INSTROOT:-}" ]; then
 	chmod 0755 /etc/init.d/routeflux >/dev/null 2>&1 || true
+	chmod 0755 /usr/libexec/routeflux-cron >/dev/null 2>&1 || true
+	/usr/libexec/routeflux-cron ensure-xray-log-retention >/dev/null 2>&1 || true
 	rm -f /tmp/luci-indexcache
 	rm -rf /tmp/luci-modulecache
 	/etc/init.d/rpcd reload >/dev/null 2>&1 || true

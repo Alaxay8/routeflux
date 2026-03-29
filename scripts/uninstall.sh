@@ -72,6 +72,10 @@ xray_config_path() {
 	scope_path "${path}"
 }
 
+routeflux_cron_helper_path() {
+	scope_path "/usr/libexec/routeflux-cron"
+}
+
 require_root_if_needed() {
 	if [ "${ROUTEFLUX_INSTALL_ROOT}" = "/" ] && [ "$(id -u)" -ne 0 ]; then
 		die "run this uninstaller as root on the router, or use --install-root for a staging directory"
@@ -136,6 +140,7 @@ xray_binary="$(xray_binary_path)"
 xray_service="$(xray_service_path)"
 xray_config="$(xray_config_path)"
 xray_config_dir="$(dirname "${xray_config}")"
+routeflux_cron_helper="$(routeflux_cron_helper_path)"
 rpcd_service="$(scope_path "/etc/init.d/rpcd")"
 uhttpd_service="$(scope_path "/etc/init.d/uhttpd")"
 
@@ -158,6 +163,7 @@ run_service_if_present "${routeflux_service}" stop || true
 run_service_if_present "${routeflux_service}" disable || true
 run_service_if_present "${xray_service}" stop || true
 run_service_if_present "${xray_service}" disable || true
+ROUTEFLUX_INSTALL_ROOT="${ROUTEFLUX_INSTALL_ROOT}" "${routeflux_cron_helper}" remove-xray-log-retention >/dev/null 2>&1 || true
 
 remove_path "${routeflux_binary}"
 remove_path "${routeflux_service}"
@@ -171,6 +177,7 @@ remove_path "$(scope_path "/www/luci-static/resources/view/routeflux")"
 remove_path "${xray_binary}"
 remove_path "${xray_service}"
 remove_path "${xray_config_dir}"
+remove_path "${routeflux_cron_helper}"
 remove_path "$(scope_path "/var/log/xray.log")"
 remove_path "$(scope_path "/var/run/xray.pid")"
 

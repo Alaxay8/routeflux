@@ -63,6 +63,10 @@ xray_binary_path() {
 	root_path "usr/bin/xray"
 }
 
+routeflux_cron_helper_path() {
+	root_path "usr/libexec/routeflux-cron"
+}
+
 require_root_if_needed() {
 	if [ "${ROUTEFLUX_INSTALL_ROOT}" = "/" ] && [ "$(id -u)" -ne 0 ]; then
 		die "run this installer as root on the router, or use --install-root for a staging directory"
@@ -166,6 +170,12 @@ run_service_if_present() {
 
 xray_is_ready() {
 	[ -x "$(xray_binary_path)" ] && [ -x "$(service_path xray)" ]
+}
+
+ensure_xray_log_retention() {
+	helper="$(routeflux_cron_helper_path)"
+	[ -x "${helper}" ] || return 0
+	ROUTEFLUX_INSTALL_ROOT="${ROUTEFLUX_INSTALL_ROOT}" "${helper}" ensure-xray-log-retention
 }
 
 while [ "$#" -gt 0 ]; do
@@ -274,6 +284,8 @@ routeflux_service="$(service_path routeflux)"
 if [ -f "${routeflux_service}" ]; then
 	chmod 0755 "${routeflux_service}" || true
 fi
+
+ensure_xray_log_retention
 
 rm -f "$(root_path "tmp/luci-indexcache")"
 rm -rf "$(root_path "tmp/luci-modulecache")"

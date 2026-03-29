@@ -23,6 +23,7 @@ func TestInstallScriptInstallsMatchedOpenWrtTarball(t *testing.T) {
 	serviceLogPath := filepath.Join(t.TempDir(), "services.log")
 
 	writeTestTarball(t, filepath.Join(downloadDir, "routeflux_"+version+"_mipsel_24kc.tar.gz"))
+	writeServiceStub(t, filepath.Join(installRoot, "etc", "init.d", "cron"))
 	writeServiceStub(t, filepath.Join(installRoot, "etc", "init.d", "rpcd"))
 	writeServiceStub(t, filepath.Join(installRoot, "etc", "init.d", "uhttpd"))
 	writeExecutable(t, filepath.Join(installRoot, "usr", "bin", "xray"), "#!/bin/sh\nexit 0\n")
@@ -50,6 +51,7 @@ func TestInstallScriptInstallsMatchedOpenWrtTarball(t *testing.T) {
 	}
 
 	for _, want := range []string{
+		"cron:restart",
 		"rpcd:reload",
 		"uhttpd:reload",
 		"routeflux:enable",
@@ -62,6 +64,15 @@ func TestInstallScriptInstallsMatchedOpenWrtTarball(t *testing.T) {
 
 	if !strings.Contains(stdout, "mipsel_24kc") {
 		t.Fatalf("expected stdout to mention resolved arch, got %q", stdout)
+	}
+
+	crontabPath := filepath.Join(installRoot, "etc", "crontabs", "root")
+	contents, err := os.ReadFile(crontabPath)
+	if err != nil {
+		t.Fatalf("read crontab: %v", err)
+	}
+	if !strings.Contains(string(contents), "0 * * * * [ -f /var/log/xray.log ] && : > /var/log/xray.log") {
+		t.Fatalf("expected xray retention cron entry, got %q", string(contents))
 	}
 }
 
@@ -243,8 +254,14 @@ func writeTestTarball(t *testing.T, path string) {
 	tw := tar.NewWriter(gz)
 	defer tw.Close()
 
+	cronHelper, err := os.ReadFile(filepath.Join(repoRoot(t), "openwrt", "root", "usr", "libexec", "routeflux-cron"))
+	if err != nil {
+		t.Fatalf("read routeflux cron helper: %v", err)
+	}
+
 	addTarFile(t, tw, "./usr/bin/routeflux", 0o755, "#!/bin/sh\nprintf 'routeflux stub\\n'\n")
 	addTarFile(t, tw, "./etc/init.d/routeflux", 0o755, "#!/bin/sh\nset -eu\nprintf '%s:%s\\n' \"$(basename \"$0\")\" \"${1:-}\" >> \"${ROUTEFLUX_TEST_SERVICE_LOG:?}\"\n")
+	addTarFile(t, tw, "./usr/libexec/routeflux-cron", 0o755, string(cronHelper))
 	addTarFile(t, tw, "./www/luci-static/resources/view/routeflux/overview.js", 0o644, "'use strict';\n")
 }
 

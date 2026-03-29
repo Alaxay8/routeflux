@@ -1,0 +1,111 @@
+#!/bin/sh
+set -eu
+
+ROUTEFLUX_INSTALL_ROOT="${ROUTEFLUX_INSTALL_ROOT:-/}"
+CRON_BLOCK_START="# routeflux:xray-log-retention:start"
+CRON_BLOCK_END="# routeflux:xray-log-retention:end"
+XRAY_LOG_RETENTION_JOB="0 * * * * [ -f /var/log/xray.log ] && : > /var/log/xray.log"
+CORRUPT_BACKUP_CLEANUP_JOB="17 3 * * * [ -d /etc/routeflux ] && find /etc/routeflux -maxdepth 1 -type f -name '*.corrupt-*' -mtime +7 -exec rm -f {} \\;"
+
+root_path() {
+	path="$1"
+	if [ "${ROUTEFLUX_INSTALL_ROOT}" = "/" ]; then
+		printf '/%s\n' "${path}"
+		return
+	fi
+
+	printf '%s/%s\n' "${ROUTEFLUX_INSTALL_ROOT%/}" "${path}"
+}
+
+crontab_path() {
+	root_path "etc/crontabs/root"
+}
+
+cron_service_path() {
+	root_path "etc/init.d/cron"
+}
+
+restart_cron() {
+	service="$(cron_service_path)"
+	[ -x "${service}" ] || return 0
+	"${service}" restart >/dev/null 2>&1 || "${service}" start >/dev/null 2>&1 || true
+}
+
+strip_managed_block() {
+	file="$1"
+	if [ ! -f "${file}" ]; then
+		return 0
+	fi
+
+	awk -v start="${CRON_BLOCK_START}" -v end="${CRON_BLOCK_END}" '
+		$0 == start { skip = 1; next }
+		$0 == end { skip = 0; next }
+		skip != 1 { print }
+	' "${file}"
+}
+
+managed_block_is_current() {
+	crontab="$1"
+	[ -f "${crontab}" ] || return 1
+	grep -Fq "${CRON_BLOCK_START}" "${crontab}" || return 1
+	grep -Fq "${XRAY_LOG_RETENTION_JOB}" "${crontab}" || return 1
+	grep -Fq "${CORRUPT_BACKUP_CLEANUP_JOB}" "${crontab}" || return 1
+}
+
+ensure_xray_log_retention() {
+	crontab="$(crontab_path)"
+	mkdir -p "$(dirname "${crontab}")"
+
+	if managed_block_is_current "${crontab}"; then
+		return 0
+	fi
+
+	tmp_file="$(mktemp "${TMPDIR:-/tmp}/routeflux-cron.XXXXXX")"
+	trap 'rm -f "${tmp_file}"' EXIT HUP INT TERM
+
+	strip_managed_block "${crontab}" > "${tmp_file}"
+	if [ -s "${tmp_file}" ]; then
+		printf '\n' >> "${tmp_file}"
+	fi
+	printf '%s\n%s\n%s\n%s\n' \
+		"${CRON_BLOCK_START}" \
+		"${XRAY_LOG_RETENTION_JOB}" \
+		"${CORRUPT_BACKUP_CLEANUP_JOB}" \
+		"${CRON_BLOCK_END}" >> "${tmp_file}"
+
+	mv "${tmp_file}" "${crontab}"
+	trap - EXIT HUP INT TERM
+	restart_cron
+}
+
+remove_xray_log_retention() {
+	crontab="$(crontab_path)"
+	[ -f "${crontab}" ] || return 0
+	grep -Fq "${CRON_BLOCK_START}" "${crontab}" || return 0
+
+	tmp_file="$(mktemp "${TMPDIR:-/tmp}/routeflux-cron.XXXXXX")"
+	trap 'rm -f "${tmp_file}"' EXIT HUP INT TERM
+
+	awk -v start="${CRON_BLOCK_START}" -v end="${CRON_BLOCK_END}" '
+		$0 == start { skip = 1; next }
+		$0 == end { skip = 0; next }
+		skip != 1 { print }
+	' "${crontab}" > "${tmp_file}"
+
+	mv "${tmp_file}" "${crontab}"
+	trap - EXIT HUP INT TERM
+	restart_cron
+}
+
+case "${1:-}" in
+	ensure-xray-log-retention)
+		ensure_xray_log_retention
+		;;
+	remove-xray-log-retention)
+		remove_xray_log_retention
+		;;
+	*)
+		printf 'usage: %s <ensure-xray-log-retention|remove-xray-log-retention>\n' "$(basename "$0")" >&2
+		exit 1
+		;;
+esac
