@@ -5,6 +5,24 @@
 'require routeflux.ui as routefluxUI';
 
 var routefluxBinary = '/usr/bin/routeflux';
+var whatsNewBaseRelease = 'v0.1.5';
+var whatsNewEntries = [
+	{
+		kind: _('New'),
+		title: _('Update RouteFlux from LuCI'),
+		summary: _('The About page can now download and install the latest published RouteFlux release directly on the router.')
+	},
+	{
+		kind: _('Fix'),
+		title: _('Anti-target routing is more reliable'),
+		summary: _('Anti-target mode now handles more UDP traffic correctly and works more predictably for browser-facing service presets.')
+	},
+	{
+		kind: _('New'),
+		title: _('Anti-target mode is now available'),
+		summary: _('You can keep selected services and destinations direct while sending the rest of your LAN traffic through RouteFlux.')
+	}
+];
 
 function trim(value) {
 	if (value == null)
@@ -15,6 +33,15 @@ function trim(value) {
 
 function notificationParagraph(message) {
 	return E('p', {}, [ message ]);
+}
+
+function renderWhatsNewCard(entry) {
+	return E('div', { 'class': 'routeflux-card routeflux-card-primary routeflux-about-update-card' }, [
+		E('div', { 'class': 'routeflux-card-accent' }, []),
+		E('div', { 'class': 'routeflux-card-label' }, [ entry.kind ]),
+		E('div', { 'class': 'routeflux-card-value routeflux-about-update-title' }, [ entry.title ]),
+		E('p', { 'class': 'routeflux-about-update-summary' }, [ entry.summary ])
+	]);
 }
 
 return view.extend({
@@ -62,6 +89,9 @@ return view.extend({
 	},
 
 	handleUpgrade: function(ev) {
+		if (ev)
+			ev.preventDefault();
+
 		if (!window.confirm(_('Download the latest RouteFlux release and install it over the current router version? Existing /etc/routeflux state is preserved by the installer.')))
 			return Promise.resolve();
 
@@ -74,6 +104,39 @@ return view.extend({
 			ui.addNotification(null, notificationParagraph(err.message || String(err)));
 			throw err;
 		});
+	},
+
+	showWhatsNewModal: function() {
+		var body = [
+			E('p', { 'class': 'routeflux-modal-help' }, [
+				_('Changes included after the %s release, rewritten as practical user-facing updates.').format(whatsNewBaseRelease)
+			]),
+			E('div', { 'class': 'routeflux-overview-grid routeflux-about-update-grid' }, whatsNewEntries.map(renderWhatsNewCard))
+		];
+		var actions = [
+			E('button', {
+				'class': 'cbi-button',
+				'type': 'button',
+				'click': function(ev) {
+					ui.hideModal();
+					return false;
+				}
+			}, [ _('Close') ])
+		];
+
+		routefluxUI.showModal(_('What\'s New'), body, {
+			'bodyClass': 'routeflux-modal-whats-new',
+			'modalClass': 'routeflux-modal-whats-new',
+			'actions': actions
+		});
+	},
+
+	handleShowWhatsNew: function(ev) {
+		if (ev)
+			ev.preventDefault();
+
+		this.showWhatsNewModal();
+		return false;
 	},
 
 	render: function(data) {
@@ -89,12 +152,17 @@ return view.extend({
 
 		content.push(routefluxUI.renderSharedStyles());
 		content.push(E('style', { 'type': 'text/css' }, [
-			'.routeflux-about-pre { white-space:pre-wrap; margin:0; }'
+			'.routeflux-about-pre { white-space:pre-wrap; margin:0; }',
+			'.routeflux-about-update-grid { align-items:stretch; }',
+			'.routeflux-about-update-card { min-height:168px; }',
+			'.routeflux-about-update-title { margin-bottom:10px; }',
+			'.routeflux-about-update-summary { margin:0; color:var(--text-color-secondary, #526175); line-height:1.6; }',
+			'.routeflux-modal-help { margin:0 0 12px; color:var(--text-color-medium, #586677); max-width:100%; overflow-wrap:anywhere; word-break:break-word; line-height:1.45; }'
 		]));
 
 		content.push(E('h2', {}, [ _('RouteFlux - About') ]));
 		content.push(E('p', { 'class': 'cbi-section-descr' }, [
-			_('RouteFlux build information from the installed router binary.')
+			_('RouteFlux build information, update actions, and recent user-facing changes.')
 		]));
 
 		content.push(E('div', { 'class': 'routeflux-overview-grid' }, [
@@ -115,7 +183,13 @@ return view.extend({
 			]),
 			E('div', { 'class': 'cbi-page-actions' }, [
 				E('button', {
+					'class': 'btn cbi-button',
+					'type': 'button',
+					'click': ui.createHandlerFn(this, 'handleShowWhatsNew')
+				}, [ _('What\'s New') ]),
+				E('button', {
 					'class': 'btn cbi-button cbi-button-action important',
+					'type': 'button',
 					'click': ui.createHandlerFn(this, 'handleUpgrade')
 				}, [ _('Update to latest version') ])
 			])
