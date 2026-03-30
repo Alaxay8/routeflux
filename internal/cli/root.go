@@ -25,6 +25,7 @@ type rootOptions struct {
 	rootDir     string
 	jsonOutput  bool
 	showVersion bool
+	runUpgrade  bool
 	service     *app.Service
 }
 
@@ -40,13 +41,19 @@ func newRootCmd() *cobra.Command {
 		Use:   "routeflux",
 		Short: "RouteFlux manages subscription-based Xray routing on OpenWrt",
 		RunE: func(cmd *cobra.Command, args []string) error {
+			if opts.showVersion && opts.runUpgrade {
+				return fmt.Errorf("--version and --upgrade cannot be used together")
+			}
 			if opts.showVersion {
 				return printVersion(cmd, opts.jsonOutput)
+			}
+			if opts.runUpgrade {
+				return runUpgrade(cmd, opts.jsonOutput)
 			}
 			return cmd.Help()
 		},
 		PersistentPreRunE: func(cmd *cobra.Command, args []string) error {
-			if opts.showVersion || cmd.Name() == "version" || cmd.Name() == "help" {
+			if opts.showVersion || opts.runUpgrade || cmd.Name() == "version" || cmd.Name() == "help" {
 				return nil
 			}
 			return opts.initService()
@@ -56,6 +63,7 @@ func newRootCmd() *cobra.Command {
 	cmd.PersistentFlags().StringVar(&opts.rootDir, "root", "", "RouteFlux state directory")
 	cmd.PersistentFlags().BoolVar(&opts.jsonOutput, "json", false, "Output JSON")
 	cmd.Flags().BoolVar(&opts.showVersion, "version", false, "Print RouteFlux version")
+	cmd.Flags().BoolVar(&opts.runUpgrade, "upgrade", false, "Download and install the latest RouteFlux release")
 
 	cmd.AddCommand(
 		newAddCmd(opts),
