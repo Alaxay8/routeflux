@@ -149,7 +149,7 @@ func (b RuntimeBackend) validateConfig(ctx context.Context, rendered []byte) err
 	}
 
 	dir := filepath.Dir(b.writer.Path)
-	if err := os.MkdirAll(dir, 0o755); err != nil {
+	if err := os.MkdirAll(dir, store.PrivateDirPerm); err != nil {
 		return fmt.Errorf("create xray config directory: %w", err)
 	}
 
@@ -163,6 +163,10 @@ func (b RuntimeBackend) validateConfig(ctx context.Context, rendered []byte) err
 	if _, err := tmp.Write(rendered); err != nil {
 		_ = tmp.Close()
 		return fmt.Errorf("write xray candidate config: %w", err)
+	}
+	if err := tmp.Chmod(store.SecretFilePerm); err != nil {
+		_ = tmp.Close()
+		return fmt.Errorf("chmod xray candidate config: %w", err)
 	}
 	if err := tmp.Close(); err != nil {
 		return fmt.Errorf("close xray candidate config: %w", err)

@@ -16,11 +16,11 @@ func AtomicWriteJSON(path string, value any) error {
 	}
 
 	data = append(data, '\n')
-	return atomicWriteFile(path, data, 0o644)
+	return atomicWriteFile(path, data, SecretFilePerm)
 }
 
 func atomicWriteFile(path string, data []byte, perm os.FileMode) error {
-	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+	if err := os.MkdirAll(filepath.Dir(path), PrivateDirPerm); err != nil {
 		return fmt.Errorf("create directory: %w", err)
 	}
 

@@ -6,6 +6,8 @@ import (
 	"strings"
 
 	"github.com/spf13/cobra"
+
+	"github.com/Alaxay8/routeflux/pkg/api"
 )
 
 func newInspectCmd(opts *rootOptions) *cobra.Command {
@@ -18,6 +20,7 @@ func newInspectCmd(opts *rootOptions) *cobra.Command {
 
 	cmd.AddCommand(
 		newInspectXrayCmd(opts),
+		newInspectXraySafeCmd(opts),
 		newInspectSpeedCmd(opts),
 	)
 
@@ -53,6 +56,72 @@ func newInspectXrayCmd(opts *rootOptions) *cobra.Command {
 	_ = cmd.MarkFlagRequired("subscription")
 	_ = cmd.MarkFlagRequired("node")
 	return cmd
+}
+
+func newInspectXraySafeCmd(opts *rootOptions) *cobra.Command {
+	var subscriptionID string
+	var nodeID string
+
+	cmd := &cobra.Command{
+		Use:          "xray-safe",
+		Short:        "Render generated Xray JSON with secrets redacted",
+		Hidden:       true,
+		SilenceUsage: true,
+		RunE: func(cmd *cobra.Command, args []string) error {
+			rendered, err := opts.service.InspectXrayConfig(subscriptionID, nodeID)
+			if err != nil {
+				return err
+			}
+
+			metadata, err := inspectPreviewMetadata(opts, subscriptionID, nodeID)
+			if err != nil {
+				return err
+			}
+
+			safePreview, err := api.RedactXrayPreview(rendered, metadata)
+			if err != nil {
+				return err
+			}
+
+			output := string(safePreview)
+			if !strings.HasSuffix(output, "\n") {
+				output += "\n"
+			}
+			_, err = fmt.Fprint(cmd.OutOrStdout(), output)
+			return err
+		},
+	}
+
+	cmd.Flags().StringVar(&subscriptionID, "subscription", "", "Subscription ID")
+	cmd.Flags().StringVar(&nodeID, "node", "", "Node ID")
+	_ = cmd.MarkFlagRequired("subscription")
+	_ = cmd.MarkFlagRequired("node")
+	return cmd
+}
+
+func inspectPreviewMetadata(opts *rootOptions, subscriptionID, nodeID string) (*api.XrayPreviewMetadata, error) {
+	nodes, err := opts.service.ListNodes(subscriptionID)
+	if err != nil {
+		return nil, err
+	}
+
+	for _, node := range nodes {
+		if node.ID != nodeID {
+			continue
+		}
+
+		remark := strings.TrimSpace(node.Remark)
+		if remark == "" {
+			remark = strings.TrimSpace(node.Name)
+		}
+
+		return &api.XrayPreviewMetadata{
+			Remark:     remark,
+			ServerName: strings.TrimSpace(node.ServerName),
+		}, nil
+	}
+
+	return nil, fmt.Errorf("node %q not found in subscription %q", nodeID, subscriptionID)
 }
 
 func newInspectSpeedCmd(opts *rootOptions) *cobra.Command {

@@ -3,7 +3,18 @@
 		"description": "Grant access to RouteFlux status and control",
 		"read": {
 			"file": {
-				"/usr/bin/routeflux --json *": [ "exec" ]
+				"/usr/bin/routeflux --json version": [ "exec" ],
+				"/usr/bin/routeflux --json status": [ "exec" ],
+				"/usr/bin/routeflux --json list subscriptions": [ "exec" ],
+				"/usr/bin/routeflux inspect xray-safe --subscription * --node *": [ "exec" ],
+				"/usr/bin/routeflux --json settings get": [ "exec" ],
+				"/usr/bin/routeflux --json dns get": [ "exec" ],
+				"/usr/bin/routeflux dns explain": [ "exec" ],
+				"/usr/bin/routeflux --json firewall get": [ "exec" ],
+				"/usr/bin/routeflux firewall explain": [ "exec" ],
+				"/usr/bin/routeflux --json services list": [ "exec" ],
+				"/usr/bin/routeflux --json diagnostics": [ "exec" ],
+				"/usr/bin/routeflux --json logs": [ "exec" ]
 			}
 		},
 		"write": {

@@ -13,6 +13,11 @@ Local development paths:
 - `./.routeflux/state.json`
 - `./.routeflux/xray-config.json`
 
+RouteFlux hardens secret-bearing state on disk:
+- RouteFlux-owned state directories use `0700`
+- RouteFlux state files, lock files, Xray live config, and Xray last-known-good backups use `0600`
+- Existing installs are hardened during startup and in-place upgrades
+
 ## Settings
 - `refresh_interval`: subscription refresh cadence
 - `health_check_interval`: active probe cadence for daemon-backed auto health monitoring

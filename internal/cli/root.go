@@ -96,6 +96,9 @@ func (o *rootOptions) initService() error {
 
 	bootstrapLogger := newLogger("info")
 	fileStore := store.NewFileStore(root).WithLogger(bootstrapLogger)
+	if err := fileStore.HardenSecretPermissions(configPath); err != nil {
+		bootstrapLogger.Warn("harden secret storage permissions", "root", root, "config_path", configPath, "error", err.Error())
+	}
 	logLevel := "info"
 	if settings, err := fileStore.LoadSettings(); err == nil {
 		logLevel = settings.LogLevel

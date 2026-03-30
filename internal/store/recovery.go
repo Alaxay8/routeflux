@@ -31,6 +31,9 @@ func renameCorruptFile(path string) (string, error) {
 	if err := os.Rename(path, backupPath); err != nil {
 		return "", err
 	}
+	if err := os.Chmod(backupPath, SecretFilePerm); err != nil {
+		return "", err
+	}
 	return backupPath, nil
 }
 

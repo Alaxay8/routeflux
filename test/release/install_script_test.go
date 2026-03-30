@@ -76,6 +76,64 @@ func TestInstallScriptInstallsMatchedOpenWrtTarball(t *testing.T) {
 	}
 }
 
+func TestInstallScriptHardensExistingSecretFilePermissions(t *testing.T) {
+	t.Parallel()
+
+	version := "1.2.3"
+	scriptPath := renderInstallScript(t, version, "mipsel_24kc", "x86_64")
+
+	downloadDir := t.TempDir()
+	installRoot := t.TempDir()
+	serviceLogPath := filepath.Join(t.TempDir(), "services.log")
+
+	writeTestTarball(t, filepath.Join(downloadDir, "routeflux_"+version+"_mipsel_24kc.tar.gz"))
+	writeServiceStub(t, filepath.Join(installRoot, "etc", "init.d", "cron"))
+	writeServiceStub(t, filepath.Join(installRoot, "etc", "init.d", "rpcd"))
+	writeServiceStub(t, filepath.Join(installRoot, "etc", "init.d", "uhttpd"))
+	writeExecutable(t, filepath.Join(installRoot, "usr", "bin", "xray"), "#!/bin/sh\nexit 0\n")
+	writeExecutable(t, filepath.Join(installRoot, "etc", "init.d", "xray"), "#!/bin/sh\nexit 0\n")
+
+	routefluxRoot := filepath.Join(installRoot, "etc", "routeflux")
+	if err := os.MkdirAll(routefluxRoot, 0o755); err != nil {
+		t.Fatalf("create routeflux root: %v", err)
+	}
+	for _, path := range []string{
+		filepath.Join(routefluxRoot, "subscriptions.json"),
+		filepath.Join(routefluxRoot, "settings.json"),
+		filepath.Join(routefluxRoot, "state.json"),
+		filepath.Join(routefluxRoot, ".routeflux.lock"),
+		filepath.Join(routefluxRoot, "speedtest.lock"),
+		filepath.Join(routefluxRoot, "settings.corrupt-20260329T120000Z.json"),
+		filepath.Join(installRoot, "etc", "xray", "config.json"),
+		filepath.Join(installRoot, "etc", "xray", "config.json.last-known-good"),
+	} {
+		writeFile(t, path, "{}\n", 0o644)
+	}
+
+	binDir := t.TempDir()
+	writeExecutable(t, filepath.Join(binDir, "opkg"), "#!/bin/sh\nset -eu\n[ \"${1:-}\" = \"print-architecture\" ] || exit 1\nprintf 'arch all 1\\narch noarch 1\\narch mipsel_24kc 10\\n'\n")
+	writeExecutable(t, filepath.Join(binDir, "wget"), "#!/bin/sh\nset -eu\nout=''\nwhile [ \"$#\" -gt 0 ]; do\n\tcase \"$1\" in\n\t\t-O)\n\t\t\tout=\"$2\"\n\t\t\tshift 2\n\t\t\t;;\n\t\t*)\n\t\t\turl=\"$1\"\n\t\t\tshift\n\t\t\t;;\n\tesac\ndone\nmkdir -p \"$(dirname \"$out\")\"\ncp \"${ROUTEFLUX_TEST_DOWNLOAD_DIR:?}/${url##*/}\" \"$out\"\n")
+
+	stdout, stderr, err := runInstallScript(t, scriptPath, installRoot, binDir, downloadDir, serviceLogPath)
+	if err != nil {
+		t.Fatalf("run install script: %v\nstdout:\n%s\nstderr:\n%s", err, stdout, stderr)
+	}
+
+	assertMode(t, routefluxRoot, 0o700)
+	for _, path := range []string{
+		filepath.Join(routefluxRoot, "subscriptions.json"),
+		filepath.Join(routefluxRoot, "settings.json"),
+		filepath.Join(routefluxRoot, "state.json"),
+		filepath.Join(routefluxRoot, ".routeflux.lock"),
+		filepath.Join(routefluxRoot, "speedtest.lock"),
+		filepath.Join(routefluxRoot, "settings.corrupt-20260329T120000Z.json"),
+		filepath.Join(installRoot, "etc", "xray", "config.json"),
+		filepath.Join(installRoot, "etc", "xray", "config.json.last-known-good"),
+	} {
+		assertMode(t, path, 0o600)
+	}
+}
+
 func TestInstallScriptRejectsUnsupportedArchitecture(t *testing.T) {
 	t.Parallel()
 
@@ -317,6 +375,18 @@ func writeExecutable(t *testing.T, path, content string) {
 	}
 	if err := os.WriteFile(path, []byte(content), 0o755); err != nil {
 		t.Fatalf("write %s: %v", path, err)
+	}
+}
+
+func assertMode(t *testing.T, path string, want os.FileMode) {
+	t.Helper()
+
+	info, err := os.Stat(path)
+	if err != nil {
+		t.Fatalf("stat %s: %v", path, err)
+	}
+	if got := info.Mode().Perm(); got != want {
+		t.Fatalf("unexpected mode for %s: got %o want %o", path, got, want)
 	}
 }
 

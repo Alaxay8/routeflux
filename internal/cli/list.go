@@ -5,6 +5,8 @@ import (
 	"strings"
 
 	"github.com/spf13/cobra"
+
+	"github.com/Alaxay8/routeflux/pkg/api"
 )
 
 func newListCmd(opts *rootOptions) *cobra.Command {
@@ -32,7 +34,7 @@ func newListSubscriptionsCmd(opts *rootOptions) *cobra.Command {
 			}
 
 			if opts.jsonOutput {
-				return printOutput(cmd, true, subscriptions, "")
+				return printOutput(cmd, true, api.SubscriptionSummariesFromDomain(subscriptions, true), "")
 			}
 
 			if len(subscriptions) == 0 {
@@ -62,7 +64,7 @@ func newListNodesCmd(opts *rootOptions) *cobra.Command {
 			}
 
 			if opts.jsonOutput {
-				return printOutput(cmd, true, nodes, "")
+				return printOutput(cmd, true, api.NodeSummariesFromDomain(nodes), "")
 			}
 
 			if len(nodes) == 0 {

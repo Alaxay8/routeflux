@@ -269,6 +269,11 @@ func TestLoadSettingsRecoversCorruptJSON(t *testing.T) {
 	if string(backupData) != `{"refresh_interval":` {
 		t.Fatalf("unexpected backup contents: %q", backupData)
 	}
+	if info, err := os.Stat(matches[0]); err != nil {
+		t.Fatalf("stat backup: %v", err)
+	} else if got := info.Mode().Perm(); got != store.SecretFilePerm {
+		t.Fatalf("unexpected backup mode: got %o want %o", got, store.SecretFilePerm)
+	}
 	if !strings.Contains(logs.String(), "recovered corrupt persisted file") {
 		t.Fatalf("expected recovery warning, got %q", logs.String())
 	}
@@ -299,6 +304,11 @@ func TestLoadStateRecoversCorruptJSON(t *testing.T) {
 	}
 	if len(matches) != 1 {
 		t.Fatalf("expected one corrupt backup, got %v", matches)
+	}
+	if info, err := os.Stat(matches[0]); err != nil {
+		t.Fatalf("stat backup: %v", err)
+	} else if got := info.Mode().Perm(); got != store.SecretFilePerm {
+		t.Fatalf("unexpected backup mode: got %o want %o", got, store.SecretFilePerm)
 	}
 	if !strings.Contains(logs.String(), "recovered corrupt persisted file") {
 		t.Fatalf("expected recovery warning, got %q", logs.String())

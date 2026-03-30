@@ -4,6 +4,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -60,6 +61,22 @@ func TestPackageOpenWrtFallsBackToTarWhenBSDTarMissing(t *testing.T) {
 	}
 	if _, err := os.Stat(filepath.Join(repoDir, "dist", "routeflux-ipk", "data", "usr", "libexec", "routeflux-cron")); err != nil {
 		t.Fatalf("expected cron helper in package data: %v", err)
+	}
+	postinstPath := filepath.Join(repoDir, "dist", "routeflux-ipk", "control", "postinst")
+	postinst, err := os.ReadFile(postinstPath)
+	if err != nil {
+		t.Fatalf("read generated postinst: %v", err)
+	}
+	for _, want := range []string{
+		"chmod 0700 /etc/routeflux",
+		"/etc/routeflux/.routeflux.lock",
+		"/etc/routeflux/speedtest.lock",
+		"find /etc/routeflux -maxdepth 1 -type f -name '*.corrupt-*' -exec chmod 0600 {} \\;",
+		"/etc/xray/config.json.last-known-good",
+	} {
+		if !strings.Contains(string(postinst), want) {
+			t.Fatalf("expected generated postinst to contain %q, got:\n%s", want, postinst)
+		}
 	}
 }
 
