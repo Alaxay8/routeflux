@@ -32,12 +32,36 @@
         "enabled": true,
         "destOverride": [
           "http",
-          "tls"
+          "tls",
+          "quic"
         ]
       },
       "streamSettings": {
         "sockopt": {
           "tproxy": "redirect"
+        }
+      }
+    },
+    {
+      "tag": "transparent-udp-in",
+      "listen": "0.0.0.0",
+      "port": 12345,
+      "protocol": "dokodemo-door",
+      "settings": {
+        "followRedirect": true,
+        "network": "udp"
+      },
+      "sniffing": {
+        "enabled": true,
+        "destOverride": [
+          "http",
+          "tls",
+          "quic"
+        ]
+      },
+      "streamSettings": {
+        "sockopt": {
+          "tproxy": "tproxy"
         }
       }
     }
@@ -97,6 +121,14 @@
           "transparent-in"
         ],
         "network": "tcp"
+      },
+      {
+        "type": "field",
+        "outboundTag": "block",
+        "inboundTag": [
+          "transparent-udp-in"
+        ],
+        "network": "udp"
       },
       {
         "type": "field",

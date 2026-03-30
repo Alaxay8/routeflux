@@ -429,6 +429,9 @@ return view.extend({
 		var firewall = settings.firewall || {};
 		var dns = settings.dns || {};
 		var firewallMode = 'disabled';
+		var hasTargets = (Array.isArray(firewall.target_services) && firewall.target_services.length > 0) ||
+			(Array.isArray(firewall.target_cidrs) && firewall.target_cidrs.length > 0) ||
+			(Array.isArray(firewall.target_domains) && firewall.target_domains.length > 0);
 
 		if (data[0] && data[0].__error__)
 			ui.addNotification(null, notificationParagraph(_('Status error: %s').format(data[0].__error__)));
@@ -439,9 +442,8 @@ return view.extend({
 		if (firewall.enabled === true) {
 			if (Array.isArray(firewall.source_cidrs) && firewall.source_cidrs.length > 0)
 				firewallMode = 'hosts';
-			else if ((Array.isArray(firewall.target_cidrs) && firewall.target_cidrs.length > 0) ||
-				(Array.isArray(firewall.target_domains) && firewall.target_domains.length > 0))
-				firewallMode = 'targets';
+			else if (hasTargets)
+				firewallMode = trim(firewall.target_mode) === 'bypass' ? 'anti-target' : 'targets';
 			else
 				firewallMode = 'enabled';
 		}

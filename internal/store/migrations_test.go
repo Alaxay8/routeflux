@@ -161,6 +161,33 @@ func TestLoadSettingsDecodesTargetServiceCatalog(t *testing.T) {
 	}
 }
 
+func TestLoadSettingsDecodesFirewallTargetMode(t *testing.T) {
+	t.Parallel()
+
+	root := t.TempDir()
+	fileStore := store.NewFileStore(root)
+
+	settingsJSON := `{
+  "schema_version": 5,
+  "firewall": {
+    "target_mode": "bypass",
+    "target_domains": ["example.com"]
+  }
+}`
+	if err := os.WriteFile(filepath.Join(root, "settings.json"), []byte(settingsJSON), 0o644); err != nil {
+		t.Fatalf("write settings file: %v", err)
+	}
+
+	settings, err := fileStore.LoadSettings()
+	if err != nil {
+		t.Fatalf("load settings: %v", err)
+	}
+
+	if settings.Firewall.TargetMode != domain.FirewallTargetModeBypass {
+		t.Fatalf("unexpected firewall target mode: %q", settings.Firewall.TargetMode)
+	}
+}
+
 func TestLoadSettingsRejectsFutureSchemaVersion(t *testing.T) {
 	t.Parallel()
 

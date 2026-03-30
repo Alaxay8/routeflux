@@ -31,6 +31,10 @@ func TestBuildNFTablesRules(t *testing.T) {
 		"8.8.8.0/24",
 		"ip daddr @bypass_v4 return",
 		"ip saddr @source_v4 tcp dport != 12345 redirect to :12345",
+		"chain prerouting_mangle",
+		"ip saddr @source_v4 udp dport 443",
+		"meta mark set 0x1",
+		"tproxy ip to :12345",
 		"chain prerouting",
 		"chain output",
 		"priority -100",
@@ -64,6 +68,7 @@ func TestBuildNFTablesRulesSupportsTargetDomainsWithoutStaticCIDRs(t *testing.T)
 		"192.168.0.0/16",
 		"ip daddr @bypass_v4 return",
 		"ip saddr @source_v4 tcp dport != 12345 redirect to :12345",
+		"ip saddr @source_v4 udp dport 443",
 		"chain output",
 	}
 	for _, want := range wants {
@@ -89,6 +94,7 @@ func TestBuildNFTablesRulesSupportsTargetServicesWithPresetCIDRs(t *testing.T) {
 		"91.108.0.0/16",
 		"149.154.0.0/16",
 		"ip saddr @source_v4 tcp dport != 12345 redirect to :12345",
+		"ip saddr @source_v4 udp dport 443",
 	} {
 		if !strings.Contains(rules, want) {
 			t.Fatalf("rules missing %q\n%s", want, rules)
@@ -116,6 +122,7 @@ func TestBuildNFTablesRulesSupportsCustomTargetServices(t *testing.T) {
 	for _, want := range []string{
 		"104.18.0.0/15",
 		"ip saddr @source_v4 tcp dport != 12345 redirect to :12345",
+		"ip saddr @source_v4 udp dport 443",
 	} {
 		if !strings.Contains(rules, want) {
 			t.Fatalf("rules missing %q\n%s", want, rules)
@@ -136,7 +143,7 @@ func TestBuildNFTablesRulesRejectsInvalidTargets(t *testing.T) {
 	}
 }
 
-func TestBuildNFTablesRulesBlocksQUICForTargetDomains(t *testing.T) {
+func TestBuildNFTablesRulesInterceptsUDPForTargetDomainsWithoutDroppingQUIC(t *testing.T) {
 	t.Parallel()
 
 	rules, err := BuildNFTablesRules(domain.FirewallSettings{
@@ -149,8 +156,56 @@ func TestBuildNFTablesRulesBlocksQUICForTargetDomains(t *testing.T) {
 		t.Fatalf("build rules: %v", err)
 	}
 
-	if !strings.Contains(rules, "ip saddr @source_v4 udp dport 443 drop") {
-		t.Fatalf("rules missing target quic drop\n%s", rules)
+	for _, want := range []string{
+		"chain prerouting_mangle",
+		"ip saddr @source_v4 udp dport 443",
+		"meta mark set 0x1",
+		"tproxy ip to :12345",
+	} {
+		if !strings.Contains(rules, want) {
+			t.Fatalf("rules missing %q\n%s", want, rules)
+		}
+	}
+	if strings.Contains(rules, "udp dport 443 drop") {
+		t.Fatalf("rules should not drop quic once udp interception is enabled\n%s", rules)
+	}
+}
+
+func TestBuildNFTablesRulesForBypassTargetsSkipsTargetSetAndOutputChain(t *testing.T) {
+	t.Parallel()
+
+	rules, err := BuildNFTablesRules(domain.FirewallSettings{
+		Enabled:         true,
+		TransparentPort: 12345,
+		TargetMode:      domain.FirewallTargetModeBypass,
+		TargetDomains:   []string{"youtube.com"},
+		BlockQUIC:       true,
+	})
+	if err != nil {
+		t.Fatalf("build rules: %v", err)
+	}
+
+	for _, want := range []string{
+		"set source_v4",
+		"set bypass_v4",
+		"ip saddr @source_v4 tcp dport != 12345 redirect to :12345",
+		"chain prerouting_mangle",
+		"ip saddr @source_v4 udp dport 443",
+		"meta mark set 0x1",
+		"tproxy ip to :12345",
+	} {
+		if !strings.Contains(rules, want) {
+			t.Fatalf("rules missing %q\n%s", want, rules)
+		}
+	}
+
+	for _, unwanted := range []string{
+		"set target_v4",
+		"chain output",
+	} {
+		if strings.Contains(rules, unwanted) {
+			t.Fatalf("rules unexpectedly contain %q\n%s", unwanted, rules)
+		}
 	}
 }
 
@@ -175,7 +230,10 @@ func TestBuildNFTablesRulesForSourceHosts(t *testing.T) {
 		"set source_v4",
 		"192.168.1.150",
 		"ip saddr @source_v4 tcp dport != 12345 redirect to :12345",
-		"ip saddr @source_v4 udp dport 443 drop",
+		"chain prerouting_mangle",
+		"ip saddr @source_v4 udp dport 443",
+		"meta mark set 0x1",
+		"tproxy ip to :12345",
 	}
 	for _, want := range wants {
 		if !strings.Contains(rules, want) {
@@ -227,6 +285,7 @@ func TestBuildNFTablesRulesForSourceHostRange(t *testing.T) {
 		"192.168.1.150/31",
 		"192.168.1.152/29",
 		"ip saddr @source_v4 tcp dport != 12345 redirect to :12345",
+		"ip saddr @source_v4 udp dport 443",
 	}
 	for _, want := range wants {
 		if !strings.Contains(rules, want) {
@@ -254,7 +313,10 @@ func TestBuildNFTablesRulesForAllSourceHosts(t *testing.T) {
 		"172.16.0.0/12",
 		"192.168.0.0/16",
 		"ip saddr @source_v4 tcp dport != 12345 redirect to :12345",
-		"ip saddr @source_v4 udp dport 443 drop",
+		"chain prerouting_mangle",
+		"ip saddr @source_v4 udp dport 443",
+		"meta mark set 0x1",
+		"tproxy ip to :12345",
 	}
 	for _, want := range wants {
 		if !strings.Contains(rules, want) {
@@ -282,5 +344,79 @@ func TestFirewallDisableIgnoresMissingNFTBinary(t *testing.T) {
 
 	if _, err := os.Stat(rulesPath); !os.IsNotExist(err) {
 		t.Fatalf("expected rules file to be removed, stat err=%v", err)
+	}
+}
+
+func TestFirewallManagerApplyConfiguresUDPPolicyRouting(t *testing.T) {
+	t.Parallel()
+
+	dir := t.TempDir()
+	logPath := filepath.Join(dir, "calls.log")
+	nftPath := writeExecutable(t, filepath.Join(dir, "nft"), "#!/bin/sh\nprintf 'nft %s\\n' \"$*\" >> \""+logPath+"\"\nexit 0\n")
+	ipPath := writeExecutable(t, filepath.Join(dir, "ip"), "#!/bin/sh\nprintf 'ip %s\\n' \"$*\" >> \""+logPath+"\"\nexit 0\n")
+	manager := FirewallManager{
+		NFTPath:   nftPath,
+		IPPath:    ipPath,
+		RulesPath: filepath.Join(dir, "routeflux-firewall.nft"),
+	}
+
+	settings := domain.FirewallSettings{
+		Enabled:         true,
+		TransparentPort: 12345,
+		TargetMode:      domain.FirewallTargetModeBypass,
+		TargetDomains:   []string{"youtube.com"},
+		BlockQUIC:       true,
+	}
+
+	if err := manager.Apply(context.Background(), settings); err != nil {
+		t.Fatalf("apply firewall: %v", err)
+	}
+
+	calls, err := os.ReadFile(logPath)
+	if err != nil {
+		t.Fatalf("read call log: %v", err)
+	}
+
+	for _, want := range []string{
+		"ip rule del fwmark 0x1/0x1 table 100 priority 1000",
+		"ip route del local 0.0.0.0/0 dev lo table 100",
+		"ip route add local 0.0.0.0/0 dev lo table 100",
+		"ip rule add fwmark 0x1/0x1 table 100 priority 1000",
+	} {
+		if !strings.Contains(string(calls), want) {
+			t.Fatalf("calls missing %q\n%s", want, calls)
+		}
+	}
+}
+
+func TestFirewallManagerDisableRemovesUDPPolicyRouting(t *testing.T) {
+	t.Parallel()
+
+	dir := t.TempDir()
+	logPath := filepath.Join(dir, "calls.log")
+	nftPath := writeExecutable(t, filepath.Join(dir, "nft"), "#!/bin/sh\nprintf 'nft %s\\n' \"$*\" >> \""+logPath+"\"\nexit 0\n")
+	ipPath := writeExecutable(t, filepath.Join(dir, "ip"), "#!/bin/sh\nprintf 'ip %s\\n' \"$*\" >> \""+logPath+"\"\nexit 0\n")
+	manager := FirewallManager{
+		NFTPath:   nftPath,
+		IPPath:    ipPath,
+		RulesPath: filepath.Join(dir, "routeflux-firewall.nft"),
+	}
+
+	if err := manager.Disable(context.Background()); err != nil {
+		t.Fatalf("disable firewall: %v", err)
+	}
+
+	calls, err := os.ReadFile(logPath)
+	if err != nil {
+		t.Fatalf("read call log: %v", err)
+	}
+
+	for _, want := range []string{
+		"ip rule del fwmark 0x1/0x1 table 100 priority 1000",
+		"ip route del local 0.0.0.0/0 dev lo table 100",
+	} {
+		if !strings.Contains(string(calls), want) {
+			t.Fatalf("calls missing %q\n%s", want, calls)
+		}
 	}
 }

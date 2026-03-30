@@ -67,6 +67,9 @@ var firewallTargetServicePresets = map[string]FirewallTargetDefinition{
 			"instagram.com",
 			"cdninstagram.com",
 			"fbcdn.net",
+			"facebook.com",
+			"facebook.net",
+			"fbsbx.com",
 		},
 	},
 	"netflix": {

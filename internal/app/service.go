@@ -898,11 +898,23 @@ func (s *Service) deleteFirewallTargetService(ctx context.Context, name string) 
 // ConfigureFirewall updates firewall targets and enabled state.
 func (s *Service) ConfigureFirewall(ctx context.Context, targets []string, enabled bool, port int) (domain.FirewallSettings, error) {
 	return runStoreWriteLockedResult(s, func() (domain.FirewallSettings, error) {
-		return s.configureFirewall(ctx, targets, enabled, port)
+		return s.configureFirewallTargets(ctx, targets, enabled, port, domain.FirewallTargetModeProxy)
 	})
 }
 
 func (s *Service) configureFirewall(ctx context.Context, targets []string, enabled bool, port int) (domain.FirewallSettings, error) {
+	return s.configureFirewallTargets(ctx, targets, enabled, port, domain.FirewallTargetModeProxy)
+}
+
+// ConfigureFirewallAntiTargets routes all other LAN traffic through the transparent proxy
+// while keeping selected targets direct.
+func (s *Service) ConfigureFirewallAntiTargets(ctx context.Context, targets []string, enabled bool, port int) (domain.FirewallSettings, error) {
+	return runStoreWriteLockedResult(s, func() (domain.FirewallSettings, error) {
+		return s.configureFirewallTargets(ctx, targets, enabled, port, domain.FirewallTargetModeBypass)
+	})
+}
+
+func (s *Service) configureFirewallTargets(ctx context.Context, targets []string, enabled bool, port int, targetMode domain.FirewallTargetMode) (domain.FirewallSettings, error) {
 	settings, err := s.store.LoadSettings()
 	if err != nil {
 		return domain.FirewallSettings{}, fmt.Errorf("load settings: %w", err)
@@ -914,6 +926,7 @@ func (s *Service) configureFirewall(ctx context.Context, targets []string, enabl
 	}
 
 	settings.Firewall.Enabled = enabled
+	settings.Firewall.TargetMode = domain.NormalizeFirewallTargetMode(targetMode)
 	settings.Firewall.TargetServices = slices.Clone(parsedTargets.Services)
 	settings.Firewall.TargetCIDRs = slices.Clone(parsedTargets.CIDRs)
 	settings.Firewall.TargetDomains = slices.Clone(parsedTargets.Domains)
@@ -937,7 +950,7 @@ func (s *Service) configureFirewall(ctx context.Context, targets []string, enabl
 	return settings.Firewall, nil
 }
 
-// ConfigureFirewallHosts routes all TCP traffic from selected client IPs through the transparent proxy.
+// ConfigureFirewallHosts routes all traffic from selected client IPs through the transparent proxy.
 func (s *Service) ConfigureFirewallHosts(ctx context.Context, sources []string, enabled bool, port int) (domain.FirewallSettings, error) {
 	return runStoreWriteLockedResult(s, func() (domain.FirewallSettings, error) {
 		return s.configureFirewallHosts(ctx, sources, enabled, port)
@@ -951,6 +964,7 @@ func (s *Service) configureFirewallHosts(ctx context.Context, sources []string, 
 	}
 
 	settings.Firewall.Enabled = enabled
+	settings.Firewall.TargetMode = domain.FirewallTargetModeProxy
 	settings.Firewall.SourceCIDRs = normalizeFirewallSources(sources)
 	settings.Firewall.TargetServices = nil
 	settings.Firewall.TargetCIDRs = nil
@@ -1048,6 +1062,7 @@ func (s *Service) disableFirewall(ctx context.Context) (domain.FirewallSettings,
 	}
 
 	settings.Firewall.Enabled = false
+	settings.Firewall.TargetMode = domain.FirewallTargetModeProxy
 	settings.Firewall.TargetServices = nil
 	settings.Firewall.TargetCIDRs = nil
 	settings.Firewall.TargetDomains = nil
@@ -1529,6 +1544,7 @@ func (s *Service) backendConfigRequest(settings domain.Settings, node domain.Nod
 		HTTPPort:                 httpPort,
 		TransparentProxy:         transparent,
 		TransparentPort:          settings.Firewall.TransparentPort,
+		TransparentTargetMode:    domain.NormalizeFirewallTargetMode(settings.Firewall.TargetMode),
 		TransparentTargetDomains: domain.ExpandFirewallTargetDomains(settings.Firewall.TargetServiceCatalog, settings.Firewall.TargetServices, settings.Firewall.TargetDomains),
 		TransparentTargetCIDRs:   domain.ExpandFirewallTargetCIDRs(settings.Firewall.TargetServiceCatalog, settings.Firewall.TargetServices, settings.Firewall.TargetCIDRs),
 	}

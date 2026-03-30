@@ -14,6 +14,11 @@ import (
 // Generator builds Xray configuration files from RouteFlux nodes.
 type Generator struct{}
 
+const (
+	transparentTCPInboundTag = "transparent-in"
+	transparentUDPInboundTag = "transparent-udp-in"
+)
+
 // NewGenerator creates a config generator instance.
 func NewGenerator() Generator {
 	return Generator{}
@@ -76,25 +81,11 @@ func (Generator) Generate(req backend.ConfigRequest) ([]byte, error) {
 	}
 
 	if req.TransparentProxy {
-		cfg.Inbounds = append(cfg.Inbounds, xrayInbound{
-			Tag:      "transparent-in",
-			Listen:   "0.0.0.0",
-			Port:     fallbackPort(req.TransparentPort, 12345),
-			Protocol: "dokodemo-door",
-			Settings: map[string]any{
-				"followRedirect": true,
-				"network":        "tcp",
-			},
-			Sniffing: map[string]any{
-				"enabled":      true,
-				"destOverride": []string{"http", "tls"},
-			},
-			StreamSettings: map[string]any{
-				"sockopt": map[string]any{
-					"tproxy": "redirect",
-				},
-			},
-		})
+		port := fallbackPort(req.TransparentPort, 12345)
+		cfg.Inbounds = append(cfg.Inbounds,
+			transparentInbound(transparentTCPInboundTag, port, "tcp", "redirect"),
+			transparentInbound(transparentUDPInboundTag, port, "udp", "tproxy"),
+		)
 	}
 
 	cfg.Routing.Rules = append(cfg.Routing.Rules, transparentRoutingRules(req)...)
@@ -118,46 +109,127 @@ func transparentRoutingRules(req backend.ConfigRequest) []xrayRouteRule {
 		return nil
 	}
 
-	rules := make([]xrayRouteRule, 0, 3)
+	rules := make([]xrayRouteRule, 0, 8)
+	targetMode := domain.NormalizeFirewallTargetMode(req.TransparentTargetMode)
+	hasTargets := len(req.TransparentTargetDomains) > 0 || len(req.TransparentTargetCIDRs) > 0
 
 	if len(req.TransparentTargetDomains) > 0 {
-		rules = append(rules, xrayRouteRule{
-			Type:        "field",
-			OutboundTag: "selected",
-			InboundTag:  []string{"transparent-in"},
-			Network:     "tcp",
-			Domain:      routeDomainMatchers(req.TransparentTargetDomains),
-		})
+		rules = append(rules, transparentDomainRules(targetMode, req.TransparentTargetDomains)...)
 	}
 
 	if len(req.TransparentTargetCIDRs) > 0 {
-		rules = append(rules, xrayRouteRule{
-			Type:        "field",
-			OutboundTag: "selected",
-			InboundTag:  []string{"transparent-in"},
-			Network:     "tcp",
-			IP:          cleanStringList(req.TransparentTargetCIDRs),
-		})
+		rules = append(rules, transparentIPRules(targetMode, req.TransparentTargetCIDRs)...)
 	}
 
-	if len(req.TransparentTargetDomains) > 0 || len(req.TransparentTargetCIDRs) > 0 {
-		rules = append(rules, xrayRouteRule{
-			Type:        "field",
-			OutboundTag: "direct",
-			InboundTag:  []string{"transparent-in"},
-			Network:     "tcp",
-		})
+	if hasTargets {
+		rules = append(rules, transparentFallbackRules(targetMode)...)
 		return rules
 	}
 
-	rules = append(rules, xrayRouteRule{
-		Type:        "field",
-		OutboundTag: "selected",
-		InboundTag:  []string{"transparent-in"},
-		Network:     "tcp",
-	})
+	rules = append(rules,
+		transparentRouteRule("tcp", "selected", nil, nil),
+		transparentRouteRule("udp", "block", nil, nil),
+	)
 
 	return rules
+}
+
+func transparentDomainRules(targetMode domain.FirewallTargetMode, domains []string) []xrayRouteRule {
+	matchers := routeDomainMatchers(domains)
+	if len(matchers) == 0 {
+		return nil
+	}
+
+	tcpOutbound := "selected"
+	udpOutbound := "block"
+	if targetMode == domain.FirewallTargetModeBypass {
+		tcpOutbound = "direct"
+		udpOutbound = "direct"
+	}
+
+	return []xrayRouteRule{
+		transparentRouteRule("tcp", tcpOutbound, matchers, nil),
+		transparentRouteRule("udp", udpOutbound, matchers, nil),
+	}
+}
+
+func transparentIPRules(targetMode domain.FirewallTargetMode, cidrs []string) []xrayRouteRule {
+	cleaned := cleanStringList(cidrs)
+	if len(cleaned) == 0 {
+		return nil
+	}
+
+	tcpOutbound := "selected"
+	udpOutbound := "block"
+	if targetMode == domain.FirewallTargetModeBypass {
+		tcpOutbound = "direct"
+		udpOutbound = "direct"
+	}
+
+	return []xrayRouteRule{
+		transparentRouteRule("tcp", tcpOutbound, nil, cleaned),
+		transparentRouteRule("udp", udpOutbound, nil, cleaned),
+	}
+}
+
+func transparentFallbackRules(targetMode domain.FirewallTargetMode) []xrayRouteRule {
+	tcpOutbound := "direct"
+	udpOutbound := "direct"
+	if targetMode == domain.FirewallTargetModeBypass {
+		tcpOutbound = "selected"
+		udpOutbound = "block"
+	}
+
+	return []xrayRouteRule{
+		transparentRouteRule("tcp", tcpOutbound, nil, nil),
+		transparentRouteRule("udp", udpOutbound, nil, nil),
+	}
+}
+
+func transparentRouteRule(network string, outboundTag string, domains []string, cidrs []string) xrayRouteRule {
+	return xrayRouteRule{
+		Type:        "field",
+		OutboundTag: outboundTag,
+		InboundTag:  transparentInboundTagsForNetwork(network),
+		Network:     network,
+		Domain:      domains,
+		IP:          cidrs,
+	}
+}
+
+func transparentInbound(tag string, port int, network string, tproxyMode string) xrayInbound {
+	return xrayInbound{
+		Tag:      tag,
+		Listen:   "0.0.0.0",
+		Port:     port,
+		Protocol: "dokodemo-door",
+		Settings: map[string]any{
+			"followRedirect": true,
+			"network":        network,
+		},
+		Sniffing: map[string]any{
+			"enabled":      true,
+			"destOverride": []string{"http", "tls", "quic"},
+		},
+		StreamSettings: map[string]any{
+			"sockopt": map[string]any{
+				"tproxy": tproxyMode,
+			},
+		},
+	}
+}
+
+func transparentInboundTags() []string {
+	return []string{transparentTCPInboundTag, transparentUDPInboundTag}
+}
+
+func transparentInboundTagsForNetwork(network string) []string {
+	switch network {
+	case "udp":
+		return []string{transparentUDPInboundTag}
+	default:
+		return []string{transparentTCPInboundTag}
+	}
 }
 
 func routeDomainMatchers(domains []string) []string {

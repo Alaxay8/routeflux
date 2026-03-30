@@ -113,10 +113,21 @@ type DNSSettings struct {
 	DirectDomains []string     `json:"direct_domains"`
 }
 
+// FirewallTargetMode controls what happens when a transparent selector matches.
+type FirewallTargetMode string
+
+const (
+	// FirewallTargetModeProxy sends matched targets through the selected proxy node.
+	FirewallTargetModeProxy FirewallTargetMode = "proxy"
+	// FirewallTargetModeBypass keeps matched targets direct while the rest uses the proxy.
+	FirewallTargetModeBypass FirewallTargetMode = "bypass"
+)
+
 // FirewallSettings stores transparent proxy routing preferences.
 type FirewallSettings struct {
 	Enabled              bool                                `json:"enabled"`
 	TransparentPort      int                                 `json:"transparent_port"`
+	TargetMode           FirewallTargetMode                  `json:"target_mode"`
 	TargetServices       []string                            `json:"target_services"`
 	TargetServiceCatalog map[string]FirewallTargetDefinition `json:"target_service_catalog"`
 	TargetCIDRs          []string                            `json:"target_cidrs"`
@@ -128,7 +139,7 @@ type FirewallSettings struct {
 // DefaultSettings returns the baseline configuration used on first start.
 func DefaultSettings() Settings {
 	return Settings{
-		SchemaVersion:       4,
+		SchemaVersion:       5,
 		RefreshInterval:     NewDuration(time.Hour),
 		HealthCheckInterval: NewDuration(30 * time.Second),
 		SwitchCooldown:      NewDuration(5 * time.Minute),
@@ -137,6 +148,7 @@ func DefaultSettings() Settings {
 		Firewall: FirewallSettings{
 			Enabled:              false,
 			TransparentPort:      12345,
+			TargetMode:           FirewallTargetModeProxy,
 			TargetServices:       nil,
 			TargetServiceCatalog: nil,
 			TargetCIDRs:          nil,
@@ -158,6 +170,16 @@ func DefaultDNSSettings() DNSSettings {
 		Servers:       []string{"1.1.1.1", "1.0.0.1"},
 		Bootstrap:     nil,
 		DirectDomains: []string{"domain:lan", "full:router.lan"},
+	}
+}
+
+// NormalizeFirewallTargetMode coerces unknown values to the default proxy behavior.
+func NormalizeFirewallTargetMode(mode FirewallTargetMode) FirewallTargetMode {
+	switch mode {
+	case FirewallTargetModeBypass:
+		return FirewallTargetModeBypass
+	default:
+		return FirewallTargetModeProxy
 	}
 }
 

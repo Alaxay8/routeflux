@@ -17,6 +17,7 @@ type ConfigRequest struct {
 	HTTPPort                 int
 	TransparentProxy         bool
 	TransparentPort          int
+	TransparentTargetMode    domain.FirewallTargetMode
 	TransparentTargetDomains []string
 	TransparentTargetCIDRs   []string
 }

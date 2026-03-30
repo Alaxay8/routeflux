@@ -128,6 +128,39 @@ func TestConfigureFirewallClearsHostsAndStoresTargetSelectors(t *testing.T) {
 	}
 }
 
+func TestConfigureFirewallAntiTargetsClearsHostsAndStoresTargetSelectors(t *testing.T) {
+	t.Parallel()
+
+	store := &memoryStore{
+		settings: domain.DefaultSettings(),
+		state:    domain.DefaultRuntimeState(),
+	}
+	store.settings.Firewall.SourceCIDRs = []string{"192.168.1.150"}
+
+	service := NewService(Dependencies{Store: store, Firewaller: &recordingFirewaller{}})
+
+	settings, err := service.ConfigureFirewallAntiTargets(context.Background(), []string{"YouTube", "YouTube.com", "1.1.1.1"}, true, 23456)
+	if err != nil {
+		t.Fatalf("configure firewall anti-targets: %v", err)
+	}
+
+	if len(settings.SourceCIDRs) != 0 {
+		t.Fatalf("expected hosts to be cleared, got %v", settings.SourceCIDRs)
+	}
+	if settings.TargetMode != domain.FirewallTargetModeBypass {
+		t.Fatalf("expected target mode bypass, got %q", settings.TargetMode)
+	}
+	if !reflect.DeepEqual(settings.TargetServices, []string{"youtube"}) {
+		t.Fatalf("unexpected target services: %+v", settings.TargetServices)
+	}
+	if !reflect.DeepEqual(settings.TargetCIDRs, []string{"1.1.1.1"}) {
+		t.Fatalf("unexpected target cidrs: %+v", settings.TargetCIDRs)
+	}
+	if !reflect.DeepEqual(settings.TargetDomains, []string{"youtube.com"}) {
+		t.Fatalf("unexpected target domains: %+v", settings.TargetDomains)
+	}
+}
+
 func TestConfigureFirewallSupportsCustomServiceAliases(t *testing.T) {
 	t.Parallel()
 
@@ -1184,6 +1217,81 @@ func TestConnectManualPassesExpandedTargetSelectorsToBackend(t *testing.T) {
 
 	if len(runtimeBackend.requests) != 1 {
 		t.Fatalf("expected one backend apply, got %d", len(runtimeBackend.requests))
+	}
+
+	wantDomains := []string{
+		"youtube.com",
+		"youtu.be",
+		"youtube-nocookie.com",
+		"youtubei.googleapis.com",
+		"youtube.googleapis.com",
+		"googlevideo.com",
+		"ytimg.com",
+		"ggpht.com",
+		"telegram.org",
+		"t.me",
+		"telegram.me",
+		"web.telegram.org",
+		"desktop.telegram.org",
+		"core.telegram.org",
+	}
+	if !reflect.DeepEqual(runtimeBackend.requests[0].TransparentTargetDomains, wantDomains) {
+		t.Fatalf("unexpected transparent target domains:\nwant: %+v\n got: %+v", wantDomains, runtimeBackend.requests[0].TransparentTargetDomains)
+	}
+
+	wantCIDRs := []string{
+		"91.108.0.0/16",
+		"149.154.0.0/16",
+	}
+	if !reflect.DeepEqual(runtimeBackend.requests[0].TransparentTargetCIDRs, wantCIDRs) {
+		t.Fatalf("unexpected transparent target cidrs:\nwant: %+v\n got: %+v", wantCIDRs, runtimeBackend.requests[0].TransparentTargetCIDRs)
+	}
+}
+
+func TestConnectManualPassesExpandedAntiTargetSelectorsToBackend(t *testing.T) {
+	t.Parallel()
+
+	store := &memoryStore{
+		settings: domain.DefaultSettings(),
+		state:    domain.DefaultRuntimeState(),
+		subs: []domain.Subscription{
+			{
+				ID: "sub-1",
+				Nodes: []domain.Node{
+					{
+						ID:       "node-1",
+						Name:     "Germany",
+						Protocol: domain.ProtocolVLESS,
+						Address:  "de.example.com",
+						Port:     443,
+						UUID:     "11111111-1111-1111-1111-111111111111",
+					},
+				},
+			},
+		},
+	}
+	store.settings.Firewall.Enabled = true
+	store.settings.Firewall.TargetMode = domain.FirewallTargetModeBypass
+	store.settings.Firewall.TargetServices = []string{"youtube", "telegram"}
+	store.settings.Firewall.TransparentPort = 12345
+
+	runtimeBackend := &recordingBackend{}
+	firewall := &recordingFirewaller{}
+	service := NewService(Dependencies{
+		Store:      store,
+		Backend:    runtimeBackend,
+		Firewaller: firewall,
+	})
+
+	if err := service.ConnectManual(context.Background(), "sub-1", "node-1"); err != nil {
+		t.Fatalf("connect manual: %v", err)
+	}
+
+	if len(runtimeBackend.requests) != 1 {
+		t.Fatalf("expected one backend apply, got %d", len(runtimeBackend.requests))
+	}
+	if runtimeBackend.requests[0].TransparentTargetMode != domain.FirewallTargetModeBypass {
+		t.Fatalf("unexpected transparent target mode: %q", runtimeBackend.requests[0].TransparentTargetMode)
 	}
 
 	wantDomains := []string{

@@ -26,6 +26,7 @@ func decodeSettings(data []byte, path string) (domain.Settings, error) {
 	type rawFirewallSettings struct {
 		Enabled              *bool                                       `json:"enabled"`
 		TransparentPort      *int                                        `json:"transparent_port"`
+		TargetMode           *domain.FirewallTargetMode                  `json:"target_mode"`
 		TargetServices       *[]string                                   `json:"target_services"`
 		TargetServiceCatalog *map[string]domain.FirewallTargetDefinition `json:"target_service_catalog"`
 		TargetCIDRs          *[]string                                   `json:"target_cidrs"`
@@ -107,6 +108,9 @@ func decodeSettings(data []byte, path string) (domain.Settings, error) {
 		}
 		if raw.Firewall.TransparentPort != nil {
 			settings.Firewall.TransparentPort = *raw.Firewall.TransparentPort
+		}
+		if raw.Firewall.TargetMode != nil {
+			settings.Firewall.TargetMode = domain.NormalizeFirewallTargetMode(*raw.Firewall.TargetMode)
 		}
 		if raw.Firewall.TargetServices != nil {
 			settings.Firewall.TargetServices = append([]string(nil), (*raw.Firewall.TargetServices)...)
