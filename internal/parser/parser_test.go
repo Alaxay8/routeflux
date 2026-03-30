@@ -304,6 +304,75 @@ func TestParseXrayJSONWrapperPropagatesTopLevelRemarksIntoNestedConfig(t *testin
 	}
 }
 
+func TestParseJSONWrapperLinkPrefersWrapperRemarksOverNestedLinkName(t *testing.T) {
+	t.Parallel()
+
+	input := `{
+	  "remarks": "Netherlands",
+	  "link": "vless://11111111-1111-1111-1111-111111111111@nl.example.com:443?encryption=none&security=tls&sni=nl.example.com&type=ws&path=%2Fa&host=cdn.example.com#Netherlands-bypass"
+	}`
+
+	nodes, err := parser.ParseNodes(input, "Liberty VPN")
+	if err != nil {
+		t.Fatalf("parse nodes: %v", err)
+	}
+	if len(nodes) != 1 {
+		t.Fatalf("expected 1 node, got %d", len(nodes))
+	}
+	if nodes[0].Name != "Netherlands" || nodes[0].Remark != "Netherlands" {
+		t.Fatalf("expected wrapper remarks to override nested link label, got %+v", nodes[0])
+	}
+}
+
+func TestParseJSONWrapperStringConfigPrefersWrapperRemarksOverNestedLinkName(t *testing.T) {
+	t.Parallel()
+
+	input := `{
+	  "remarks": "Netherlands",
+	  "config": "vless://11111111-1111-1111-1111-111111111111@nl.example.com:443?encryption=none&security=tls&sni=nl.example.com&type=ws&path=%2Fa&host=cdn.example.com#Netherlands-bypass"
+	}`
+
+	nodes, err := parser.ParseNodes(input, "Liberty VPN")
+	if err != nil {
+		t.Fatalf("parse nodes: %v", err)
+	}
+	if len(nodes) != 1 {
+		t.Fatalf("expected 1 node, got %d", len(nodes))
+	}
+	if nodes[0].Name != "Netherlands" || nodes[0].Remark != "Netherlands" {
+		t.Fatalf("expected wrapper remarks to override nested config label, got %+v", nodes[0])
+	}
+}
+
+func TestParseJSONArrayWrapperRemarksProduceDistinctNodeIDs(t *testing.T) {
+	t.Parallel()
+
+	input := `[
+	  {
+	    "remarks": "Netherlands",
+	    "link": "vless://11111111-1111-1111-1111-111111111111@nl.example.com:443?encryption=none&security=tls&sni=nl.example.com&type=ws&path=%2Fa&host=cdn.example.com#Shared-bypass"
+	  },
+	  {
+	    "remarks": "Netherlands-bypass",
+	    "link": "vless://11111111-1111-1111-1111-111111111111@nl.example.com:443?encryption=none&security=tls&sni=nl.example.com&type=ws&path=%2Fa&host=cdn.example.com#Shared-bypass"
+	  }
+	]`
+
+	nodes, err := parser.ParseNodes(input, "Liberty VPN")
+	if err != nil {
+		t.Fatalf("parse nodes: %v", err)
+	}
+	if len(nodes) != 2 {
+		t.Fatalf("expected 2 nodes, got %d", len(nodes))
+	}
+	if nodes[0].Name != "Netherlands" || nodes[1].Name != "Netherlands-bypass" {
+		t.Fatalf("expected wrapper labels to win over nested link labels, got %+v", nodes)
+	}
+	if nodes[0].ID == nodes[1].ID {
+		t.Fatalf("expected distinct node ids after wrapper label override, got %+v", nodes)
+	}
+}
+
 func TestParseJSONArrayOfXrayConfigs(t *testing.T) {
 	t.Parallel()
 

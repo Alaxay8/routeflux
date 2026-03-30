@@ -250,12 +250,9 @@ func applyFallbackNodeLabel(nodes []domain.Node, label string) []domain.Node {
 	}
 
 	for idx := range nodes {
-		if strings.TrimSpace(nodes[idx].Remark) != "" {
-			nodes[idx].Name = strings.TrimSpace(nodes[idx].Remark)
-			continue
-		}
 		nodes[idx].Remark = label
 		nodes[idx].Name = label
+		nodes[idx].ID = domain.StableNodeID(nodes[idx])
 	}
 
 	return nodes
