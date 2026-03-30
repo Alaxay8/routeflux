@@ -80,6 +80,7 @@ wget -O /tmp/routeflux-install.sh "https://github.com/Alaxay8/routeflux/releases
 
 - `mipsel_24kc`
 - `x86_64`
+- `aarch64_cortex-a53`
 
 Чтобы удалить RouteFlux и встроенный runtime Xray:
 
@@ -105,6 +106,7 @@ make build
 ```bash
 make build-openwrt
 make build-openwrt-x86_64
+make build-openwrt-aarch64_cortex-a53
 ```
 
 Создайте артефакты релиза:
@@ -117,8 +119,9 @@ make package-release
 
 ```bash
 VERSION="$(git describe --tags --always --dirty | sed 's/^v//')"
-scp -O "./dist/routeflux_${VERSION}_mipsel_24kc.tar.gz" root@router:/tmp/
-ssh root@router "tar -xzf /tmp/routeflux_${VERSION}_mipsel_24kc.tar.gz -C / && rm -f /tmp/luci-indexcache && rm -rf /tmp/luci-modulecache && /etc/init.d/rpcd reload && /etc/init.d/uhttpd reload"
+ARCH="${ARCH:-aarch64_cortex-a53}"
+scp -O "./dist/routeflux_${VERSION}_${ARCH}.tar.gz" root@router:/tmp/
+ssh root@router "tar -xzf /tmp/routeflux_${VERSION}_${ARCH}.tar.gz -C / && rm -f /tmp/luci-indexcache && rm -rf /tmp/luci-modulecache && /etc/init.d/rpcd reload && /etc/init.d/uhttpd reload"
 ```
 
 ## Использование

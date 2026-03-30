@@ -80,6 +80,7 @@ Current easy-install release assets are published for:
 
 - `mipsel_24kc`
 - `x86_64`
+- `aarch64_cortex-a53`
 
 To remove RouteFlux and the bundled Xray runtime:
 
@@ -105,6 +106,7 @@ Cross-build for OpenWrt:
 ```bash
 make build-openwrt
 make build-openwrt-x86_64
+make build-openwrt-aarch64_cortex-a53
 ```
 
 Create release artifacts:
@@ -117,8 +119,9 @@ For a manual router install, copy the generated tarball to the router and extrac
 
 ```bash
 VERSION="$(git describe --tags --always --dirty | sed 's/^v//')"
-scp -O "./dist/routeflux_${VERSION}_mipsel_24kc.tar.gz" root@router:/tmp/
-ssh root@router "tar -xzf /tmp/routeflux_${VERSION}_mipsel_24kc.tar.gz -C / && rm -f /tmp/luci-indexcache && rm -rf /tmp/luci-modulecache && /etc/init.d/rpcd reload && /etc/init.d/uhttpd reload"
+ARCH="${ARCH:-aarch64_cortex-a53}"
+scp -O "./dist/routeflux_${VERSION}_${ARCH}.tar.gz" root@router:/tmp/
+ssh root@router "tar -xzf /tmp/routeflux_${VERSION}_${ARCH}.tar.gz -C / && rm -f /tmp/luci-indexcache && rm -rf /tmp/luci-modulecache && /etc/init.d/rpcd reload && /etc/init.d/uhttpd reload"
 ```
 
 ## Usage

@@ -10,7 +10,7 @@ LDFLAGS := -s -w \
 	-X github.com/Alaxay8/routeflux/internal/buildinfo.Commit=$(COMMIT) \
 	-X github.com/Alaxay8/routeflux/internal/buildinfo.BuildDate=$(BUILD_DATE)
 
-.PHONY: build test test-verbose coverage coverage-runtime lint test-integration build-openwrt build-openwrt-x86_64 package-openwrt package-release fmt
+.PHONY: build test test-verbose coverage coverage-runtime lint test-integration build-openwrt build-openwrt-x86_64 build-openwrt-aarch64_cortex-a53 package-openwrt package-release fmt
 
 build:
 	go build -trimpath -ldflags "$(LDFLAGS)" -o $(BUILD_DIR)/$(APP_NAME) ./cmd/routeflux
@@ -51,6 +51,9 @@ build-openwrt:
 
 build-openwrt-x86_64:
 	VERSION=$(VERSION) OUTPUT_DIR=bin/openwrt/x86_64 GOARCH=amd64 ./scripts/build-openwrt.sh
+
+build-openwrt-aarch64_cortex-a53:
+	VERSION=$(VERSION) OUTPUT_DIR=bin/openwrt/aarch64_cortex-a53 GOARCH=arm64 ./scripts/build-openwrt.sh
 
 test-integration: build-openwrt-x86_64
 	ROUTEFLUX_RUN_OPENWRT_INTEGRATION=1 \
