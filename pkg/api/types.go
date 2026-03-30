@@ -27,6 +27,7 @@ type SubscriptionSummary struct {
 	DisplayName   string        `json:"display_name"`
 	SourceType    string        `json:"source_type"`
 	LastUpdatedAt string        `json:"last_updated_at"`
+	ExpiresAt     string        `json:"expires_at"`
 	ParserStatus  string        `json:"parser_status"`
 	LastError     string        `json:"last_error"`
 	NodeCount     int           `json:"node_count"`
@@ -79,6 +80,7 @@ func SubscriptionSummaryFromDomain(sub domain.Subscription, includeNodes bool) S
 		DisplayName:   sub.DisplayName,
 		SourceType:    string(sub.SourceType),
 		LastUpdatedAt: formatTimestamp(sub.LastUpdatedAt),
+		ExpiresAt:     formatTimestampPointer(sub.ExpiresAt),
 		ParserStatus:  sub.ParserStatus,
 		LastError:     sub.LastError,
 		NodeCount:     len(sub.Nodes),
@@ -131,4 +133,12 @@ func formatTimestamp(value time.Time) string {
 	}
 
 	return value.UTC().Format(time.RFC3339)
+}
+
+func formatTimestampPointer(value *time.Time) string {
+	if value == nil {
+		return ""
+	}
+
+	return formatTimestamp(*value)
 }

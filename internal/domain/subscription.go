@@ -35,6 +35,7 @@ type Subscription struct {
 	ProviderNameSource ProviderNameSource `json:"provider_name_source,omitempty"`
 	DisplayName        string             `json:"display_name"`
 	LastUpdatedAt      time.Time          `json:"last_updated_at"`
+	ExpiresAt          *time.Time         `json:"expires_at,omitempty"`
 	RefreshInterval    Duration           `json:"refresh_interval"`
 	LastError          string             `json:"last_error"`
 	ParserStatus       string             `json:"parser_status"`

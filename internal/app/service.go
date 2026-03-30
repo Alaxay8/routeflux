@@ -17,6 +17,7 @@ import (
 	"net/url"
 	"regexp"
 	"slices"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -99,6 +100,7 @@ type Dependencies struct {
 
 type subscriptionFetchMetadata struct {
 	ProviderName string
+	ExpiresAt    *time.Time
 }
 
 type subscriptionFetchResult struct {
@@ -107,12 +109,15 @@ type subscriptionFetchResult struct {
 }
 
 const (
-	subscriptionFetchMaxAttempts = 3
-	subscriptionFetchBaseBackoff = 250 * time.Millisecond
-	subscriptionFetchUserAgent   = "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/136.0.0.0 Safari/537.36"
-	subscriptionProfileTitleKey  = "Profile-Title"
-	backendReadyMaxChecks        = 8
-	backendReadyCheckDelay       = 250 * time.Millisecond
+	subscriptionFetchMaxAttempts          = 3
+	subscriptionFetchBaseBackoff          = 250 * time.Millisecond
+	subscriptionFetchUserAgent            = "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/136.0.0.0 Safari/537.36"
+	subscriptionMetadataFallbackUserAgent = "curl/8.7.1"
+	subscriptionProfileTitleKey           = "Profile-Title"
+	subscriptionUserInfoKey               = "Subscription-Userinfo"
+	subscriptionAltUserInfoKey            = "X-Subscription-Userinfo"
+	backendReadyMaxChecks                 = 8
+	backendReadyCheckDelay                = 250 * time.Millisecond
 )
 
 var subscriptionShareLinkPattern = regexp.MustCompile(`(?i)(vless|vmess|trojan|ss)://[^"'<>]+`)
@@ -195,6 +200,7 @@ func (s *Service) addSubscription(ctx context.Context, req AddSubscriptionReques
 		ProviderNameSource: providerNameSource,
 		DisplayName:        providerName,
 		LastUpdatedAt:      now,
+		ExpiresAt:          metadata.ExpiresAt,
 		RefreshInterval:    settings.RefreshInterval,
 		ParserStatus:       "ok",
 		Nodes:              nodes,
@@ -496,6 +502,9 @@ func (s *Service) refreshSubscription(ctx context.Context, subscriptionID string
 	sub.ProviderName = providerName
 	sub.DisplayName = displayName
 	sub.ProviderNameSource = providerNameSource
+	if metadata.ExpiresAt != nil {
+		sub.ExpiresAt = metadata.ExpiresAt
+	}
 	sub.LastError = ""
 	sub.ParserStatus = "ok"
 	sub.LastUpdatedAt = time.Now().UTC()
@@ -1249,6 +1258,7 @@ func (s *Service) fetchSubscription(ctx context.Context, rawURL string) (subscri
 	for attempt := 1; attempt <= subscriptionFetchMaxAttempts; attempt++ {
 		result, retry, err := s.fetchSubscriptionOnce(ctx, rawURL)
 		if err == nil {
+			result.Metadata = s.enrichSubscriptionMetadata(ctx, rawURL, result.Metadata)
 			return result, nil
 		}
 
@@ -1268,6 +1278,19 @@ func (s *Service) fetchSubscription(ctx context.Context, rawURL string) (subscri
 	}
 
 	return subscriptionFetchResult{}, lastErr
+}
+
+func (s *Service) enrichSubscriptionMetadata(ctx context.Context, rawURL string, metadata subscriptionFetchMetadata) subscriptionFetchMetadata {
+	if !needsSubscriptionMetadataFallback(metadata) {
+		return metadata
+	}
+
+	fallback, err := s.fetchSubscriptionMetadata(ctx, rawURL, subscriptionMetadataFallbackUserAgent)
+	if err != nil {
+		return metadata
+	}
+
+	return mergeSubscriptionMetadata(metadata, fallback)
 }
 
 func (s *Service) fetchSubscriptionOnce(ctx context.Context, rawURL string) (subscriptionFetchResult, bool, error) {
@@ -1312,8 +1335,79 @@ func (s *Service) fetchSubscriptionOnce(ctx context.Context, rawURL string) (sub
 		Content: content,
 		Metadata: subscriptionFetchMetadata{
 			ProviderName: decodeProfileTitle(resp.Header.Get(subscriptionProfileTitleKey)),
+			ExpiresAt:    parseSubscriptionExpiry(resp.Header),
 		},
 	}, false, nil
+}
+
+func (s *Service) fetchSubscriptionMetadata(ctx context.Context, rawURL, userAgent string) (subscriptionFetchMetadata, error) {
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, rawURL, nil)
+	if err != nil {
+		return subscriptionFetchMetadata{}, fmt.Errorf("build metadata request: %w", err)
+	}
+	req.Header.Set("Accept", "*/*")
+	req.Header.Set("User-Agent", userAgent)
+
+	resp, err := s.httpClient.Do(req)
+	if err != nil {
+		return subscriptionFetchMetadata{}, fmt.Errorf("fetch metadata %s: %w", rawURL, err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		return subscriptionFetchMetadata{}, fmt.Errorf("fetch metadata %s: unexpected status %s", rawURL, resp.Status)
+	}
+
+	return subscriptionFetchMetadata{
+		ProviderName: decodeProfileTitle(resp.Header.Get(subscriptionProfileTitleKey)),
+		ExpiresAt:    parseSubscriptionExpiry(resp.Header),
+	}, nil
+}
+
+func needsSubscriptionMetadataFallback(metadata subscriptionFetchMetadata) bool {
+	return metadata.ExpiresAt == nil
+}
+
+func mergeSubscriptionMetadata(primary, fallback subscriptionFetchMetadata) subscriptionFetchMetadata {
+	if strings.TrimSpace(primary.ProviderName) == "" {
+		primary.ProviderName = fallback.ProviderName
+	}
+	if primary.ExpiresAt == nil {
+		primary.ExpiresAt = fallback.ExpiresAt
+	}
+	return primary
+}
+
+func parseSubscriptionExpiry(headers http.Header) *time.Time {
+	for _, value := range []string{
+		headers.Get(subscriptionUserInfoKey),
+		headers.Get(subscriptionAltUserInfoKey),
+	} {
+		if parsed := parseSubscriptionUserinfoExpiry(value); parsed != nil {
+			return parsed
+		}
+	}
+
+	return nil
+}
+
+func parseSubscriptionUserinfoExpiry(raw string) *time.Time {
+	for _, part := range strings.Split(raw, ";") {
+		key, value, ok := strings.Cut(strings.TrimSpace(part), "=")
+		if !ok || !strings.EqualFold(strings.TrimSpace(key), "expire") {
+			continue
+		}
+
+		seconds, err := strconv.ParseInt(strings.TrimSpace(value), 10, 64)
+		if err != nil || seconds <= 0 {
+			return nil
+		}
+
+		expiresAt := time.Unix(seconds, 0).UTC()
+		return &expiresAt
+	}
+
+	return nil
 }
 
 func isTransientSubscriptionStatus(code int) bool {

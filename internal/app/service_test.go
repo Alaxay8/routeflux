@@ -306,6 +306,7 @@ func TestAddSubscriptionRetriesTransientHTTPStatus(t *testing.T) {
 			return
 		}
 
+		w.Header().Set("Subscription-Userinfo", "upload=0; download=11606312440; total=322122547200; expire=1799312400")
 		writeResponse(w, "vless://11111111-1111-1111-1111-111111111111@node1.example.com:443?encryption=none&security=reality&sni=edge.example.com&fp=chrome&pbk=public-key-1&sid=ab12cd34&type=ws&path=%2Fproxy&host=cdn.example.com#Edge%20Reality")
 	}))
 	t.Cleanup(server.Close)
@@ -388,6 +389,7 @@ func TestAddSubscriptionRetriesWithCookieJar(t *testing.T) {
 			return
 		}
 
+		w.Header().Set("Subscription-Userinfo", "upload=0; download=11606312440; total=322122547200; expire=1799312400")
 		writeResponse(w, "vless://11111111-1111-1111-1111-111111111111@node1.example.com:443?encryption=none&security=reality&sni=edge.example.com&fp=chrome&pbk=public-key-1&sid=ab12cd34&type=ws&path=%2Fproxy&host=cdn.example.com#Edge%20Reality")
 	}))
 	t.Cleanup(server.Close)
@@ -450,6 +452,90 @@ func TestAddSubscriptionUsesProfileTitleHeaderForProviderName(t *testing.T) {
 	}
 	if len(sub.Nodes) != 1 || sub.Nodes[0].ProviderName != "Demo VPN" {
 		t.Fatalf("unexpected parsed nodes: %+v", sub.Nodes)
+	}
+}
+
+func TestAddSubscriptionReadsExpirationFromSubscriptionUserinfo(t *testing.T) {
+	t.Parallel()
+
+	store := &memoryStore{
+		settings: domain.DefaultSettings(),
+		state:    domain.DefaultRuntimeState(),
+	}
+
+	expireAt := time.Unix(1799312400, 0).UTC()
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Subscription-Userinfo", "upload=0; download=11606312440; total=322122547200; expire=1799312400")
+		writeResponse(w, "vless://11111111-1111-1111-1111-111111111111@node1.example.com:443?encryption=none&security=reality&sni=edge.example.com&fp=chrome&pbk=public-key-1&sid=ab12cd34&type=ws&path=%2Fproxy&host=cdn.example.com#Edge%20Reality")
+	}))
+	t.Cleanup(server.Close)
+
+	service := NewService(Dependencies{
+		Store:      store,
+		HTTPClient: server.Client(),
+	})
+
+	sub, err := service.AddSubscription(context.Background(), AddSubscriptionRequest{
+		URL: server.URL,
+	})
+	if err != nil {
+		t.Fatalf("add subscription: %v", err)
+	}
+
+	if sub.ExpiresAt == nil || !sub.ExpiresAt.Equal(expireAt) {
+		t.Fatalf("unexpected expiration date: got %v want %s", sub.ExpiresAt, expireAt)
+	}
+}
+
+func TestAddSubscriptionFallsBackToCurlUserAgentForMetadata(t *testing.T) {
+	t.Parallel()
+
+	store := &memoryStore{
+		settings: domain.DefaultSettings(),
+		state:    domain.DefaultRuntimeState(),
+	}
+
+	expireAt := time.Unix(1799312400, 0).UTC()
+	var userAgents []string
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		userAgents = append(userAgents, r.Header.Get("User-Agent"))
+		if strings.Contains(r.Header.Get("User-Agent"), "curl/") {
+			w.Header().Set("Profile-Title", "base64:RGVtbyBWUE4=")
+			w.Header().Set("Subscription-Userinfo", "upload=0; download=11606312440; total=322122547200; expire=1799312400")
+		}
+		writeResponse(w, "vless://11111111-1111-1111-1111-111111111111@node1.example.com:443?encryption=none&security=reality&sni=edge.example.com&fp=chrome&pbk=public-key-1&sid=ab12cd34&type=ws&path=%2Fproxy&host=cdn.example.com#Edge%20Reality")
+	}))
+	t.Cleanup(server.Close)
+
+	service := NewService(Dependencies{
+		Store:      store,
+		HTTPClient: server.Client(),
+	})
+
+	sub, err := service.AddSubscription(context.Background(), AddSubscriptionRequest{
+		URL: server.URL,
+	})
+	if err != nil {
+		t.Fatalf("add subscription: %v", err)
+	}
+
+	if sub.ProviderName != "Demo VPN" {
+		t.Fatalf("unexpected provider name: %q", sub.ProviderName)
+	}
+	if sub.ProviderNameSource != domain.ProviderNameSourceHeader {
+		t.Fatalf("unexpected provider name source: %q", sub.ProviderNameSource)
+	}
+	if sub.ExpiresAt == nil || !sub.ExpiresAt.Equal(expireAt) {
+		t.Fatalf("unexpected expiration date: got %v want %s", sub.ExpiresAt, expireAt)
+	}
+	if len(userAgents) != 2 {
+		t.Fatalf("expected two metadata fetch attempts, got %d", len(userAgents))
+	}
+	if userAgents[0] != subscriptionFetchUserAgent {
+		t.Fatalf("unexpected primary user agent: %q", userAgents[0])
+	}
+	if userAgents[1] != subscriptionMetadataFallbackUserAgent {
+		t.Fatalf("unexpected fallback user agent: %q", userAgents[1])
 	}
 }
 
@@ -538,6 +624,62 @@ func TestAddSubscriptionKeepsDistinctProfilesForSharedURL(t *testing.T) {
 	}
 	if len(store.subs[1].Nodes) != 1 || store.subs[1].Nodes[0].SubscriptionID != second.ID {
 		t.Fatalf("unexpected second subscription nodes: %+v", store.subs[1].Nodes)
+	}
+}
+
+func TestAddSubscriptionKeepsDistinctProfilesForSharedURLWrapperLabels(t *testing.T) {
+	t.Parallel()
+
+	store := &memoryStore{
+		settings: domain.DefaultSettings(),
+		state:    domain.DefaultRuntimeState(),
+	}
+
+	requests := 0
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		requests++
+		w.Header().Set("Profile-Title", "base64:TGliZXJ0eSBWUE4=")
+		switch requests {
+		case 1:
+			writeResponse(w, `{"remarks":"Netherlands","link":"vless://11111111-1111-1111-1111-111111111111@nl.example.com:443?encryption=none&security=tls&sni=nl.example.com&type=ws&path=%2Fa&host=cdn.example.com#Shared-bypass"}`)
+		default:
+			writeResponse(w, `{"remarks":"Netherlands-bypass","link":"vless://11111111-1111-1111-1111-111111111111@nl.example.com:443?encryption=none&security=tls&sni=nl.example.com&type=ws&path=%2Fa&host=cdn.example.com#Shared-bypass"}`)
+		}
+	}))
+	t.Cleanup(server.Close)
+
+	service := NewService(Dependencies{
+		Store:      store,
+		HTTPClient: server.Client(),
+	})
+
+	first, err := service.AddSubscription(context.Background(), AddSubscriptionRequest{URL: server.URL})
+	if err != nil {
+		t.Fatalf("add first subscription: %v", err)
+	}
+
+	second, err := service.AddSubscription(context.Background(), AddSubscriptionRequest{URL: server.URL})
+	if err != nil {
+		t.Fatalf("add second subscription: %v", err)
+	}
+
+	if first.ID == second.ID {
+		t.Fatalf("expected distinct subscription ids, got %q", first.ID)
+	}
+	if len(store.subs) != 2 {
+		t.Fatalf("expected two stored subscriptions, got %d", len(store.subs))
+	}
+	if len(store.subs[0].Nodes) != 1 || len(store.subs[1].Nodes) != 1 {
+		t.Fatalf("expected one node in each subscription, got %+v", store.subs)
+	}
+	if store.subs[0].Nodes[0].Name != "Netherlands" || store.subs[0].Nodes[0].Remark != "Netherlands" {
+		t.Fatalf("expected first wrapper label to be preserved, got %+v", store.subs[0].Nodes[0])
+	}
+	if store.subs[1].Nodes[0].Name != "Netherlands-bypass" || store.subs[1].Nodes[0].Remark != "Netherlands-bypass" {
+		t.Fatalf("expected second wrapper label to be preserved, got %+v", store.subs[1].Nodes[0])
+	}
+	if store.subs[0].Nodes[0].ID == store.subs[1].Nodes[0].ID {
+		t.Fatalf("expected wrapper label override to produce distinct node ids, got %+v", store.subs)
 	}
 }
 
@@ -896,6 +1038,165 @@ func TestRefreshSubscriptionDoesNotOverrideManualProviderNameWithProfileTitle(t 
 	}
 	if len(sub.Nodes) != 1 || sub.Nodes[0].ProviderName != "Manual Name" {
 		t.Fatalf("unexpected parsed nodes: %+v", sub.Nodes)
+	}
+}
+
+func TestRefreshSubscriptionUpdatesExpirationFromSubscriptionUserinfo(t *testing.T) {
+	t.Parallel()
+
+	expireAt := time.Unix(1799312400, 0).UTC()
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Subscription-Userinfo", "upload=0; download=11606312440; total=322122547200; expire=1799312400")
+		writeResponse(w, `[
+		  {
+		    "outbounds": [
+		      {
+		        "protocol": "vless",
+		        "tag": "proxy",
+		        "settings": {
+		          "vnext": [
+		            {
+		              "address": "one.example.com",
+		              "port": 443,
+		              "users": [
+		                {
+		                  "id": "11111111-1111-1111-1111-111111111111",
+		                  "encryption": "none",
+		                  "flow": "xtls-rprx-vision"
+		                }
+		              ]
+		            }
+		          ]
+		        },
+		        "streamSettings": {
+		          "network": "tcp",
+		          "security": "reality",
+		          "realitySettings": {
+		            "serverName": "gateway-one.example",
+		            "publicKey": "public-key-one",
+		            "shortId": "short-one",
+		            "fingerprint": "random"
+		          }
+		        }
+		      }
+		    ]
+		  }
+		]`)
+	}))
+	defer server.Close()
+
+	store := &memoryStore{
+		settings: domain.DefaultSettings(),
+		state:    domain.DefaultRuntimeState(),
+		subs: []domain.Subscription{
+			{
+				ID:           "sub-1",
+				SourceType:   domain.SourceTypeURL,
+				Source:       server.URL,
+				ProviderName: "Demo VPN",
+				DisplayName:  "Demo VPN",
+				Nodes: []domain.Node{
+					{ID: "old-node"},
+				},
+			},
+		},
+	}
+
+	service := NewService(Dependencies{Store: store, HTTPClient: server.Client()})
+
+	sub, err := service.RefreshSubscription(context.Background(), "sub-1")
+	if err != nil {
+		t.Fatalf("refresh subscription: %v", err)
+	}
+
+	if sub.ExpiresAt == nil || !sub.ExpiresAt.Equal(expireAt) {
+		t.Fatalf("unexpected expiration date: got %v want %s", sub.ExpiresAt, expireAt)
+	}
+}
+
+func TestRefreshSubscriptionFallsBackToCurlUserAgentForMetadata(t *testing.T) {
+	t.Parallel()
+
+	expireAt := time.Unix(1799312400, 0).UTC()
+	var userAgents []string
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		userAgents = append(userAgents, r.Header.Get("User-Agent"))
+		if strings.Contains(r.Header.Get("User-Agent"), "curl/") {
+			w.Header().Set("Subscription-Userinfo", "upload=0; download=11606312440; total=322122547200; expire=1799312400")
+		}
+		writeResponse(w, `[
+		  {
+		    "outbounds": [
+		      {
+		        "protocol": "vless",
+		        "tag": "proxy",
+		        "settings": {
+		          "vnext": [
+		            {
+		              "address": "one.example.com",
+		              "port": 443,
+		              "users": [
+		                {
+		                  "id": "11111111-1111-1111-1111-111111111111",
+		                  "encryption": "none",
+		                  "flow": "xtls-rprx-vision"
+		                }
+		              ]
+		            }
+		          ]
+		        },
+		        "streamSettings": {
+		          "network": "tcp",
+		          "security": "reality",
+		          "realitySettings": {
+		            "serverName": "gateway-one.example",
+		            "publicKey": "public-key-one",
+		            "shortId": "short-one",
+		            "fingerprint": "random"
+		          }
+		        }
+		      }
+		    ]
+		  }
+		]`)
+	}))
+	defer server.Close()
+
+	store := &memoryStore{
+		settings: domain.DefaultSettings(),
+		state:    domain.DefaultRuntimeState(),
+		subs: []domain.Subscription{
+			{
+				ID:           "sub-1",
+				SourceType:   domain.SourceTypeURL,
+				Source:       server.URL,
+				ProviderName: "Demo VPN",
+				DisplayName:  "Demo VPN",
+				Nodes: []domain.Node{
+					{ID: "old-node"},
+				},
+			},
+		},
+	}
+
+	service := NewService(Dependencies{Store: store, HTTPClient: server.Client()})
+
+	sub, err := service.RefreshSubscription(context.Background(), "sub-1")
+	if err != nil {
+		t.Fatalf("refresh subscription: %v", err)
+	}
+
+	if sub.ExpiresAt == nil || !sub.ExpiresAt.Equal(expireAt) {
+		t.Fatalf("unexpected expiration date: got %v want %s", sub.ExpiresAt, expireAt)
+	}
+	if len(userAgents) != 2 {
+		t.Fatalf("expected two metadata fetch attempts, got %d", len(userAgents))
+	}
+	if userAgents[0] != subscriptionFetchUserAgent {
+		t.Fatalf("unexpected primary user agent: %q", userAgents[0])
+	}
+	if userAgents[1] != subscriptionMetadataFallbackUserAgent {
+		t.Fatalf("unexpected fallback user agent: %q", userAgents[1])
 	}
 }
 

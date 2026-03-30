@@ -77,6 +77,9 @@ func TestListSubscriptionsJSONRedactsSecrets(t *testing.T) {
 	if payload[0].SourceType != string(domain.SourceTypeURL) {
 		t.Fatalf("unexpected source type: %+v", payload[0])
 	}
+	if payload[0].ExpiresAt != "2026-04-01T10:30:00Z" {
+		t.Fatalf("unexpected expiration date: %+v", payload[0])
+	}
 	if len(payload[0].Nodes) != 1 {
 		t.Fatalf("expected one safe node summary, got %+v", payload[0].Nodes)
 	}
@@ -157,6 +160,7 @@ func TestDiagnosticsCommandJSONRedactsNestedStatusSecrets(t *testing.T) {
 
 func newSensitiveCLIService() *app.Service {
 	now := time.Date(2026, 3, 29, 10, 30, 0, 0, time.UTC)
+	expiresAt := now.Add(72 * time.Hour)
 
 	return app.NewService(app.Dependencies{
 		Store: &cliMemoryStore{
@@ -169,6 +173,7 @@ func newSensitiveCLIService() *app.Service {
 					DisplayName:        "Demo VPN",
 					ProviderNameSource: domain.ProviderNameSourceManual,
 					LastUpdatedAt:      now,
+					ExpiresAt:          &expiresAt,
 					RefreshInterval:    domain.NewDuration(time.Hour),
 					LastError:          "last refresh failed",
 					ParserStatus:       "ok",
