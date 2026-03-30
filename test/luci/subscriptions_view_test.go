@@ -41,6 +41,42 @@ func TestSubscriptionsViewKeepsSpeedTestAction(t *testing.T) {
 	}
 }
 
+func TestSubscriptionsViewShowsExpirationDateAndRemoveAction(t *testing.T) {
+	t.Parallel()
+
+	source := readSubscriptionsViewSource(t)
+
+	for _, want := range []string{
+		"Expiration date",
+		"handleRemoveSubscription",
+		"cbi-button-negative",
+		"[ _('Remove') ]",
+	} {
+		if !strings.Contains(source, want) {
+			t.Fatalf("subscriptions view missing marker %q", want)
+		}
+	}
+}
+
+func TestSubscriptionsViewKeepsRemoveActionVisibleWhenButtonsWrap(t *testing.T) {
+	t.Parallel()
+
+	source := readSubscriptionsViewSource(t)
+
+	for _, want := range []string{
+		".routeflux-subscription-controls { display:grid; gap:8px; justify-items:end; min-width:0; max-width:100%; }",
+		".routeflux-subscription-actions { display:flex; flex-wrap:wrap; justify-content:flex-end; gap:8px; align-items:flex-start; max-width:100%; }",
+	} {
+		if !strings.Contains(source, want) {
+			t.Fatalf("subscriptions view missing responsive action layout marker %q", want)
+		}
+	}
+
+	if strings.Contains(source, ".routeflux-subscription-card { margin-bottom:16px; overflow:hidden; }") {
+		t.Fatal("subscriptions view must not clip subscription actions with overflow:hidden")
+	}
+}
+
 func readSubscriptionsViewSource(t *testing.T) string {
 	t.Helper()
 

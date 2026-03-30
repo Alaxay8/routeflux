@@ -1101,6 +1101,7 @@ return view.extend({
 			[ _('Profile'), displayName ],
 			[ _('Source Type'), firstNonEmpty([ subscription.source_type ], '-') ],
 			[ _('Updated'), routefluxUI.formatTimestamp(subscription.last_updated_at) || _('Never') ],
+			[ _('Expiration date'), routefluxUI.formatTimestamp(subscription.expires_at) || '-' ],
 			[ _('Status'), firstNonEmpty([ subscription.parser_status ], _('unknown')) ],
 			[ _('Nodes'), String(nodesCount) ]
 		].map(function(item) {
@@ -1194,14 +1195,14 @@ return view.extend({
 		content.push(routefluxUI.renderSharedStyles());
 		content.push(E('style', { 'type': 'text/css' }, [
 			'.routeflux-subscriptions-shell { width:100%; max-width:100%; min-width:0; box-sizing:border-box; }',
-			'.routeflux-subscription-card { margin-bottom:16px; overflow:hidden; }',
+			'.routeflux-subscription-card { margin-bottom:16px; }',
 			'.routeflux-subscription-header { display:grid; grid-template-columns:minmax(0, 1fr) auto; gap:14px 18px; align-items:start; margin-bottom:12px; }',
 			'.routeflux-subscription-heading { min-width:0; }',
 			'.routeflux-subscription-title { font-size:clamp(17px, 1.1vw + 14px, 22px); font-weight:600; line-height:1.25; overflow-wrap:anywhere; word-break:break-word; }',
 			'.routeflux-subscription-provider { color:var(--text-color-medium, #666); margin-top:4px; overflow-wrap:anywhere; word-break:break-word; }',
 			'.routeflux-subscription-badges { display:flex; flex-wrap:wrap; gap:8px; margin-top:8px; }',
-			'.routeflux-subscription-controls { display:grid; gap:8px; justify-items:end; min-width:min(100%, 360px); }',
-			'.routeflux-subscription-actions { display:flex; flex-wrap:nowrap; justify-content:flex-end; gap:8px; align-items:flex-start; }',
+			'.routeflux-subscription-controls { display:grid; gap:8px; justify-items:end; min-width:0; max-width:100%; }',
+			'.routeflux-subscription-actions { display:flex; flex-wrap:wrap; justify-content:flex-end; gap:8px; align-items:flex-start; max-width:100%; }',
 			'.routeflux-subscription-actions .cbi-button, .routeflux-node-actions .cbi-button { white-space:nowrap; }',
 			'.routeflux-meta-table { width:100%; table-layout:fixed; margin-bottom:0; }',
 			'.routeflux-meta-label { width:180px; color:var(--text-color-medium, #586677); font-weight:600; }',

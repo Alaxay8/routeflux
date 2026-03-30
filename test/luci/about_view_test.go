@@ -17,6 +17,8 @@ func TestAboutViewExposesWhatsNewTab(t *testing.T) {
 		"showWhatsNewModal",
 		"What\\'s New",
 		"Changes included after the %s release, rewritten as practical user-facing updates.",
+		"Subscription expiration date is now shown",
+		"Subscriptions now show an Expiration date row and refresh it whenever the provider exposes expiry metadata during add or refresh operations.",
 		"Update RouteFlux from LuCI",
 		"Anti-target routing is more reliable",
 		"Anti-target mode is now available",
@@ -80,6 +82,22 @@ func TestAboutViewWhatsNewModalHasCloseOnly(t *testing.T) {
 
 	if strings.Contains(block, "Export JSON") {
 		t.Fatal("what's new modal must not expose export action")
+	}
+}
+
+func TestAboutViewHighlightsNewCardsInGreen(t *testing.T) {
+	t.Parallel()
+
+	source := readAboutViewSource(t)
+
+	for _, want := range []string{
+		"routeflux-about-update-card-new",
+		"entry.kind === _('New') ? ' routeflux-about-update-card-new' : ''",
+		".routeflux-about-update-card-new .routeflux-card-accent { background:linear-gradient(90deg, #22c55e 0%, #16a34a 100%); }",
+	} {
+		if !strings.Contains(source, want) {
+			t.Fatalf("about view must contain %q", want)
+		}
 	}
 }
 

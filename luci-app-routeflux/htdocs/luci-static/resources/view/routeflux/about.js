@@ -9,6 +9,11 @@ var whatsNewBaseRelease = 'v0.1.5';
 var whatsNewEntries = [
 	{
 		kind: _('New'),
+		title: _('Subscription expiration date is now shown'),
+		summary: _('Subscriptions now show an Expiration date row and refresh it whenever the provider exposes expiry metadata during add or refresh operations.')
+	},
+	{
+		kind: _('New'),
 		title: _('Update RouteFlux from LuCI'),
 		summary: _('The About page can now download and install the latest published RouteFlux release directly on the router.')
 	},
@@ -36,7 +41,10 @@ function notificationParagraph(message) {
 }
 
 function renderWhatsNewCard(entry) {
-	return E('div', { 'class': 'routeflux-card routeflux-card-primary routeflux-about-update-card' }, [
+	var className = 'routeflux-card routeflux-card-primary routeflux-about-update-card' +
+		(entry.kind === _('New') ? ' routeflux-about-update-card-new' : '');
+
+	return E('div', { 'class': className }, [
 		E('div', { 'class': 'routeflux-card-accent' }, []),
 		E('div', { 'class': 'routeflux-card-label' }, [ entry.kind ]),
 		E('div', { 'class': 'routeflux-card-value routeflux-about-update-title' }, [ entry.title ]),
@@ -155,6 +163,7 @@ return view.extend({
 			'.routeflux-about-pre { white-space:pre-wrap; margin:0; }',
 			'.routeflux-about-update-grid { align-items:stretch; }',
 			'.routeflux-about-update-card { min-height:168px; }',
+			'.routeflux-about-update-card-new .routeflux-card-accent { background:linear-gradient(90deg, #22c55e 0%, #16a34a 100%); }',
 			'.routeflux-about-update-title { margin-bottom:10px; }',
 			'.routeflux-about-update-summary { margin:0; color:var(--text-color-secondary, #526175); line-height:1.6; }',
 			'.routeflux-modal-help { margin:0 0 12px; color:var(--text-color-medium, #586677); max-width:100%; overflow-wrap:anywhere; word-break:break-word; line-height:1.45; }'
