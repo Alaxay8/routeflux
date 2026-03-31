@@ -791,6 +791,92 @@ func (s *Service) GetFirewallSettings() (domain.FirewallSettings, error) {
 	return settings.Firewall, nil
 }
 
+// UpdateFirewallModeDraft stores selectors for one LuCI firewall mode without applying them.
+func (s *Service) UpdateFirewallModeDraft(ctx context.Context, mode string, selectors []string) (domain.FirewallSettings, error) {
+	return runStoreWriteLockedResult(s, func() (domain.FirewallSettings, error) {
+		return s.updateFirewallModeDraft(ctx, mode, selectors)
+	})
+}
+
+func (s *Service) updateFirewallModeDraft(ctx context.Context, mode string, selectors []string) (domain.FirewallSettings, error) {
+	_ = ctx
+
+	settings, err := s.store.LoadSettings()
+	if err != nil {
+		return domain.FirewallSettings{}, fmt.Errorf("load settings: %w", err)
+	}
+
+	mode = strings.TrimSpace(strings.ToLower(mode))
+	switch mode {
+	case "hosts":
+		settings.Firewall.ModeDrafts.Hosts = domain.FirewallModeDraft{
+			SourceCIDRs: normalizeFirewallSources(selectors),
+		}
+	case "targets":
+		parsed, err := domain.ParseFirewallTargets(selectors, settings.Firewall.TargetServiceCatalog)
+		if err != nil {
+			return domain.FirewallSettings{}, err
+		}
+		settings.Firewall.ModeDrafts.Targets = domain.FirewallModeDraft{
+			TargetServices: slices.Clone(parsed.Services),
+			TargetCIDRs:    slices.Clone(parsed.CIDRs),
+			TargetDomains:  slices.Clone(parsed.Domains),
+		}
+	case "anti-target":
+		parsed, err := domain.ParseFirewallTargets(selectors, settings.Firewall.TargetServiceCatalog)
+		if err != nil {
+			return domain.FirewallSettings{}, err
+		}
+		settings.Firewall.ModeDrafts.AntiTarget = domain.FirewallModeDraft{
+			TargetServices: slices.Clone(parsed.Services),
+			TargetCIDRs:    slices.Clone(parsed.CIDRs),
+			TargetDomains:  slices.Clone(parsed.Domains),
+		}
+	default:
+		return domain.FirewallSettings{}, fmt.Errorf("unsupported firewall draft mode %q", mode)
+	}
+
+	if err := s.store.SaveSettings(settings); err != nil {
+		return domain.FirewallSettings{}, fmt.Errorf("save settings: %w", err)
+	}
+
+	return settings.Firewall, nil
+}
+
+// ClearFirewallModeDraft removes saved selectors for one LuCI firewall mode.
+func (s *Service) ClearFirewallModeDraft(ctx context.Context, mode string) (domain.FirewallSettings, error) {
+	return runStoreWriteLockedResult(s, func() (domain.FirewallSettings, error) {
+		return s.clearFirewallModeDraft(ctx, mode)
+	})
+}
+
+func (s *Service) clearFirewallModeDraft(ctx context.Context, mode string) (domain.FirewallSettings, error) {
+	_ = ctx
+
+	settings, err := s.store.LoadSettings()
+	if err != nil {
+		return domain.FirewallSettings{}, fmt.Errorf("load settings: %w", err)
+	}
+
+	mode = strings.TrimSpace(strings.ToLower(mode))
+	switch mode {
+	case "hosts":
+		settings.Firewall.ModeDrafts.Hosts = domain.FirewallModeDraft{}
+	case "targets":
+		settings.Firewall.ModeDrafts.Targets = domain.FirewallModeDraft{}
+	case "anti-target":
+		settings.Firewall.ModeDrafts.AntiTarget = domain.FirewallModeDraft{}
+	default:
+		return domain.FirewallSettings{}, fmt.Errorf("unsupported firewall draft mode %q", mode)
+	}
+
+	if err := s.store.SaveSettings(settings); err != nil {
+		return domain.FirewallSettings{}, fmt.Errorf("save settings: %w", err)
+	}
+
+	return settings.Firewall, nil
+}
+
 // ListFirewallTargetServices returns built-in and custom target services.
 func (s *Service) ListFirewallTargetServices() ([]domain.FirewallTargetService, error) {
 	settings, err := s.store.LoadSettings()
@@ -829,7 +915,7 @@ func (s *Service) setFirewallTargetService(ctx context.Context, name string, sel
 		return domain.FirewallTargetService{}, fmt.Errorf("load settings: %w", err)
 	}
 
-	normalizedName, definition, err := domain.ParseFirewallTargetDefinition(name, selectors)
+	normalizedName, definition, err := domain.ParseFirewallTargetDefinition(name, selectors, settings.Firewall.TargetServiceCatalog)
 	if err != nil {
 		return domain.FirewallTargetService{}, err
 	}
@@ -879,8 +965,17 @@ func (s *Service) deleteFirewallTargetService(ctx context.Context, name string) 
 	if entry.ReadOnly {
 		return fmt.Errorf("target service %q is readonly and cannot be deleted", entry.Name)
 	}
-	if slices.Contains(settings.Firewall.TargetServices, entry.Name) {
+	if firewallTargetsReferenceService(settings.Firewall.TargetServices, settings.Firewall.TargetServiceCatalog, entry.Name) {
 		return fmt.Errorf("target service %q is still used by firewall targets; remove it from firewall targets first", entry.Name)
+	}
+	if firewallTargetsReferenceService(settings.Firewall.ModeDrafts.Targets.TargetServices, settings.Firewall.TargetServiceCatalog, entry.Name) {
+		return fmt.Errorf("target service %q is still referenced by the saved targets draft", entry.Name)
+	}
+	if firewallTargetsReferenceService(settings.Firewall.ModeDrafts.AntiTarget.TargetServices, settings.Firewall.TargetServiceCatalog, entry.Name) {
+		return fmt.Errorf("target service %q is still referenced by the saved anti-target draft", entry.Name)
+	}
+	if referrer, ok := findReferencingTargetService(settings.Firewall.TargetServiceCatalog, entry.Name); ok {
+		return fmt.Errorf("target service %q is still referenced by target service %q", entry.Name, referrer)
 	}
 
 	delete(settings.Firewall.TargetServiceCatalog, entry.Name)
@@ -902,6 +997,57 @@ func (s *Service) deleteFirewallTargetService(ctx context.Context, name string) 
 	}
 
 	return nil
+}
+
+func firewallTargetsReferenceService(roots []string, catalog map[string]domain.FirewallTargetDefinition, target string) bool {
+	for _, root := range roots {
+		if targetServiceDependencyMatches(strings.TrimSpace(strings.ToLower(root)), target, catalog, make(map[string]struct{})) {
+			return true
+		}
+	}
+	return false
+}
+
+func findReferencingTargetService(catalog map[string]domain.FirewallTargetDefinition, target string) (string, bool) {
+	target = strings.TrimSpace(strings.ToLower(target))
+	for name := range catalog {
+		name = strings.TrimSpace(strings.ToLower(name))
+		if name == target {
+			continue
+		}
+		if targetServiceDependencyMatches(name, target, catalog, make(map[string]struct{})) {
+			return name, true
+		}
+	}
+	return "", false
+}
+
+func targetServiceDependencyMatches(root, target string, catalog map[string]domain.FirewallTargetDefinition, visiting map[string]struct{}) bool {
+	if root == target {
+		return true
+	}
+	if _, ok := visiting[root]; ok {
+		return false
+	}
+	definition, ok := catalog[root]
+	if !ok {
+		return false
+	}
+
+	visiting[root] = struct{}{}
+	defer delete(visiting, root)
+
+	for _, dependency := range definition.Services {
+		dependency = strings.TrimSpace(strings.ToLower(dependency))
+		if dependency == target {
+			return true
+		}
+		if targetServiceDependencyMatches(dependency, target, catalog, visiting) {
+			return true
+		}
+	}
+
+	return false
 }
 
 // ConfigureFirewall updates firewall targets and enabled state.
@@ -940,6 +1086,19 @@ func (s *Service) configureFirewallTargets(ctx context.Context, targets []string
 	settings.Firewall.TargetCIDRs = slices.Clone(parsedTargets.CIDRs)
 	settings.Firewall.TargetDomains = slices.Clone(parsedTargets.Domains)
 	settings.Firewall.SourceCIDRs = nil
+	if targetMode == domain.FirewallTargetModeBypass {
+		settings.Firewall.ModeDrafts.AntiTarget = domain.FirewallModeDraft{
+			TargetServices: slices.Clone(parsedTargets.Services),
+			TargetCIDRs:    slices.Clone(parsedTargets.CIDRs),
+			TargetDomains:  slices.Clone(parsedTargets.Domains),
+		}
+	} else {
+		settings.Firewall.ModeDrafts.Targets = domain.FirewallModeDraft{
+			TargetServices: slices.Clone(parsedTargets.Services),
+			TargetCIDRs:    slices.Clone(parsedTargets.CIDRs),
+			TargetDomains:  slices.Clone(parsedTargets.Domains),
+		}
+	}
 	if port > 0 {
 		settings.Firewall.TransparentPort = port
 	}
@@ -978,6 +1137,9 @@ func (s *Service) configureFirewallHosts(ctx context.Context, sources []string, 
 	settings.Firewall.TargetServices = nil
 	settings.Firewall.TargetCIDRs = nil
 	settings.Firewall.TargetDomains = nil
+	settings.Firewall.ModeDrafts.Hosts = domain.FirewallModeDraft{
+		SourceCIDRs: slices.Clone(settings.Firewall.SourceCIDRs),
+	}
 	if port > 0 {
 		settings.Firewall.TransparentPort = port
 	}

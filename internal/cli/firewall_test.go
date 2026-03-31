@@ -2,6 +2,7 @@ package cli
 
 import (
 	"bytes"
+	"reflect"
 	"strings"
 	"testing"
 
@@ -289,6 +290,51 @@ func TestFirewallSetAntiTargetSupportsServicesAndDomains(t *testing.T) {
 	}
 	if len(settings.TargetCIDRs) != 1 || settings.TargetCIDRs[0] != "1.1.1.1" {
 		t.Fatalf("unexpected target cidrs: %v", settings.TargetCIDRs)
+	}
+}
+
+func TestFirewallDraftCommandStoresAndClearsDrafts(t *testing.T) {
+	t.Parallel()
+
+	store := &cliMemoryStore{
+		settings: domain.DefaultSettings(),
+		state:    domain.DefaultRuntimeState(),
+	}
+	service := app.NewService(app.Dependencies{Store: store})
+
+	cmd := newFirewallCmd(&rootOptions{service: service})
+	cmd.SetOut(new(bytes.Buffer))
+	cmd.SetErr(new(bytes.Buffer))
+	cmd.SetArgs([]string{"draft", "targets", "youtube", "1.1.1.1"})
+	if err := cmd.Execute(); err != nil {
+		t.Fatalf("execute firewall draft targets: %v", err)
+	}
+
+	settings, err := service.GetFirewallSettings()
+	if err != nil {
+		t.Fatalf("get firewall settings: %v", err)
+	}
+	if want := []string{"youtube"}; !reflect.DeepEqual(settings.ModeDrafts.Targets.TargetServices, want) {
+		t.Fatalf("unexpected target draft services: %+v", settings.ModeDrafts.Targets.TargetServices)
+	}
+	if want := []string{"1.1.1.1"}; !reflect.DeepEqual(settings.ModeDrafts.Targets.TargetCIDRs, want) {
+		t.Fatalf("unexpected target draft cidrs: %+v", settings.ModeDrafts.Targets.TargetCIDRs)
+	}
+
+	clearCmd := newFirewallCmd(&rootOptions{service: service})
+	clearCmd.SetOut(new(bytes.Buffer))
+	clearCmd.SetErr(new(bytes.Buffer))
+	clearCmd.SetArgs([]string{"draft", "targets"})
+	if err := clearCmd.Execute(); err != nil {
+		t.Fatalf("execute firewall draft clear: %v", err)
+	}
+
+	settings, err = service.GetFirewallSettings()
+	if err != nil {
+		t.Fatalf("get firewall settings after clear: %v", err)
+	}
+	if !reflect.DeepEqual(settings.ModeDrafts.Targets, domain.FirewallModeDraft{}) {
+		t.Fatalf("expected cleared target draft, got %+v", settings.ModeDrafts.Targets)
 	}
 }
 

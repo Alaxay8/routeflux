@@ -23,6 +23,19 @@ func decodeSettings(data []byte, path string) (domain.Settings, error) {
 		DirectDomains *[]string            `json:"direct_domains"`
 	}
 
+	type rawFirewallModeDraft struct {
+		TargetServices *[]string `json:"target_services"`
+		TargetCIDRs    *[]string `json:"target_cidrs"`
+		TargetDomains  *[]string `json:"target_domains"`
+		SourceCIDRs    *[]string `json:"source_cidrs"`
+	}
+
+	type rawFirewallModeDrafts struct {
+		Hosts      *rawFirewallModeDraft `json:"hosts"`
+		Targets    *rawFirewallModeDraft `json:"targets"`
+		AntiTarget *rawFirewallModeDraft `json:"anti_target"`
+	}
+
 	type rawFirewallSettings struct {
 		Enabled              *bool                                       `json:"enabled"`
 		TransparentPort      *int                                        `json:"transparent_port"`
@@ -32,6 +45,7 @@ func decodeSettings(data []byte, path string) (domain.Settings, error) {
 		TargetCIDRs          *[]string                                   `json:"target_cidrs"`
 		TargetDomains        *[]string                                   `json:"target_domains"`
 		SourceCIDRs          *[]string                                   `json:"source_cidrs"`
+		ModeDrafts           *rawFirewallModeDrafts                      `json:"mode_drafts"`
 		BlockQUIC            *bool                                       `json:"block_quic"`
 	}
 
@@ -126,6 +140,50 @@ func decodeSettings(data []byte, path string) (domain.Settings, error) {
 		}
 		if raw.Firewall.SourceCIDRs != nil {
 			settings.Firewall.SourceCIDRs = append([]string(nil), (*raw.Firewall.SourceCIDRs)...)
+		}
+		if raw.Firewall.ModeDrafts != nil {
+			if raw.Firewall.ModeDrafts.Hosts != nil {
+				if raw.Firewall.ModeDrafts.Hosts.TargetServices != nil {
+					settings.Firewall.ModeDrafts.Hosts.TargetServices = append([]string(nil), (*raw.Firewall.ModeDrafts.Hosts.TargetServices)...)
+				}
+				if raw.Firewall.ModeDrafts.Hosts.TargetCIDRs != nil {
+					settings.Firewall.ModeDrafts.Hosts.TargetCIDRs = append([]string(nil), (*raw.Firewall.ModeDrafts.Hosts.TargetCIDRs)...)
+				}
+				if raw.Firewall.ModeDrafts.Hosts.TargetDomains != nil {
+					settings.Firewall.ModeDrafts.Hosts.TargetDomains = append([]string(nil), (*raw.Firewall.ModeDrafts.Hosts.TargetDomains)...)
+				}
+				if raw.Firewall.ModeDrafts.Hosts.SourceCIDRs != nil {
+					settings.Firewall.ModeDrafts.Hosts.SourceCIDRs = append([]string(nil), (*raw.Firewall.ModeDrafts.Hosts.SourceCIDRs)...)
+				}
+			}
+			if raw.Firewall.ModeDrafts.Targets != nil {
+				if raw.Firewall.ModeDrafts.Targets.TargetServices != nil {
+					settings.Firewall.ModeDrafts.Targets.TargetServices = append([]string(nil), (*raw.Firewall.ModeDrafts.Targets.TargetServices)...)
+				}
+				if raw.Firewall.ModeDrafts.Targets.TargetCIDRs != nil {
+					settings.Firewall.ModeDrafts.Targets.TargetCIDRs = append([]string(nil), (*raw.Firewall.ModeDrafts.Targets.TargetCIDRs)...)
+				}
+				if raw.Firewall.ModeDrafts.Targets.TargetDomains != nil {
+					settings.Firewall.ModeDrafts.Targets.TargetDomains = append([]string(nil), (*raw.Firewall.ModeDrafts.Targets.TargetDomains)...)
+				}
+				if raw.Firewall.ModeDrafts.Targets.SourceCIDRs != nil {
+					settings.Firewall.ModeDrafts.Targets.SourceCIDRs = append([]string(nil), (*raw.Firewall.ModeDrafts.Targets.SourceCIDRs)...)
+				}
+			}
+			if raw.Firewall.ModeDrafts.AntiTarget != nil {
+				if raw.Firewall.ModeDrafts.AntiTarget.TargetServices != nil {
+					settings.Firewall.ModeDrafts.AntiTarget.TargetServices = append([]string(nil), (*raw.Firewall.ModeDrafts.AntiTarget.TargetServices)...)
+				}
+				if raw.Firewall.ModeDrafts.AntiTarget.TargetCIDRs != nil {
+					settings.Firewall.ModeDrafts.AntiTarget.TargetCIDRs = append([]string(nil), (*raw.Firewall.ModeDrafts.AntiTarget.TargetCIDRs)...)
+				}
+				if raw.Firewall.ModeDrafts.AntiTarget.TargetDomains != nil {
+					settings.Firewall.ModeDrafts.AntiTarget.TargetDomains = append([]string(nil), (*raw.Firewall.ModeDrafts.AntiTarget.TargetDomains)...)
+				}
+				if raw.Firewall.ModeDrafts.AntiTarget.SourceCIDRs != nil {
+					settings.Firewall.ModeDrafts.AntiTarget.SourceCIDRs = append([]string(nil), (*raw.Firewall.ModeDrafts.AntiTarget.SourceCIDRs)...)
+				}
+			}
 		}
 		if raw.Firewall.BlockQUIC != nil {
 			settings.Firewall.BlockQUIC = *raw.Firewall.BlockQUIC

@@ -40,6 +40,7 @@ func TestServicesSetGetAndFirewallTargetsUseCustomAlias(t *testing.T) {
 		"name=openai",
 		"source=custom",
 		"readonly=false",
+		"services=",
 		"domains=openai.com, chatgpt.com",
 		"cidrs=104.18.0.0/15",
 	} {
@@ -62,6 +63,52 @@ func TestServicesSetGetAndFirewallTargetsUseCustomAlias(t *testing.T) {
 	}
 	if len(settings.TargetServices) != 1 || settings.TargetServices[0] != "openai" {
 		t.Fatalf("unexpected target services: %+v", settings.TargetServices)
+	}
+}
+
+func TestServicesSetSupportsCompositeBundles(t *testing.T) {
+	t.Parallel()
+
+	store := &cliMemoryStore{
+		settings: domain.DefaultSettings(),
+		state:    domain.DefaultRuntimeState(),
+	}
+	service := app.NewService(app.Dependencies{Store: store})
+
+	setupCmd := newServicesCmd(&rootOptions{service: service})
+	setupCmd.SetOut(new(bytes.Buffer))
+	setupCmd.SetErr(new(bytes.Buffer))
+	setupCmd.SetArgs([]string{"set", "openai", "openai.com", "chatgpt.com"})
+	if err := setupCmd.Execute(); err != nil {
+		t.Fatalf("execute services set openai: %v", err)
+	}
+
+	setCmd := newServicesCmd(&rootOptions{service: service})
+	setCmd.SetOut(new(bytes.Buffer))
+	setCmd.SetErr(new(bytes.Buffer))
+	setCmd.SetArgs([]string{"set", "daily", "youtube", "openai", "oaistatic.com"})
+	if err := setCmd.Execute(); err != nil {
+		t.Fatalf("execute services set daily: %v", err)
+	}
+
+	getCmd := newServicesCmd(&rootOptions{service: service})
+	var stdout bytes.Buffer
+	getCmd.SetOut(&stdout)
+	getCmd.SetErr(new(bytes.Buffer))
+	getCmd.SetArgs([]string{"get", "daily"})
+	if err := getCmd.Execute(); err != nil {
+		t.Fatalf("execute services get daily: %v", err)
+	}
+
+	output := stdout.String()
+	for _, want := range []string{
+		"name=daily",
+		"services=youtube, openai",
+		"domains=oaistatic.com",
+	} {
+		if !strings.Contains(output, want) {
+			t.Fatalf("services get missing %q\n%s", want, output)
+		}
 	}
 }
 

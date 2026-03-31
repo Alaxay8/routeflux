@@ -34,6 +34,8 @@ routeflux firewall set targets youtube instagram 1.1.1.1
 routeflux firewall set anti-target gosuslugi.ru sberbank.ru
 routeflux firewall set port 12345
 routeflux firewall set block-quic true
+routeflux firewall draft targets youtube instagram
+routeflux firewall draft hosts all
 routeflux firewall disable
 `),
 	}
@@ -42,6 +44,7 @@ routeflux firewall disable
 		newFirewallGetCmd(opts),
 		newFirewallExplainCmd(opts),
 		newFirewallSetCmd(opts),
+		newFirewallDraftCmd(opts),
 		newFirewallHostCmd(opts),
 		newFirewallDisableCmd(opts),
 	)
@@ -229,6 +232,42 @@ routeflux firewall set youtube.com 1.1.1.1
 
 	cmd.Flags().IntVar(&port, "port", 0, "Override transparent redirect port for hosts or targets")
 	return cmd
+}
+
+func newFirewallDraftCmd(opts *rootOptions) *cobra.Command {
+	return &cobra.Command{
+		Use:   "draft <hosts|targets|anti-target> [selector...]",
+		Short: "Store or clear saved LuCI selectors for one firewall mode",
+		Long: strings.TrimSpace(`
+Draft slots are saved selector sets for the LuCI Firewall page.
+
+- routeflux firewall draft targets youtube instagram stores the targets draft
+- routeflux firewall draft hosts all stores the hosts draft
+- routeflux firewall draft anti-target gosuslugi.ru stores the anti-target draft
+- routeflux firewall draft targets clears the targets draft
+`),
+		Args: cobra.MinimumNArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			mode := strings.TrimSpace(strings.ToLower(args[0]))
+			if mode == "anti-targets" {
+				mode = "anti-target"
+			}
+
+			if len(args) == 1 {
+				settings, err := opts.service.ClearFirewallModeDraft(context.Background(), mode)
+				if err != nil {
+					return err
+				}
+				return printOutput(cmd, opts.jsonOutput, settings, fmt.Sprintf("Firewall draft %s cleared", mode))
+			}
+
+			settings, err := opts.service.UpdateFirewallModeDraft(context.Background(), mode, args[1:])
+			if err != nil {
+				return err
+			}
+			return printOutput(cmd, opts.jsonOutput, settings, fmt.Sprintf("Firewall draft %s updated", mode))
+		},
+	}
 }
 
 func newFirewallHostCmd(opts *rootOptions) *cobra.Command {

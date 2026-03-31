@@ -123,6 +123,21 @@ const (
 	FirewallTargetModeBypass FirewallTargetMode = "bypass"
 )
 
+// FirewallModeDraft stores saved selectors for one LuCI firewall mode.
+type FirewallModeDraft struct {
+	TargetServices []string `json:"target_services"`
+	TargetCIDRs    []string `json:"target_cidrs"`
+	TargetDomains  []string `json:"target_domains"`
+	SourceCIDRs    []string `json:"source_cidrs"`
+}
+
+// FirewallModeDrafts stores saved selectors for each supported LuCI firewall mode.
+type FirewallModeDrafts struct {
+	Hosts      FirewallModeDraft `json:"hosts"`
+	Targets    FirewallModeDraft `json:"targets"`
+	AntiTarget FirewallModeDraft `json:"anti_target"`
+}
+
 // FirewallSettings stores transparent proxy routing preferences.
 type FirewallSettings struct {
 	Enabled              bool                                `json:"enabled"`
@@ -133,13 +148,14 @@ type FirewallSettings struct {
 	TargetCIDRs          []string                            `json:"target_cidrs"`
 	TargetDomains        []string                            `json:"target_domains"`
 	SourceCIDRs          []string                            `json:"source_cidrs"`
+	ModeDrafts           FirewallModeDrafts                  `json:"mode_drafts"`
 	BlockQUIC            bool                                `json:"block_quic"`
 }
 
 // DefaultSettings returns the baseline configuration used on first start.
 func DefaultSettings() Settings {
 	return Settings{
-		SchemaVersion:       5,
+		SchemaVersion:       6,
 		RefreshInterval:     NewDuration(time.Hour),
 		HealthCheckInterval: NewDuration(30 * time.Second),
 		SwitchCooldown:      NewDuration(5 * time.Minute),
@@ -154,6 +170,7 @@ func DefaultSettings() Settings {
 			TargetCIDRs:          nil,
 			TargetDomains:        nil,
 			SourceCIDRs:          nil,
+			ModeDrafts:           FirewallModeDrafts{},
 			BlockQUIC:            true,
 		},
 		AutoMode: false,
@@ -180,6 +197,25 @@ func NormalizeFirewallTargetMode(mode FirewallTargetMode) FirewallTargetMode {
 		return FirewallTargetModeBypass
 	default:
 		return FirewallTargetModeProxy
+	}
+}
+
+// CloneFirewallModeDraft deep-copies one firewall mode draft.
+func CloneFirewallModeDraft(draft FirewallModeDraft) FirewallModeDraft {
+	return FirewallModeDraft{
+		TargetServices: append([]string(nil), draft.TargetServices...),
+		TargetCIDRs:    append([]string(nil), draft.TargetCIDRs...),
+		TargetDomains:  append([]string(nil), draft.TargetDomains...),
+		SourceCIDRs:    append([]string(nil), draft.SourceCIDRs...),
+	}
+}
+
+// CloneFirewallModeDrafts deep-copies all firewall mode drafts.
+func CloneFirewallModeDrafts(drafts FirewallModeDrafts) FirewallModeDrafts {
+	return FirewallModeDrafts{
+		Hosts:      CloneFirewallModeDraft(drafts.Hosts),
+		Targets:    CloneFirewallModeDraft(drafts.Targets),
+		AntiTarget: CloneFirewallModeDraft(drafts.AntiTarget),
 	}
 }
 

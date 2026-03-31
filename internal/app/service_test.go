@@ -211,6 +211,117 @@ func TestConfigureFirewallHostsPreservesTargetServiceCatalog(t *testing.T) {
 	}
 }
 
+func TestUpdateFirewallModeDraftDoesNotAffectActiveSettings(t *testing.T) {
+	t.Parallel()
+
+	store := &memoryStore{
+		settings: domain.DefaultSettings(),
+		state:    domain.DefaultRuntimeState(),
+	}
+	store.settings.Firewall.Enabled = true
+	store.settings.Firewall.TargetServices = []string{"youtube"}
+
+	service := NewService(Dependencies{Store: store, Firewaller: &recordingFirewaller{}})
+
+	settings, err := service.UpdateFirewallModeDraft(context.Background(), "hosts", []string{"all"})
+	if err != nil {
+		t.Fatalf("update firewall mode draft: %v", err)
+	}
+
+	if want := []string{"all"}; !reflect.DeepEqual(settings.ModeDrafts.Hosts.SourceCIDRs, want) {
+		t.Fatalf("unexpected hosts draft: %+v", settings.ModeDrafts.Hosts.SourceCIDRs)
+	}
+	if want := []string{"youtube"}; !reflect.DeepEqual(settings.TargetServices, want) {
+		t.Fatalf("unexpected active target services: %+v", settings.TargetServices)
+	}
+
+	settings, err = service.ClearFirewallModeDraft(context.Background(), "hosts")
+	if err != nil {
+		t.Fatalf("clear firewall mode draft: %v", err)
+	}
+	if !reflect.DeepEqual(settings.ModeDrafts.Hosts, domain.FirewallModeDraft{}) {
+		t.Fatalf("expected cleared hosts draft, got %+v", settings.ModeDrafts.Hosts)
+	}
+}
+
+func TestConfigureFirewallPreservesModeDraftsAcrossModeSwitches(t *testing.T) {
+	t.Parallel()
+
+	store := &memoryStore{
+		settings: domain.DefaultSettings(),
+		state:    domain.DefaultRuntimeState(),
+	}
+
+	service := NewService(Dependencies{Store: store, Firewaller: &recordingFirewaller{}})
+
+	settings, err := service.ConfigureFirewall(context.Background(), []string{"youtube", "1.1.1.1"}, true, 23456)
+	if err != nil {
+		t.Fatalf("configure firewall targets: %v", err)
+	}
+	if want := []string{"youtube"}; !reflect.DeepEqual(settings.ModeDrafts.Targets.TargetServices, want) {
+		t.Fatalf("unexpected targets draft services after targets save: %+v", settings.ModeDrafts.Targets.TargetServices)
+	}
+	if want := []string{"1.1.1.1"}; !reflect.DeepEqual(settings.ModeDrafts.Targets.TargetCIDRs, want) {
+		t.Fatalf("unexpected targets draft cidrs after targets save: %+v", settings.ModeDrafts.Targets.TargetCIDRs)
+	}
+
+	settings, err = service.ConfigureFirewallHosts(context.Background(), []string{"192.168.1.150"}, true, 23456)
+	if err != nil {
+		t.Fatalf("configure firewall hosts: %v", err)
+	}
+
+	if want := []string{"192.168.1.150"}; !reflect.DeepEqual(settings.SourceCIDRs, want) {
+		t.Fatalf("unexpected active source hosts: %+v", settings.SourceCIDRs)
+	}
+	if len(settings.TargetServices) != 0 || len(settings.TargetCIDRs) != 0 || len(settings.TargetDomains) != 0 {
+		t.Fatalf("expected active targets to be cleared, got %+v", settings)
+	}
+	if want := []string{"192.168.1.150"}; !reflect.DeepEqual(settings.ModeDrafts.Hosts.SourceCIDRs, want) {
+		t.Fatalf("unexpected hosts draft: %+v", settings.ModeDrafts.Hosts.SourceCIDRs)
+	}
+	if want := []string{"youtube"}; !reflect.DeepEqual(settings.ModeDrafts.Targets.TargetServices, want) {
+		t.Fatalf("unexpected preserved targets draft services: %+v", settings.ModeDrafts.Targets.TargetServices)
+	}
+	if want := []string{"1.1.1.1"}; !reflect.DeepEqual(settings.ModeDrafts.Targets.TargetCIDRs, want) {
+		t.Fatalf("unexpected preserved targets draft cidrs: %+v", settings.ModeDrafts.Targets.TargetCIDRs)
+	}
+}
+
+func TestDisableFirewallPreservesModeDrafts(t *testing.T) {
+	t.Parallel()
+
+	store := &memoryStore{
+		settings: domain.DefaultSettings(),
+		state:    domain.DefaultRuntimeState(),
+	}
+	store.settings.Firewall.Enabled = true
+	store.settings.Firewall.TargetServices = []string{"daily"}
+	store.settings.Firewall.ModeDrafts.Targets = domain.FirewallModeDraft{
+		TargetServices: []string{"daily"},
+		TargetDomains:  []string{"example.com"},
+	}
+
+	service := NewService(Dependencies{Store: store, Firewaller: &recordingFirewaller{}})
+
+	settings, err := service.DisableFirewall(context.Background())
+	if err != nil {
+		t.Fatalf("disable firewall: %v", err)
+	}
+
+	if settings.Enabled {
+		t.Fatal("expected firewall to be disabled")
+	}
+	if len(settings.TargetServices) != 0 || len(settings.TargetCIDRs) != 0 || len(settings.TargetDomains) != 0 || len(settings.SourceCIDRs) != 0 {
+		t.Fatalf("expected active selectors to be cleared, got %+v", settings)
+	}
+	if want := []string{"daily"}; !reflect.DeepEqual(settings.ModeDrafts.Targets.TargetServices, want) {
+		t.Fatalf("unexpected preserved targets draft services: %+v", settings.ModeDrafts.Targets.TargetServices)
+	}
+	if want := []string{"example.com"}; !reflect.DeepEqual(settings.ModeDrafts.Targets.TargetDomains, want) {
+		t.Fatalf("unexpected preserved targets draft domains: %+v", settings.ModeDrafts.Targets.TargetDomains)
+	}
+}
+
 func TestSetFirewallTargetServiceReappliesConnectedRuntime(t *testing.T) {
 	t.Parallel()
 
@@ -286,6 +397,32 @@ func TestDeleteFirewallTargetServiceRejectsUsedAlias(t *testing.T) {
 		t.Fatal("expected delete to fail while alias is in use")
 	}
 	if !strings.Contains(strings.ToLower(err.Error()), "remove it from firewall targets first") {
+		t.Fatalf("unexpected error: %v", err)
+	}
+}
+
+func TestDeleteFirewallTargetServiceRejectsReferencedCompositeAlias(t *testing.T) {
+	t.Parallel()
+
+	store := &memoryStore{
+		settings: domain.DefaultSettings(),
+		state:    domain.DefaultRuntimeState(),
+	}
+	store.settings.Firewall.TargetServiceCatalog = map[string]domain.FirewallTargetDefinition{
+		"openai": {Domains: []string{"openai.com"}},
+		"daily":  {Services: []string{"openai"}},
+	}
+	store.settings.Firewall.ModeDrafts.Targets = domain.FirewallModeDraft{
+		TargetServices: []string{"daily"},
+	}
+
+	service := NewService(Dependencies{Store: store, Firewaller: &recordingFirewaller{}})
+
+	err := service.DeleteFirewallTargetService(context.Background(), "openai")
+	if err == nil {
+		t.Fatal("expected delete to fail while alias is referenced by composite bundle")
+	}
+	if !strings.Contains(strings.ToLower(err.Error()), "referenced") {
 		t.Fatalf("unexpected error: %v", err)
 	}
 }

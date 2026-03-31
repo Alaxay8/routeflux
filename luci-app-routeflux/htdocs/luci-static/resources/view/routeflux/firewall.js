@@ -350,6 +350,45 @@ function selectorsForMode(settings, mode) {
 	return '';
 }
 
+function selectorsForDraft(draft, mode) {
+	if (!draft)
+		return '';
+
+	if (mode === 'hosts' && hasItems(draft.source_cidrs))
+		return draft.source_cidrs.join('\n');
+
+	if (mode === 'targets' || mode === 'anti-target') {
+		var values = [];
+
+		if (hasItems(draft.target_services))
+			values = values.concat(draft.target_services);
+		if (hasItems(draft.target_domains))
+			values = values.concat(draft.target_domains);
+		if (hasItems(draft.target_cidrs))
+			values = values.concat(draft.target_cidrs);
+
+		return values.join('\n');
+	}
+
+	return '';
+}
+
+function selectorsModeDrafts(settings, currentMode, selectedMode) {
+	var drafts = ((settings || {}).mode_drafts) || {};
+	var values = {
+		'hosts': selectorsForDraft(drafts.hosts || {}, 'hosts'),
+		'targets': selectorsForDraft(drafts.targets || {}, 'targets'),
+		'anti-target': selectorsForDraft(drafts.anti_target || {}, 'anti-target')
+	};
+
+	if (currentMode === 'hosts' || currentMode === 'targets' || currentMode === 'anti-target')
+		values[currentMode] = selectorsForMode(settings, currentMode);
+	else if (currentMode === 'mixed' && (selectedMode === 'hosts' || selectedMode === 'targets' || selectedMode === 'anti-target'))
+		values[selectedMode] = selectorsForMode(settings, selectedMode);
+
+	return values;
+}
+
 function modeSummary(mode) {
 	switch (mode) {
 	case 'hosts':
@@ -454,6 +493,46 @@ return view.extend({
 		return routefluxUI.renderSummaryCard(label, value, options);
 	},
 
+	saveCurrentDraftText: function(mode) {
+		var textarea = document.querySelector('#routeflux-firewall-selectors');
+
+		if (!this.selectorDrafts || !textarea)
+			return;
+		if (mode !== 'hosts' && mode !== 'targets' && mode !== 'anti-target')
+			return;
+
+		this.selectorDrafts[mode] = textarea.value;
+	},
+
+	restoreDraftText: function(mode) {
+		var textarea = document.querySelector('#routeflux-firewall-selectors');
+
+		if (!textarea)
+			return;
+
+		if (mode === 'hosts' || mode === 'targets' || mode === 'anti-target')
+			textarea.value = (this.selectorDrafts && this.selectorDrafts[mode]) || '';
+		else
+			textarea.value = '';
+	},
+
+	draftCommands: function() {
+		var commands = [];
+		var modes = [ 'hosts', 'targets', 'anti-target' ];
+
+		if (!this.selectorDrafts)
+			return commands;
+
+		for (var i = 0; i < modes.length; i++) {
+			var mode = modes[i];
+			var selectors = parseList(this.selectorDrafts[mode]);
+
+			commands.push([ 'firewall', 'draft', mode ].concat(selectors));
+		}
+
+		return commands;
+	},
+
 	updateModeUI: function(mode) {
 		var row = document.querySelector('#routeflux-firewall-selectors-row');
 		var label = document.querySelector('#routeflux-firewall-selectors-label');
@@ -503,7 +582,12 @@ return view.extend({
 	},
 
 	handleModeChange: function(ev) {
-		this.updateModeUI(trim(ev.currentTarget.value));
+		var nextMode = trim(ev.currentTarget.value);
+
+		this.saveCurrentDraftText(this.currentFormMode);
+		this.currentFormMode = nextMode;
+		this.updateModeUI(nextMode);
+		this.restoreDraftText(nextMode);
 	},
 
 	handleSaveSettings: function(ev) {
@@ -517,6 +601,8 @@ return view.extend({
 		var port = parseInt(portRaw, 10);
 		var blockQUIC = !!(blockQUICElement && blockQUICElement.checked);
 		var commands = [];
+
+		this.saveCurrentDraftText(mode);
 
 		if (!/^\d+$/.test(portRaw) || isNaN(port) || port <= 0) {
 			ui.addNotification(null, notificationParagraph(_('Transparent port must be a positive integer.')));
@@ -535,12 +621,14 @@ return view.extend({
 				return Promise.resolve();
 			}
 
+			commands = commands.concat(this.draftCommands());
 			commands.push([ 'firewall', 'set', 'block-quic', blockQUIC ? 'true' : 'false' ]);
 			commands.push([ 'firewall', 'set', '--port', String(port), mode ].concat(selectors));
 
 			return this.runCommands(commands, _('Firewall settings saved.'));
 		}
 
+		commands = commands.concat(this.draftCommands());
 		commands.push([ 'firewall', 'set', 'block-quic', blockQUIC ? 'true' : 'false' ]);
 		commands.push([ 'firewall', 'set', 'port', String(port) ]);
 		commands.push([ 'firewall', 'disable' ]);
@@ -549,12 +637,16 @@ return view.extend({
 	},
 
 	handleDisable: function(ev) {
+		var commands = [];
+
 		if (!window.confirm(_('Disable transparent routing?')))
 			return Promise.resolve();
 
-		return this.runCommands([
-			[ 'firewall', 'disable' ]
-		], _('Firewall disabled.'));
+		this.saveCurrentDraftText(this.currentFormMode);
+		commands = commands.concat(this.draftCommands());
+		commands.push([ 'firewall', 'disable' ]);
+
+		return this.runCommands(commands, _('Firewall disabled.'));
 	},
 
 	render: function(data) {
@@ -570,7 +662,8 @@ return view.extend({
 		var activeNode = status.active_node || {};
 		var currentMode = firewallMode(firewall);
 		var selectedMode = formMode(firewall);
-		var selectorsText = selectorsForMode(firewall, selectedMode);
+		var selectorsDrafts = selectorsModeDrafts(firewall, currentMode, selectedMode);
+		var selectorsText = selectorsDrafts[selectedMode] || '';
 		var activeEntry = presentationForSubscription(activeSubscription, presentation);
 		var activeProvider = trim(activeSubscription.id) !== ''
 			? (activeEntry ? activeEntry.provider_title : providerTitle(activeSubscription))
@@ -592,6 +685,9 @@ return view.extend({
 
 		if (data[3] && data[3].__error__)
 			ui.addNotification(null, notificationParagraph(_('Firewall help error: %s').format(data[3].__error__)));
+
+		this.selectorDrafts = selectorsDrafts;
+		this.currentFormMode = selectedMode;
 
 		content.push(routefluxUI.renderSharedStyles());
 		content.push(E('style', { 'type': 'text/css' }, [
@@ -728,6 +824,7 @@ return view.extend({
 
 		window.setTimeout(L.bind(function() {
 			this.updateModeUI(selectedMode);
+			this.restoreDraftText(selectedMode);
 		}, this), 0);
 
 		return E(content);

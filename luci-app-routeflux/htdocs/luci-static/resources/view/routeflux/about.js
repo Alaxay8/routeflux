@@ -19,13 +19,8 @@ var whatsNewEntries = [
 	},
 	{
 		kind: _('Fix'),
-		title: _('Anti-target routing is more reliable'),
-		summary: _('Anti-target mode now handles more UDP traffic correctly and works more predictably for browser-facing service presets.')
-	},
-	{
-		kind: _('New'),
-		title: _('Anti-target mode is now available'),
-		summary: _('You can keep selected services and destinations direct while sending the rest of your LAN traffic through RouteFlux.')
+		title: _('Firewall mode drafts and target bundles'),
+		summary: _('LuCI now keeps separate saved selector sets for Targets, Hosts, and Anti-target modes, and custom target aliases can include other service aliases to build reusable bundles.')
 	}
 ];
 
