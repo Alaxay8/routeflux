@@ -22,6 +22,17 @@ func writeResponse(w http.ResponseWriter, body string) {
 	_, _ = io.WriteString(w, body)
 }
 
+func assertSubscriptionTraffic(t *testing.T, sub domain.Subscription, upload, download, total int64) {
+	t.Helper()
+
+	if sub.Traffic == nil {
+		t.Fatal("expected subscription traffic metadata")
+	}
+	if sub.Traffic.UploadBytes != upload || sub.Traffic.DownloadBytes != download || sub.Traffic.TotalBytes != total {
+		t.Fatalf("unexpected traffic metadata: got %+v want upload=%d download=%d total=%d", sub.Traffic, upload, download, total)
+	}
+}
+
 func TestConfigureFirewallHostsClearsDestinationTargets(t *testing.T) {
 	t.Parallel()
 
@@ -622,6 +633,43 @@ func TestAddSubscriptionReadsExpirationFromSubscriptionUserinfo(t *testing.T) {
 	if sub.ExpiresAt == nil || !sub.ExpiresAt.Equal(expireAt) {
 		t.Fatalf("unexpected expiration date: got %v want %s", sub.ExpiresAt, expireAt)
 	}
+	assertSubscriptionTraffic(t, sub, 0, 11606312440, 322122547200)
+}
+
+func TestAddSubscriptionFallsBackToDDoSGuardCookieExpiry(t *testing.T) {
+	t.Parallel()
+
+	store := &memoryStore{
+		settings: domain.DefaultSettings(),
+		state:    domain.DefaultRuntimeState(),
+	}
+
+	expiresAt := time.Date(2027, time.April, 1, 19, 55, 3, 0, time.UTC)
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Server", "ddos-guard")
+		w.Header().Add("Set-Cookie", "__ddg8_=short; Expires=Wed, 01-Apr-2026 20:14:25 GMT; Path=/")
+		w.Header().Add("Set-Cookie", "__ddg1_=long; Expires=Thu, 01-Apr-2027 19:55:03 GMT; HttpOnly; Path=/")
+		w.Header().Set("Subscription-Userinfo", "upload=0; download=0; total=0; expire=0")
+		writeResponse(w, "vless://11111111-1111-1111-1111-111111111111@node1.example.com:443?encryption=none&security=reality&sni=edge.example.com&fp=chrome&pbk=public-key-1&sid=ab12cd34&type=ws&path=%2Fproxy&host=cdn.example.com#Edge%20Reality")
+	}))
+	t.Cleanup(server.Close)
+
+	service := NewService(Dependencies{
+		Store:      store,
+		HTTPClient: server.Client(),
+	})
+
+	sub, err := service.AddSubscription(context.Background(), AddSubscriptionRequest{
+		URL: server.URL,
+	})
+	if err != nil {
+		t.Fatalf("add subscription: %v", err)
+	}
+
+	if sub.ExpiresAt == nil || !sub.ExpiresAt.Equal(expiresAt) {
+		t.Fatalf("unexpected expiration date: got %v want %s", sub.ExpiresAt, expiresAt)
+	}
+	assertSubscriptionTraffic(t, sub, 0, 0, 0)
 }
 
 func TestAddSubscriptionFallsBackToCurlUserAgentForMetadata(t *testing.T) {
@@ -665,6 +713,7 @@ func TestAddSubscriptionFallsBackToCurlUserAgentForMetadata(t *testing.T) {
 	if sub.ExpiresAt == nil || !sub.ExpiresAt.Equal(expireAt) {
 		t.Fatalf("unexpected expiration date: got %v want %s", sub.ExpiresAt, expireAt)
 	}
+	assertSubscriptionTraffic(t, sub, 0, 11606312440, 322122547200)
 	if len(userAgents) != 2 {
 		t.Fatalf("expected two metadata fetch attempts, got %d", len(userAgents))
 	}
@@ -1338,6 +1387,84 @@ func TestRefreshSubscriptionUpdatesExpirationFromSubscriptionUserinfo(t *testing
 	if sub.ExpiresAt == nil || !sub.ExpiresAt.Equal(expireAt) {
 		t.Fatalf("unexpected expiration date: got %v want %s", sub.ExpiresAt, expireAt)
 	}
+	assertSubscriptionTraffic(t, sub, 0, 11606312440, 322122547200)
+}
+
+func TestRefreshSubscriptionFallsBackToDDoSGuardCookieExpiry(t *testing.T) {
+	t.Parallel()
+
+	expiresAt := time.Date(2027, time.April, 1, 19, 55, 3, 0, time.UTC)
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Server", "ddos-guard")
+		w.Header().Add("Set-Cookie", "__ddg8_=short; Expires=Wed, 01-Apr-2026 20:14:25 GMT; Path=/")
+		w.Header().Add("Set-Cookie", "__ddg1_=long; Expires=Thu, 01-Apr-2027 19:55:03 GMT; HttpOnly; Path=/")
+		w.Header().Set("Subscription-Userinfo", "upload=0; download=0; total=0; expire=0")
+		writeResponse(w, `[
+		  {
+		    "outbounds": [
+		      {
+		        "protocol": "vless",
+		        "tag": "proxy",
+		        "settings": {
+		          "vnext": [
+		            {
+		              "address": "one.example.com",
+		              "port": 443,
+		              "users": [
+		                {
+		                  "id": "11111111-1111-1111-1111-111111111111",
+		                  "encryption": "none",
+		                  "flow": "xtls-rprx-vision"
+		                }
+		              ]
+		            }
+		          ]
+		        },
+		        "streamSettings": {
+		          "network": "tcp",
+		          "security": "reality",
+		          "realitySettings": {
+		            "serverName": "gateway-one.example",
+		            "publicKey": "public-key-one",
+		            "shortId": "short-one",
+		            "fingerprint": "random"
+		          }
+		        }
+		      }
+		    ]
+		  }
+		]`)
+	}))
+	defer server.Close()
+
+	store := &memoryStore{
+		settings: domain.DefaultSettings(),
+		state:    domain.DefaultRuntimeState(),
+		subs: []domain.Subscription{
+			{
+				ID:           "sub-1",
+				SourceType:   domain.SourceTypeURL,
+				Source:       server.URL,
+				ProviderName: "Demo VPN",
+				DisplayName:  "Demo VPN",
+				Nodes: []domain.Node{
+					{ID: "old-node"},
+				},
+			},
+		},
+	}
+
+	service := NewService(Dependencies{Store: store, HTTPClient: server.Client()})
+
+	sub, err := service.RefreshSubscription(context.Background(), "sub-1")
+	if err != nil {
+		t.Fatalf("refresh subscription: %v", err)
+	}
+
+	if sub.ExpiresAt == nil || !sub.ExpiresAt.Equal(expiresAt) {
+		t.Fatalf("unexpected expiration date: got %v want %s", sub.ExpiresAt, expiresAt)
+	}
+	assertSubscriptionTraffic(t, sub, 0, 0, 0)
 }
 
 func TestRefreshSubscriptionFallsBackToCurlUserAgentForMetadata(t *testing.T) {
@@ -1415,6 +1542,7 @@ func TestRefreshSubscriptionFallsBackToCurlUserAgentForMetadata(t *testing.T) {
 	if sub.ExpiresAt == nil || !sub.ExpiresAt.Equal(expireAt) {
 		t.Fatalf("unexpected expiration date: got %v want %s", sub.ExpiresAt, expireAt)
 	}
+	assertSubscriptionTraffic(t, sub, 0, 11606312440, 322122547200)
 	if len(userAgents) != 2 {
 		t.Fatalf("expected two metadata fetch attempts, got %d", len(userAgents))
 	}

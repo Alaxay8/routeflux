@@ -28,18 +28,26 @@ const (
 
 // Subscription stores a provider payload and its normalized nodes.
 type Subscription struct {
-	ID                 string             `json:"id"`
-	SourceType         SourceType         `json:"source_type"`
-	Source             string             `json:"source"`
-	ProviderName       string             `json:"provider_name"`
-	ProviderNameSource ProviderNameSource `json:"provider_name_source,omitempty"`
-	DisplayName        string             `json:"display_name"`
-	LastUpdatedAt      time.Time          `json:"last_updated_at"`
-	ExpiresAt          *time.Time         `json:"expires_at,omitempty"`
-	RefreshInterval    Duration           `json:"refresh_interval"`
-	LastError          string             `json:"last_error"`
-	ParserStatus       string             `json:"parser_status"`
-	Nodes              []Node             `json:"nodes"`
+	ID                 string               `json:"id"`
+	SourceType         SourceType           `json:"source_type"`
+	Source             string               `json:"source"`
+	ProviderName       string               `json:"provider_name"`
+	ProviderNameSource ProviderNameSource   `json:"provider_name_source,omitempty"`
+	DisplayName        string               `json:"display_name"`
+	LastUpdatedAt      time.Time            `json:"last_updated_at"`
+	ExpiresAt          *time.Time           `json:"expires_at,omitempty"`
+	Traffic            *SubscriptionTraffic `json:"traffic,omitempty"`
+	RefreshInterval    Duration             `json:"refresh_interval"`
+	LastError          string               `json:"last_error"`
+	ParserStatus       string               `json:"parser_status"`
+	Nodes              []Node               `json:"nodes"`
+}
+
+// SubscriptionTraffic stores provider quota counters from subscription metadata.
+type SubscriptionTraffic struct {
+	UploadBytes   int64 `json:"upload_bytes"`
+	DownloadBytes int64 `json:"download_bytes"`
+	TotalBytes    int64 `json:"total_bytes"`
 }
 
 // NodeByID looks up a node inside the subscription.

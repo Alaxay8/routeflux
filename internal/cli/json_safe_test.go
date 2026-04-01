@@ -80,6 +80,15 @@ func TestListSubscriptionsJSONRedactsSecrets(t *testing.T) {
 	if payload[0].ExpiresAt != "2026-04-01T10:30:00Z" {
 		t.Fatalf("unexpected expiration date: %+v", payload[0])
 	}
+	if payload[0].Traffic == nil {
+		t.Fatalf("expected traffic summary, got %+v", payload[0])
+	}
+	if payload[0].Traffic.RemainingBytes != 150*1024*1024*1024 || payload[0].Traffic.TotalBytes != 200*1024*1024*1024 {
+		t.Fatalf("unexpected traffic summary: %+v", payload[0].Traffic)
+	}
+	if payload[0].Traffic.Unlimited {
+		t.Fatalf("expected limited traffic summary, got %+v", payload[0].Traffic)
+	}
 	if len(payload[0].Nodes) != 1 {
 		t.Fatalf("expected one safe node summary, got %+v", payload[0].Nodes)
 	}
@@ -174,9 +183,14 @@ func newSensitiveCLIService() *app.Service {
 					ProviderNameSource: domain.ProviderNameSourceManual,
 					LastUpdatedAt:      now,
 					ExpiresAt:          &expiresAt,
-					RefreshInterval:    domain.NewDuration(time.Hour),
-					LastError:          "last refresh failed",
-					ParserStatus:       "ok",
+					Traffic: &domain.SubscriptionTraffic{
+						UploadBytes:   10 * 1024 * 1024 * 1024,
+						DownloadBytes: 40 * 1024 * 1024 * 1024,
+						TotalBytes:    200 * 1024 * 1024 * 1024,
+					},
+					RefreshInterval: domain.NewDuration(time.Hour),
+					LastError:       "last refresh failed",
+					ParserStatus:    "ok",
 					Nodes: []domain.Node{
 						{
 							ID:             "node-1",

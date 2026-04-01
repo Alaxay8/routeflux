@@ -324,7 +324,7 @@ function formatMilliseconds(value) {
 
 function formatBytes(value) {
 	var parsed = Number(value);
-	var units = [ 'B', 'KB', 'MB', 'GB' ];
+	var units = [ 'B', 'KB', 'MB', 'GB', 'TB' ];
 	var unit = 0;
 
 	if (!isFinite(parsed) || parsed < 0)
@@ -336,6 +336,68 @@ function formatBytes(value) {
 	}
 
 	return parsed.toFixed(unit === 0 ? 0 : 2) + ' ' + units[unit];
+}
+
+function trafficPresentation(subscription) {
+	var traffic = subscription && subscription.traffic;
+	var total = Number(traffic && traffic.total_bytes);
+	var remaining = Number(traffic && traffic.remaining_bytes);
+	var used = Number(traffic && traffic.used_bytes);
+
+	if (!traffic)
+		return null;
+
+	if (traffic.unlimited === true || total === 0) {
+		return {
+			'unlimited': true,
+			'primary': _('Unlimited'),
+			'secondary': ''
+		};
+	}
+
+	if (!isFinite(total) || total <= 0)
+		return null;
+
+	if (!isFinite(remaining) || remaining < 0)
+		remaining = 0;
+
+	if (!isFinite(used) || used < 0)
+		used = Math.max(0, total - remaining);
+
+	return {
+		'unlimited': false,
+		'primary': formatBytes(remaining) + ' / ' + formatBytes(total),
+		'secondary': _('Used: %s').format(formatBytes(used)),
+		'percent': Math.max(0, Math.min(100, (remaining / total) * 100))
+	};
+}
+
+function renderTrafficSummary(subscription) {
+	var presentation = trafficPresentation(subscription);
+
+	if (!presentation)
+		return '-';
+
+	if (presentation.unlimited) {
+		return E('div', { 'class': 'routeflux-traffic-shell routeflux-traffic-shell-unlimited' }, [
+			E('div', { 'class': 'routeflux-traffic-copy' }, [
+				E('div', { 'class': 'routeflux-traffic-primary' }, [ presentation.primary ])
+			])
+		]);
+	}
+
+	return E('div', { 'class': 'routeflux-traffic-shell' }, [
+		E('div', { 'class': 'routeflux-traffic-copy' }, [
+			E('div', { 'class': 'routeflux-traffic-primary' }, [ presentation.primary ]),
+			E('div', { 'class': 'routeflux-traffic-secondary' }, [ presentation.secondary ])
+		]),
+		E('div', { 'class': 'routeflux-traffic-meter', 'title': presentation.primary }, [
+			E('div', {
+				'class': 'routeflux-traffic-meter-fill',
+				'style': 'width:' + presentation.percent.toFixed(2) + '%'
+			}, [])
+		])
+	]);
 }
 
 function badge(text, extraClass) {
@@ -1101,6 +1163,7 @@ return view.extend({
 			[ _('Profile'), displayName ],
 			[ _('Source Type'), firstNonEmpty([ subscription.source_type ], '-') ],
 			[ _('Updated'), routefluxUI.formatTimestamp(subscription.last_updated_at) || _('Never') ],
+			[ _('Remaining traffic'), renderTrafficSummary(subscription) ],
 			[ _('Expiration date'), routefluxUI.formatTimestamp(subscription.expires_at) || '-' ],
 			[ _('Status'), firstNonEmpty([ subscription.parser_status ], _('unknown')) ],
 			[ _('Nodes'), String(nodesCount) ]
@@ -1207,6 +1270,13 @@ return view.extend({
 			'.routeflux-meta-table { width:100%; table-layout:fixed; margin-bottom:0; }',
 			'.routeflux-meta-label { width:180px; color:var(--text-color-medium, #586677); font-weight:600; }',
 			'.routeflux-meta-value { overflow-wrap:anywhere; word-break:break-word; }',
+			'.routeflux-traffic-shell { display:grid; gap:8px; min-width:0; }',
+			'.routeflux-traffic-copy { display:flex; flex-wrap:wrap; gap:6px 10px; align-items:baseline; min-width:0; }',
+			'.routeflux-traffic-primary { color:var(--text-color-high, #17263a); font-weight:700; overflow-wrap:anywhere; word-break:break-word; }',
+			'.routeflux-traffic-secondary { color:var(--text-color-medium, #586677); font-size:12px; line-height:1.4; }',
+			'.routeflux-traffic-meter { position:relative; width:min(100%, 260px); max-width:100%; height:10px; border-radius:999px; background:linear-gradient(180deg, rgba(148, 163, 184, 0.3) 0%, rgba(148, 163, 184, 0.18) 100%); overflow:hidden; box-shadow:inset 0 1px 1px rgba(15, 23, 42, 0.14); }',
+			'.routeflux-traffic-meter-fill { height:100%; border-radius:inherit; background:linear-gradient(90deg, #22c55e 0%, #14b8a6 100%); }',
+			'.routeflux-traffic-shell-unlimited .routeflux-traffic-primary { color:#17603d; }',
 			'.routeflux-node-table-wrap { width:100%; max-width:100%; overflow-x:auto; -webkit-overflow-scrolling:touch; }',
 			'.routeflux-node-table { width:100%; min-width:920px; table-layout:fixed; }',
 			'.routeflux-node-col-name { width:18%; }',

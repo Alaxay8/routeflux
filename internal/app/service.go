@@ -103,6 +103,7 @@ type Dependencies struct {
 type subscriptionFetchMetadata struct {
 	ProviderName string
 	ExpiresAt    *time.Time
+	Traffic      *domain.SubscriptionTraffic
 }
 
 type subscriptionFetchResult struct {
@@ -204,6 +205,7 @@ func (s *Service) addSubscription(ctx context.Context, req AddSubscriptionReques
 		DisplayName:        providerName,
 		LastUpdatedAt:      now,
 		ExpiresAt:          metadata.ExpiresAt,
+		Traffic:            metadata.Traffic,
 		RefreshInterval:    settings.RefreshInterval,
 		ParserStatus:       "ok",
 		Nodes:              nodes,
@@ -507,6 +509,9 @@ func (s *Service) refreshSubscription(ctx context.Context, subscriptionID string
 	sub.ProviderNameSource = providerNameSource
 	if metadata.ExpiresAt != nil {
 		sub.ExpiresAt = metadata.ExpiresAt
+	}
+	if metadata.Traffic != nil {
+		sub.Traffic = metadata.Traffic
 	}
 	sub.LastError = ""
 	sub.ParserStatus = "ok"
@@ -1510,6 +1515,7 @@ func (s *Service) fetchSubscriptionOnceWithClient(ctx context.Context, rawURL st
 		Metadata: subscriptionFetchMetadata{
 			ProviderName: decodeProfileTitle(resp.Header.Get(subscriptionProfileTitleKey)),
 			ExpiresAt:    parseSubscriptionExpiry(resp.Header),
+			Traffic:      parseSubscriptionTraffic(resp.Header),
 		},
 	}, false, nil
 }
@@ -1535,11 +1541,12 @@ func (s *Service) fetchSubscriptionMetadata(ctx context.Context, rawURL, userAge
 	return subscriptionFetchMetadata{
 		ProviderName: decodeProfileTitle(resp.Header.Get(subscriptionProfileTitleKey)),
 		ExpiresAt:    parseSubscriptionExpiry(resp.Header),
+		Traffic:      parseSubscriptionTraffic(resp.Header),
 	}, nil
 }
 
 func needsSubscriptionMetadataFallback(metadata subscriptionFetchMetadata) bool {
-	return metadata.ExpiresAt == nil
+	return metadata.ExpiresAt == nil || metadata.Traffic == nil
 }
 
 func mergeSubscriptionMetadata(primary, fallback subscriptionFetchMetadata) subscriptionFetchMetadata {
@@ -1549,39 +1556,120 @@ func mergeSubscriptionMetadata(primary, fallback subscriptionFetchMetadata) subs
 	if primary.ExpiresAt == nil {
 		primary.ExpiresAt = fallback.ExpiresAt
 	}
+	if primary.Traffic == nil {
+		primary.Traffic = fallback.Traffic
+	}
 	return primary
 }
 
 func parseSubscriptionExpiry(headers http.Header) *time.Time {
+	if parsed := parseSubscriptionUserinfo(headers); parsed.ExpiresAt != nil {
+		return parsed.ExpiresAt
+	}
+
+	return parseDDoSGuardCookieExpiry(headers)
+}
+
+func parseSubscriptionTraffic(headers http.Header) *domain.SubscriptionTraffic {
+	return parseSubscriptionUserinfo(headers).Traffic
+}
+
+type parsedSubscriptionUserinfo struct {
+	ExpiresAt *time.Time
+	Traffic   *domain.SubscriptionTraffic
+}
+
+func parseSubscriptionUserinfo(headers http.Header) parsedSubscriptionUserinfo {
+	var result parsedSubscriptionUserinfo
+
 	for _, value := range []string{
 		headers.Get(subscriptionUserInfoKey),
 		headers.Get(subscriptionAltUserInfoKey),
 	} {
-		if parsed := parseSubscriptionUserinfoExpiry(value); parsed != nil {
-			return parsed
+		parsed := parseSubscriptionUserinfoValue(value)
+		if result.ExpiresAt == nil {
+			result.ExpiresAt = parsed.ExpiresAt
+		}
+		if result.Traffic == nil {
+			result.Traffic = parsed.Traffic
 		}
 	}
 
-	return nil
+	return result
 }
 
-func parseSubscriptionUserinfoExpiry(raw string) *time.Time {
+func parseSubscriptionUserinfoValue(raw string) parsedSubscriptionUserinfo {
+	var result parsedSubscriptionUserinfo
+	var traffic domain.SubscriptionTraffic
+	hasTraffic := false
+
 	for _, part := range strings.Split(raw, ";") {
 		key, value, ok := strings.Cut(strings.TrimSpace(part), "=")
-		if !ok || !strings.EqualFold(strings.TrimSpace(key), "expire") {
+		if !ok {
 			continue
 		}
 
-		seconds, err := strconv.ParseInt(strings.TrimSpace(value), 10, 64)
-		if err != nil || seconds <= 0 {
-			return nil
+		number, err := strconv.ParseInt(strings.TrimSpace(value), 10, 64)
+		if err != nil || number < 0 {
+			continue
 		}
 
-		expiresAt := time.Unix(seconds, 0).UTC()
-		return &expiresAt
+		switch strings.ToLower(strings.TrimSpace(key)) {
+		case "expire":
+			if number > 0 {
+				expiresAt := time.Unix(number, 0).UTC()
+				result.ExpiresAt = &expiresAt
+			}
+		case "upload":
+			traffic.UploadBytes = number
+			hasTraffic = true
+		case "download":
+			traffic.DownloadBytes = number
+			hasTraffic = true
+		case "total":
+			traffic.TotalBytes = number
+			hasTraffic = true
+		}
 	}
 
-	return nil
+	if hasTraffic {
+		result.Traffic = &traffic
+	}
+
+	return result
+}
+
+func parseDDoSGuardCookieExpiry(headers http.Header) *time.Time {
+	if !strings.Contains(strings.ToLower(headers.Get("Server")), "ddos-guard") {
+		return nil
+	}
+
+	var latest time.Time
+	found := false
+	for _, value := range headers.Values("Set-Cookie") {
+		cookie, err := http.ParseSetCookie(value)
+		if err != nil {
+			continue
+		}
+		if !strings.HasPrefix(strings.ToLower(strings.TrimSpace(cookie.Name)), "__ddg") {
+			continue
+		}
+		if cookie.Expires.IsZero() {
+			continue
+		}
+
+		expiresAt := cookie.Expires.UTC()
+		if !found || expiresAt.After(latest) {
+			latest = expiresAt
+			found = true
+		}
+	}
+
+	if !found {
+		return nil
+	}
+
+	return &latest
 }
 
 func isTransientSubscriptionStatus(code int) bool {

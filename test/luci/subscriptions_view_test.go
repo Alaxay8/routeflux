@@ -58,6 +58,24 @@ func TestSubscriptionsViewShowsExpirationDateAndRemoveAction(t *testing.T) {
 	}
 }
 
+func TestSubscriptionsViewShowsRemainingTrafficMeter(t *testing.T) {
+	t.Parallel()
+
+	source := readSubscriptionsViewSource(t)
+
+	for _, want := range []string{
+		"Remaining traffic",
+		"renderTrafficSummary",
+		"routeflux-traffic-meter",
+		"routeflux-traffic-meter-fill",
+		"Unlimited",
+	} {
+		if !strings.Contains(source, want) {
+			t.Fatalf("subscriptions view missing traffic marker %q", want)
+		}
+	}
+}
+
 func TestSubscriptionsViewKeepsRemoveActionVisibleWhenButtonsWrap(t *testing.T) {
 	t.Parallel()
 
