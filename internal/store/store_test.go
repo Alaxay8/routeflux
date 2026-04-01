@@ -18,7 +18,8 @@ func TestAtomicWriteJSON(t *testing.T) {
 	t.Parallel()
 
 	dir := t.TempDir()
-	path := filepath.Join(dir, "settings.json")
+	root := filepath.Join(dir, "routeflux")
+	path := filepath.Join(root, "settings.json")
 
 	settings := domain.DefaultSettings()
 	settings.LogLevel = "debug"
@@ -36,7 +37,7 @@ func TestAtomicWriteJSON(t *testing.T) {
 		t.Fatal("expected file content")
 	}
 
-	matches, err := filepath.Glob(filepath.Join(dir, "*.tmp-*"))
+	matches, err := filepath.Glob(filepath.Join(root, "*.tmp-*"))
 	if err != nil {
 		t.Fatalf("glob temp files: %v", err)
 	}
@@ -44,12 +45,16 @@ func TestAtomicWriteJSON(t *testing.T) {
 	if len(matches) != 0 {
 		t.Fatalf("unexpected temp files: %v", matches)
 	}
+
+	assertPerm(t, path, store.SecretFilePerm)
+	assertPerm(t, root, store.PrivateDirPerm)
 }
 
 func TestFileStoreRoundTrip(t *testing.T) {
 	t.Parallel()
 
-	fs := store.NewFileStore(t.TempDir())
+	root := t.TempDir()
+	fs := store.NewFileStore(root)
 
 	sub := domain.Subscription{
 		ID:              "sub-1",
@@ -111,6 +116,10 @@ func TestFileStoreRoundTrip(t *testing.T) {
 	if gotSettings.LogLevel != settings.LogLevel {
 		t.Fatalf("unexpected settings: %+v", gotSettings)
 	}
+
+	assertPerm(t, filepath.Join(root, "subscriptions.json"), store.SecretFilePerm)
+	assertPerm(t, filepath.Join(root, "settings.json"), store.SecretFilePerm)
+	assertPerm(t, filepath.Join(root, "state.json"), store.SecretFilePerm)
 }
 
 func TestFileStoreWithWriteLockSerializesAcrossProcesses(t *testing.T) {
@@ -169,6 +178,18 @@ func TestFileStoreWithWriteLockSerializesAcrossProcesses(t *testing.T) {
 
 	if err := cmd.Wait(); err != nil {
 		t.Fatalf("wait helper: %v", err)
+	}
+}
+
+func assertPerm(t *testing.T, path string, want os.FileMode) {
+	t.Helper()
+
+	info, err := os.Stat(path)
+	if err != nil {
+		t.Fatalf("stat %s: %v", path, err)
+	}
+	if got := info.Mode().Perm(); got != want {
+		t.Fatalf("unexpected mode for %s: got %o want %o", path, got, want)
 	}
 }
 

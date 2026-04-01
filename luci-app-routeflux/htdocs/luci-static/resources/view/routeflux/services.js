@@ -31,6 +31,8 @@ function notificationParagraph(message) {
 function serviceSelectors(service) {
 	var values = [];
 
+	if (Array.isArray(service.services))
+		values = values.concat(service.services);
 	if (Array.isArray(service.domains))
 		values = values.concat(service.domains);
 	if (Array.isArray(service.cidrs))
@@ -41,9 +43,12 @@ function serviceSelectors(service) {
 
 function serviceSummary(service) {
 	var lines = [];
+	var services = Array.isArray(service.services) ? service.services : [];
 	var domains = Array.isArray(service.domains) ? service.domains : [];
 	var cidrs = Array.isArray(service.cidrs) ? service.cidrs : [];
 
+	if (services.length > 0)
+		lines.push(_('Included services: %s').format(services.join(', ')));
 	lines.push(_('Domains: %s').format(domains.length > 0 ? domains.join(', ') : '-'));
 	lines.push(_('IPv4 targets: %s').format(cidrs.length > 0 ? cidrs.join(', ') : '-'));
 
@@ -141,7 +146,7 @@ return view.extend({
 		}
 
 		if (selectors.length === 0) {
-			ui.addNotification(null, notificationParagraph(_('Enter at least one domain, IPv4 address, CIDR, or IPv4 range.')));
+			ui.addNotification(null, notificationParagraph(_('Enter at least one service alias, domain, IPv4 address, CIDR, or IPv4 range.')));
 			return Promise.resolve();
 		}
 
@@ -247,7 +252,7 @@ return view.extend({
 
 		content.push(E('h2', {}, [ _('RouteFlux - Services') ]));
 		content.push(E('p', { 'class': 'cbi-section-descr' }, [
-			_('Create reusable aliases for firewall targets. Built-in presets stay readonly; custom aliases let you route any service by writing its domains and IPv4 selectors once.')
+			_('Create reusable aliases and bundles for firewall targets. Built-in presets stay readonly; custom entries let you save domains, IPv4 selectors, and existing service aliases once, then reuse them inside Firewall -> Targets.')
 		]));
 
 		content.push(E('div', { 'class': 'routeflux-overview-grid' }, [
@@ -279,11 +284,11 @@ return view.extend({
 						E('textarea', {
 							'id': 'routeflux-service-selectors',
 							'class': 'cbi-input-textarea',
-							'placeholder': _('Examples: openai.com chatgpt.com oaistatic.com 104.18.0.0/15')
+							'placeholder': _('Examples: youtube openai chatgpt.com oaistatic.com 104.18.0.0/15')
 						}, [])
 					]),
 					E('div', { 'class': 'cbi-value-description' }, [
-						_('Accepted selectors: domains, IPv4 addresses, CIDRs, and IPv4 ranges. Nested aliases, URLs, and wildcard domains are not supported.')
+						_('Accepted selectors: existing service aliases, domains, IPv4 addresses, CIDRs, and IPv4 ranges. Self-references, alias cycles, URLs, and wildcard domains are not supported.')
 					])
 				])
 			]),

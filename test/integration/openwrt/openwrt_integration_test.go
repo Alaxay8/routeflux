@@ -90,11 +90,22 @@ func TestOpenWrtEndToEnd(t *testing.T) {
 	if err := harness.AssertFirewallTableContains(ctx, "ip daddr @target_v4"); err != nil {
 		t.Fatalf("assert firewall table: %v", err)
 	}
+	if err := harness.EnableFirewallAntiTargets(ctx, "youtube.com"); err != nil {
+		t.Fatalf("enable firewall anti-targets: %v", err)
+	}
+	for _, needle := range []string{
+		"chain prerouting_mangle",
+		"tproxy ip to :12345",
+	} {
+		if err := harness.AssertFirewallTableContains(ctx, needle); err != nil {
+			t.Fatalf("assert anti-target firewall table: %v", err)
+		}
+	}
 
 	if err := harness.RebootAndWait(ctx); err != nil {
 		t.Fatalf("reboot and wait: %v", err)
 	}
-	if err := harness.AssertRouteFluxRestore(ctx); err != nil {
+	if err := harness.AssertRouteFluxRestore(ctx, "tproxy ip to :12345"); err != nil {
 		t.Fatalf("assert restore after reboot: %v", err)
 	}
 
@@ -390,6 +401,10 @@ func (h *openWRTHarness) EnableFirewallTargets(ctx context.Context, target strin
 	return h.sshCommand(ctx, fmt.Sprintf("%s firewall set targets %s", routefluxRemoteBinary, shellQuote(target)))
 }
 
+func (h *openWRTHarness) EnableFirewallAntiTargets(ctx context.Context, target string) error {
+	return h.sshCommand(ctx, fmt.Sprintf("%s firewall set anti-target %s", routefluxRemoteBinary, shellQuote(target)))
+}
+
 func (h *openWRTHarness) Disconnect(ctx context.Context) error {
 	if err := h.sshCommand(ctx, routefluxRemoteBinary+" disconnect"); err != nil {
 		return err
@@ -468,7 +483,7 @@ func (h *openWRTHarness) RebootAndWait(ctx context.Context) error {
 	return nil
 }
 
-func (h *openWRTHarness) AssertRouteFluxRestore(ctx context.Context) error {
+func (h *openWRTHarness) AssertRouteFluxRestore(ctx context.Context, firewallNeedle string) error {
 	pollCtx, cancel := context.WithTimeout(ctx, 2*time.Minute)
 	defer cancel()
 
@@ -495,7 +510,7 @@ func (h *openWRTHarness) AssertRouteFluxRestore(ctx context.Context) error {
 				snapshot.Status.State.Connected &&
 				snapshot.Runtime.Running &&
 				snapshot.Status.State.LastFailureReason == "" {
-				if err := h.AssertFirewallTableContains(pollCtx, "ip daddr @target_v4"); err == nil {
+				if err := h.AssertFirewallTableContains(pollCtx, firewallNeedle); err == nil {
 					return nil
 				}
 			}

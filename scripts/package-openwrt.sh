@@ -71,9 +71,30 @@ cat > "${CONTROL_DIR}/postinst" <<'EOF'
 #!/bin/sh
 set -eu
 
+harden_secret_storage() {
+	if [ -d /etc/routeflux ]; then
+		chmod 0700 /etc/routeflux >/dev/null 2>&1 || true
+		for path in \
+			/etc/routeflux/subscriptions.json \
+			/etc/routeflux/settings.json \
+			/etc/routeflux/state.json \
+			/etc/routeflux/.routeflux.lock \
+			/etc/routeflux/speedtest.lock
+		do
+			[ -e "${path}" ] && chmod 0600 "${path}" >/dev/null 2>&1 || true
+		done
+		find /etc/routeflux -maxdepth 1 -type f -name '*.corrupt-*' -exec chmod 0600 {} \; >/dev/null 2>&1 || true
+	fi
+
+	for path in /etc/xray/config.json /etc/xray/config.json.last-known-good; do
+		[ -e "${path}" ] && chmod 0600 "${path}" >/dev/null 2>&1 || true
+	done
+}
+
 if [ -z "${IPKG_INSTROOT:-}" ]; then
 	chmod 0755 /etc/init.d/routeflux >/dev/null 2>&1 || true
 	chmod 0755 /usr/libexec/routeflux-cron >/dev/null 2>&1 || true
+	harden_secret_storage
 	/usr/libexec/routeflux-cron ensure-xray-log-retention >/dev/null 2>&1 || true
 	rm -f /tmp/luci-indexcache
 	rm -rf /tmp/luci-modulecache

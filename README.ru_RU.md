@@ -2,7 +2,7 @@
 
 # RouteFlux
 
-RouteFlux — это нативный для OpenWrt менеджер Xray-подписок для роутеров и пограничных устройств.
+RouteFlux — это нативный для OpenWrt менеджер Xray-подписок для роутеров и перефирийных устройств.
 
 Он помогает импортировать прокси-подписки, выбирать подходящую ноду, применять правила маршрутизации трафика роутера и управлять DNS без ручного редактирования Xray JSON. Если RouteFlux экономит вам время, поставьте звезду репозиторию и поделитесь им с другими пользователями OpenWrt.
 
@@ -80,6 +80,7 @@ wget -O /tmp/routeflux-install.sh "https://github.com/Alaxay8/routeflux/releases
 
 - `mipsel_24kc`
 - `x86_64`
+- `aarch64_cortex-a53`
 
 Чтобы удалить RouteFlux и встроенный runtime Xray:
 
@@ -105,6 +106,7 @@ make build
 ```bash
 make build-openwrt
 make build-openwrt-x86_64
+make build-openwrt-aarch64_cortex-a53
 ```
 
 Создайте артефакты релиза:
@@ -117,8 +119,9 @@ make package-release
 
 ```bash
 VERSION="$(git describe --tags --always --dirty | sed 's/^v//')"
-scp -O "./dist/routeflux_${VERSION}_mipsel_24kc.tar.gz" root@router:/tmp/
-ssh root@router "tar -xzf /tmp/routeflux_${VERSION}_mipsel_24kc.tar.gz -C / && rm -f /tmp/luci-indexcache && rm -rf /tmp/luci-modulecache && /etc/init.d/rpcd reload && /etc/init.d/uhttpd reload"
+ARCH="${ARCH:-aarch64_cortex-a53}"
+scp -O "./dist/routeflux_${VERSION}_${ARCH}.tar.gz" root@router:/tmp/
+ssh root@router "tar -xzf /tmp/routeflux_${VERSION}_${ARCH}.tar.gz -C / && rm -f /tmp/luci-indexcache && rm -rf /tmp/luci-modulecache && /etc/init.d/rpcd reload && /etc/init.d/uhttpd reload"
 ```
 
 ## Использование
@@ -345,7 +348,31 @@ routeflux firewall set targets youtube instagram 1.1.1.1
 - Доменные targets зависят от DNS-ответов, которые видит роутер. Если клиенты используют собственный DoH или DoT напрямую, набор IP может остаться пустым.
 - На shared CDN RouteFlux теперь откатывает несоответствующий прозрачный трафик на `direct`, а не отправляет весь совпавший IP через выбранную ноду.
 
-- `hosts`: отправлять весь TCP-трафик выбранных LAN-устройств через RouteFlux
+- `anti-target`: держать выбранные сервисы, домены или IPv4-цели напрямую, а весь остальной LAN-трафик отправлять через RouteFlux
+Пример: банковские или государственные сайты остаются direct, а остальная LAN использует прокси.
+
+```bash
+routeflux firewall set anti-target gosuslugi.ru sberbank.ru
+```
+
+Селекторы anti-target:
+
+- service preset: `discord`, `facetime`, `gemini`, `gemini-mobile`, `instagram`, `netflix`, `notebooklm`, `notebooklm-mobile`, `telegram`, `telegram-web`, `twitter`, `whatsapp`, `youtube`
+- пользовательский alias сервиса: `openai`
+- домен: `gosuslugi.ru`
+- IPv4-адрес: `1.1.1.1`
+- подсеть: `8.8.8.0/24`
+- диапазон: `203.0.113.10-203.0.113.20`
+
+Замечания для anti-target:
+
+- Anti-target использует тот же парсинг селекторов и то же разворачивание alias, что и `targets`.
+- Anti-target пока остаётся best-effort и считается нестабильным режимом. Браузеры, мобильные приложения, shared CDN и QUIC-heavy сервисы всё ещё требуют ручной проверки перед постоянным использованием.
+- Доменные anti-target не требуют `dnsmasq` с поддержкой `nftset`, потому что Xray сопоставляет их по sniffing прозрачного трафика.
+- Anti-target рассчитан на LAN-клиентов. Трафик самого роутера он не перенаправляет.
+- `block-quic` теперь в основном legacy-флаг совместимости для старых TCP-only сценариев: текущая LAN-маршрутизация уже перехватывает QUIC напрямую.
+
+- `hosts`: отправлять весь трафик выбранных LAN-устройств через RouteFlux
 Пример: направить через прокси один телефон, телевизор или ноутбук.
 
 ```bash
@@ -369,7 +396,7 @@ routeflux firewall set hosts all
 
 Другие параметры фаервола:
 
-- `block-quic`: блокирует UDP/443 в режиме `hosts`, или для LAN-клиентов в режиме `targets`, чтобы приложения не обходили прокси-маршрутизацию через QUIC
+- `block-quic`: legacy-флаг совместимости для старых TCP-only сценариев маршрутизации
 - `port`: меняет порт прозрачного редиректа
 
 ## Разработка

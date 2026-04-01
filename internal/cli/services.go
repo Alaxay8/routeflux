@@ -20,11 +20,16 @@ Services are reusable aliases for firewall targets.
 Built-in presets like youtube or telegram are readonly.
 Custom services let you define your own alias once and then reuse it in:
   routeflux firewall set targets <service-name>
+
+Custom services may also include existing built-in or custom service aliases,
+so you can build reusable bundles like:
+  routeflux services set daily youtube openai telegram
 `),
 		Example: strings.TrimSpace(`
 routeflux services list
 routeflux services get youtube
 routeflux services set openai openai.com chatgpt.com oaistatic.com
+routeflux services set daily youtube openai telegram
 routeflux services set telegram-work 91.108.0.0/16 149.154.0.0/16 web.telegram.org
 routeflux services delete openai
 routeflux firewall set targets openai youtube
@@ -134,17 +139,19 @@ func renderFirewallTargetServices(services []domain.FirewallTargetService) strin
 
 func renderFirewallTargetService(service domain.FirewallTargetService) string {
 	return fmt.Sprintf(
-		"name=%s\nsource=%s\nreadonly=%t\ndomains=%s\ncidrs=%s",
+		"name=%s\nsource=%s\nreadonly=%t\nservices=%s\ndomains=%s\ncidrs=%s",
 		service.Name,
 		service.Source,
 		service.ReadOnly,
+		strings.Join(service.Services, ", "),
 		strings.Join(service.Domains, ", "),
 		strings.Join(service.CIDRs, ", "),
 	)
 }
 
 func serviceSelectors(service domain.FirewallTargetService) []string {
-	values := make([]string, 0, len(service.Domains)+len(service.CIDRs))
+	values := make([]string, 0, len(service.Services)+len(service.Domains)+len(service.CIDRs))
+	values = append(values, service.Services...)
 	values = append(values, service.Domains...)
 	values = append(values, service.CIDRs...)
 	return values

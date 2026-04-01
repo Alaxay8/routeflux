@@ -7,10 +7,11 @@ import (
 	"strings"
 )
 
-// FirewallTargetDefinition stores domains and IPv4 selectors for a target service.
+// FirewallTargetDefinition stores reusable aliases, domains, and IPv4 selectors for a target service.
 type FirewallTargetDefinition struct {
-	Domains []string `json:"domains"`
-	CIDRs   []string `json:"cidrs"`
+	Services []string `json:"services"`
+	Domains  []string `json:"domains"`
+	CIDRs    []string `json:"cidrs"`
 }
 
 // FirewallTargetServiceSource identifies whether a target service is built in or user-defined.
@@ -26,6 +27,7 @@ type FirewallTargetService struct {
 	Name     string                      `json:"name"`
 	Source   FirewallTargetServiceSource `json:"source"`
 	ReadOnly bool                        `json:"readonly"`
+	Services []string                    `json:"services"`
 	Domains  []string                    `json:"domains"`
 	CIDRs    []string                    `json:"cidrs"`
 }
@@ -67,6 +69,9 @@ var firewallTargetServicePresets = map[string]FirewallTargetDefinition{
 			"instagram.com",
 			"cdninstagram.com",
 			"fbcdn.net",
+			"facebook.com",
+			"facebook.net",
+			"fbsbx.com",
 		},
 	},
 	"netflix": {
@@ -276,7 +281,7 @@ func ParseFirewallTargets(selectors []string, customCatalog map[string]FirewallT
 }
 
 // ParseFirewallTargetDefinition validates a user-defined target service entry.
-func ParseFirewallTargetDefinition(name string, selectors []string) (string, FirewallTargetDefinition, error) {
+func ParseFirewallTargetDefinition(name string, selectors []string, customCatalog map[string]FirewallTargetDefinition) (string, FirewallTargetDefinition, error) {
 	normalizedName, err := normalizeFirewallTargetAlias(name)
 	if err != nil {
 		return "", FirewallTargetDefinition{}, err
@@ -284,11 +289,14 @@ func ParseFirewallTargetDefinition(name string, selectors []string) (string, Fir
 	if isBuiltinFirewallTargetService(normalizedName) {
 		return "", FirewallTargetDefinition{}, fmt.Errorf("target service %q is readonly and reserved by a built-in preset", normalizedName)
 	}
+	registry := mergeFirewallTargetRegistry(customCatalog)
 
 	definition := FirewallTargetDefinition{
-		Domains: make([]string, 0, len(selectors)),
-		CIDRs:   make([]string, 0, len(selectors)),
+		Services: make([]string, 0, len(selectors)),
+		Domains:  make([]string, 0, len(selectors)),
+		CIDRs:    make([]string, 0, len(selectors)),
 	}
+	seenServices := make(map[string]struct{}, len(selectors))
 	seenDomains := make(map[string]struct{}, len(selectors))
 	seenCIDRs := make(map[string]struct{}, len(selectors))
 
@@ -309,6 +317,25 @@ func ParseFirewallTargetDefinition(name string, selectors []string) (string, Fir
 			continue
 		}
 
+		if normalized, ok := normalizeFirewallTargetService(selector, registry); ok {
+			if normalized == normalizedName {
+				return "", FirewallTargetDefinition{}, fmt.Errorf("target service %q cannot include itself (self-reference)", normalizedName)
+			}
+			if _, seen := seenServices[normalized]; seen {
+				continue
+			}
+			seenServices[normalized] = struct{}{}
+			definition.Services = append(definition.Services, normalized)
+			continue
+		}
+
+		if normalized, err := normalizeFirewallTargetAlias(selector); err == nil && !strings.Contains(selector, ".") {
+			if normalized == normalizedName {
+				return "", FirewallTargetDefinition{}, fmt.Errorf("target service %q cannot include itself (self-reference)", normalizedName)
+			}
+			return "", FirewallTargetDefinition{}, fmt.Errorf("unknown target service %q: create it first with routeflux services set %s <domain-or-ip...> or use a fully qualified domain", selector, normalized)
+		}
+
 		normalized, err := normalizeFirewallDomain(selector)
 		if err != nil {
 			return "", FirewallTargetDefinition{}, fmt.Errorf("parse target service %q selector %q: %w", normalizedName, selector, err)
@@ -320,8 +347,17 @@ func ParseFirewallTargetDefinition(name string, selectors []string) (string, Fir
 		definition.Domains = append(definition.Domains, normalized)
 	}
 
-	if len(definition.Domains) == 0 && len(definition.CIDRs) == 0 {
+	if len(definition.Services) == 0 && len(definition.Domains) == 0 && len(definition.CIDRs) == 0 {
 		return "", FirewallTargetDefinition{}, fmt.Errorf("target service %q requires at least one domain or IPv4 selector", normalizedName)
+	}
+
+	candidateCatalog := CloneFirewallTargetCatalog(customCatalog)
+	if candidateCatalog == nil {
+		candidateCatalog = make(map[string]FirewallTargetDefinition)
+	}
+	candidateCatalog[normalizedName] = definition
+	if err := validateFirewallTargetCatalog(candidateCatalog); err != nil {
+		return "", FirewallTargetDefinition{}, err
 	}
 
 	return normalizedName, definition, nil
@@ -347,6 +383,7 @@ func FirewallTargetServices(customCatalog map[string]FirewallTargetDefinition) [
 			Name:     name,
 			Source:   FirewallTargetServiceSourceBuiltin,
 			ReadOnly: true,
+			Services: append([]string(nil), definition.Services...),
 			Domains:  append([]string(nil), definition.Domains...),
 			CIDRs:    append([]string(nil), definition.CIDRs...),
 		})
@@ -366,6 +403,7 @@ func FirewallTargetServices(customCatalog map[string]FirewallTargetDefinition) [
 			Name:     name,
 			Source:   FirewallTargetServiceSourceCustom,
 			ReadOnly: false,
+			Services: append([]string(nil), definition.Services...),
 			Domains:  append([]string(nil), definition.Domains...),
 			CIDRs:    append([]string(nil), definition.CIDRs...),
 		})
@@ -386,6 +424,7 @@ func LookupFirewallTargetService(customCatalog map[string]FirewallTargetDefiniti
 			Name:     normalized,
 			Source:   FirewallTargetServiceSourceBuiltin,
 			ReadOnly: true,
+			Services: append([]string(nil), definition.Services...),
 			Domains:  append([]string(nil), definition.Domains...),
 			CIDRs:    append([]string(nil), definition.CIDRs...),
 		}, true
@@ -400,6 +439,7 @@ func LookupFirewallTargetService(customCatalog map[string]FirewallTargetDefiniti
 		Name:     normalized,
 		Source:   FirewallTargetServiceSourceCustom,
 		ReadOnly: false,
+		Services: append([]string(nil), definition.Services...),
 		Domains:  append([]string(nil), definition.Domains...),
 		CIDRs:    append([]string(nil), definition.CIDRs...),
 	}, true
@@ -412,7 +452,7 @@ func ExpandFirewallTargetDomains(customCatalog map[string]FirewallTargetDefiniti
 	seen := make(map[string]struct{}, len(services)+len(domains))
 
 	for _, service := range services {
-		appendFirewallServiceDomains(registry, &out, seen, service)
+		appendFirewallServiceDomains(registry, &out, seen, service, make(map[string]struct{}))
 	}
 
 	for _, domain := range domains {
@@ -422,7 +462,7 @@ func ExpandFirewallTargetDomains(customCatalog map[string]FirewallTargetDefiniti
 		}
 
 		if service, ok := firewallTargetDomainFamilies[domain]; ok {
-			appendFirewallServiceDomains(registry, &out, seen, service)
+			appendFirewallServiceDomains(registry, &out, seen, service, make(map[string]struct{}))
 			continue
 		}
 
@@ -443,7 +483,7 @@ func ExpandFirewallTargetCIDRs(customCatalog map[string]FirewallTargetDefinition
 	seen := make(map[string]struct{}, len(services)+len(cidrs))
 
 	for _, service := range services {
-		appendFirewallServiceCIDRs(registry, &out, seen, service)
+		appendFirewallServiceCIDRs(registry, &out, seen, service, make(map[string]struct{}))
 	}
 
 	for _, cidr := range cidrs {
@@ -474,16 +514,74 @@ func mergeFirewallTargetRegistry(customCatalog map[string]FirewallTargetDefiniti
 
 func cloneFirewallTargetDefinition(definition FirewallTargetDefinition) FirewallTargetDefinition {
 	return FirewallTargetDefinition{
-		Domains: append([]string(nil), definition.Domains...),
-		CIDRs:   append([]string(nil), definition.CIDRs...),
+		Services: append([]string(nil), definition.Services...),
+		Domains:  append([]string(nil), definition.Domains...),
+		CIDRs:    append([]string(nil), definition.CIDRs...),
 	}
 }
 
-func appendFirewallServiceDomains(registry map[string]FirewallTargetDefinition, out *[]string, seen map[string]struct{}, service string) {
+func validateFirewallTargetCatalog(customCatalog map[string]FirewallTargetDefinition) error {
+	visited := make(map[string]struct{}, len(customCatalog))
+	visiting := make(map[string]struct{}, len(customCatalog))
+
+	for name := range customCatalog {
+		if err := validateFirewallTargetDependencies(name, customCatalog, visiting, visited); err != nil {
+			return err
+		}
+	}
+
+	return nil
+}
+
+func validateFirewallTargetDependencies(name string, customCatalog map[string]FirewallTargetDefinition, visiting, visited map[string]struct{}) error {
+	if _, ok := visited[name]; ok {
+		return nil
+	}
+	if _, ok := visiting[name]; ok {
+		return fmt.Errorf("target service cycle detected involving %q", name)
+	}
+
+	definition, ok := customCatalog[name]
+	if !ok {
+		return fmt.Errorf("target service %q not found", name)
+	}
+
+	visiting[name] = struct{}{}
+	defer delete(visiting, name)
+
+	for _, dependency := range definition.Services {
+		if dependency == name {
+			return fmt.Errorf("target service %q cannot include itself (self-reference)", name)
+		}
+		if isBuiltinFirewallTargetService(dependency) {
+			continue
+		}
+		if _, ok := customCatalog[dependency]; !ok {
+			return fmt.Errorf("target service %q references unknown target service %q", name, dependency)
+		}
+		if err := validateFirewallTargetDependencies(dependency, customCatalog, visiting, visited); err != nil {
+			return err
+		}
+	}
+
+	visited[name] = struct{}{}
+	return nil
+}
+
+func appendFirewallServiceDomains(registry map[string]FirewallTargetDefinition, out *[]string, seen map[string]struct{}, service string, visiting map[string]struct{}) {
 	service = strings.TrimSpace(strings.ToLower(service))
 	definition, ok := registry[service]
 	if !ok {
 		return
+	}
+	if _, ok := visiting[service]; ok {
+		return
+	}
+	visiting[service] = struct{}{}
+	defer delete(visiting, service)
+
+	for _, included := range definition.Services {
+		appendFirewallServiceDomains(registry, out, seen, included, visiting)
 	}
 
 	for _, domain := range definition.Domains {
@@ -495,11 +593,20 @@ func appendFirewallServiceDomains(registry map[string]FirewallTargetDefinition, 
 	}
 }
 
-func appendFirewallServiceCIDRs(registry map[string]FirewallTargetDefinition, out *[]string, seen map[string]struct{}, service string) {
+func appendFirewallServiceCIDRs(registry map[string]FirewallTargetDefinition, out *[]string, seen map[string]struct{}, service string, visiting map[string]struct{}) {
 	service = strings.TrimSpace(strings.ToLower(service))
 	definition, ok := registry[service]
 	if !ok {
 		return
+	}
+	if _, ok := visiting[service]; ok {
+		return
+	}
+	visiting[service] = struct{}{}
+	defer delete(visiting, service)
+
+	for _, included := range definition.Services {
+		appendFirewallServiceCIDRs(registry, out, seen, included, visiting)
 	}
 
 	for _, cidr := range definition.CIDRs {

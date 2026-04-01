@@ -301,6 +301,10 @@ function hasItems(values) {
 	return Array.isArray(values) && values.length > 0;
 }
 
+function targetMode(settings) {
+	return trim(settings.target_mode) === 'bypass' ? 'bypass' : 'proxy';
+}
+
 function firewallMode(settings) {
 	var hasSources = hasItems(settings.source_cidrs);
 	var hasTargets = hasItems(settings.target_services) || hasItems(settings.target_cidrs) || hasItems(settings.target_domains);
@@ -312,7 +316,7 @@ function firewallMode(settings) {
 		return 'hosts';
 
 	if (hasTargets && !hasSources)
-		return 'targets';
+		return targetMode(settings) === 'bypass' ? 'anti-target' : 'targets';
 
 	return 'mixed';
 }
@@ -330,7 +334,7 @@ function selectorsForMode(settings, mode) {
 	if (mode === 'hosts' && hasItems(settings.source_cidrs))
 		return settings.source_cidrs.join('\n');
 
-	if (mode === 'targets') {
+	if (mode === 'targets' || mode === 'anti-target') {
 		var values = [];
 
 		if (hasItems(settings.target_services))
@@ -346,12 +350,53 @@ function selectorsForMode(settings, mode) {
 	return '';
 }
 
+function selectorsForDraft(draft, mode) {
+	if (!draft)
+		return '';
+
+	if (mode === 'hosts' && hasItems(draft.source_cidrs))
+		return draft.source_cidrs.join('\n');
+
+	if (mode === 'targets' || mode === 'anti-target') {
+		var values = [];
+
+		if (hasItems(draft.target_services))
+			values = values.concat(draft.target_services);
+		if (hasItems(draft.target_domains))
+			values = values.concat(draft.target_domains);
+		if (hasItems(draft.target_cidrs))
+			values = values.concat(draft.target_cidrs);
+
+		return values.join('\n');
+	}
+
+	return '';
+}
+
+function selectorsModeDrafts(settings, currentMode, selectedMode) {
+	var drafts = ((settings || {}).mode_drafts) || {};
+	var values = {
+		'hosts': selectorsForDraft(drafts.hosts || {}, 'hosts'),
+		'targets': selectorsForDraft(drafts.targets || {}, 'targets'),
+		'anti-target': selectorsForDraft(drafts.anti_target || {}, 'anti-target')
+	};
+
+	if (currentMode === 'hosts' || currentMode === 'targets' || currentMode === 'anti-target')
+		values[currentMode] = selectorsForMode(settings, currentMode);
+	else if (currentMode === 'mixed' && (selectedMode === 'hosts' || selectedMode === 'targets' || selectedMode === 'anti-target'))
+		values[selectedMode] = selectorsForMode(settings, selectedMode);
+
+	return values;
+}
+
 function modeSummary(mode) {
 	switch (mode) {
 	case 'hosts':
 		return _('Hosts');
 	case 'targets':
 		return _('Targets');
+	case 'anti-target':
+		return _('Anti-target');
 	case 'mixed':
 		return _('Mixed');
 	default:
@@ -448,6 +493,46 @@ return view.extend({
 		return routefluxUI.renderSummaryCard(label, value, options);
 	},
 
+	saveCurrentDraftText: function(mode) {
+		var textarea = document.querySelector('#routeflux-firewall-selectors');
+
+		if (!this.selectorDrafts || !textarea)
+			return;
+		if (mode !== 'hosts' && mode !== 'targets' && mode !== 'anti-target')
+			return;
+
+		this.selectorDrafts[mode] = textarea.value;
+	},
+
+	restoreDraftText: function(mode) {
+		var textarea = document.querySelector('#routeflux-firewall-selectors');
+
+		if (!textarea)
+			return;
+
+		if (mode === 'hosts' || mode === 'targets' || mode === 'anti-target')
+			textarea.value = (this.selectorDrafts && this.selectorDrafts[mode]) || '';
+		else
+			textarea.value = '';
+	},
+
+	draftCommands: function() {
+		var commands = [];
+		var modes = [ 'hosts', 'targets', 'anti-target' ];
+
+		if (!this.selectorDrafts)
+			return commands;
+
+		for (var i = 0; i < modes.length; i++) {
+			var mode = modes[i];
+			var selectors = parseList(this.selectorDrafts[mode]);
+
+			commands.push([ 'firewall', 'draft', mode ].concat(selectors));
+		}
+
+		return commands;
+	},
+
 	updateModeUI: function(mode) {
 		var row = document.querySelector('#routeflux-firewall-selectors-row');
 		var label = document.querySelector('#routeflux-firewall-selectors-label');
@@ -464,7 +549,7 @@ return view.extend({
 			textarea.disabled = false;
 			row.style.opacity = '1';
 			help.textContent = _('Route selected LAN clients through RouteFlux. Separate values with spaces, commas, or new lines.');
-			blockHelp.textContent = _('When enabled, RouteFlux drops UDP/443 in host mode so applications cannot bypass TCP routing through QUIC.');
+			blockHelp.textContent = _('Legacy compatibility flag for older TCP-only setups. Current LAN transparent routing already intercepts QUIC directly.');
 			return;
 		}
 
@@ -474,7 +559,17 @@ return view.extend({
 			textarea.disabled = false;
 			row.style.opacity = '1';
 			help.textContent = _('Route only selected services, domains, or destination IPv4 targets through RouteFlux. Built-in presets: discord, facetime, gemini, gemini-mobile, instagram, netflix, notebooklm, notebooklm-mobile, telegram, telegram-web, twitter, whatsapp, youtube. Create any custom alias on the Services tab, then use it here like openai or work-chat. Popular root domains like youtube.com, instagram.com, netflix.com, x.com, gemini.google.com, and notebooklm.google.com still auto-expand to the domain families they need. Use gemini-mobile or notebooklm-mobile for the Android or iOS apps when the web preset is too narrow. The mobile presets are broader and may also catch shared Google infrastructure and direct IPv4 endpoints. Domains match subdomains and work best when clients use the router DNS.');
-			blockHelp.textContent = _('When enabled, RouteFlux drops LAN UDP/443 in targets mode so selected services cannot bypass domain matching through QUIC.');
+			blockHelp.textContent = _('Legacy compatibility flag for older TCP-only setups. Current LAN transparent routing already intercepts QUIC directly.');
+			return;
+		}
+
+		if (mode === 'anti-target') {
+			label.textContent = _('Anti-target');
+			textarea.placeholder = _('Examples: gosuslugi.ru sberbank.ru openai 1.1.1.1 203.0.113.10-203.0.113.20');
+			textarea.disabled = false;
+			row.style.opacity = '1';
+			help.textContent = _('Keep selected services, domains, or destination IPv4 targets direct, and send all other LAN traffic through RouteFlux. This mode works best for LAN clients and does not redirect router-originated traffic. Domains match subdomains and work from Xray sniffing, so dnsmasq nftset support is not required here.');
+			blockHelp.textContent = _('Legacy compatibility flag for older TCP-only setups. Current LAN transparent routing already intercepts QUIC directly.');
 			return;
 		}
 
@@ -487,7 +582,12 @@ return view.extend({
 	},
 
 	handleModeChange: function(ev) {
-		this.updateModeUI(trim(ev.currentTarget.value));
+		var nextMode = trim(ev.currentTarget.value);
+
+		this.saveCurrentDraftText(this.currentFormMode);
+		this.currentFormMode = nextMode;
+		this.updateModeUI(nextMode);
+		this.restoreDraftText(nextMode);
 	},
 
 	handleSaveSettings: function(ev) {
@@ -502,27 +602,33 @@ return view.extend({
 		var blockQUIC = !!(blockQUICElement && blockQUICElement.checked);
 		var commands = [];
 
+		this.saveCurrentDraftText(mode);
+
 		if (!/^\d+$/.test(portRaw) || isNaN(port) || port <= 0) {
 			ui.addNotification(null, notificationParagraph(_('Transparent port must be a positive integer.')));
 			return Promise.resolve();
 		}
 
-		if (mode === 'hosts' || mode === 'targets') {
+		if (mode === 'hosts' || mode === 'targets' || mode === 'anti-target') {
 			if (selectors.length === 0) {
 				ui.addNotification(null, notificationParagraph(
 					mode === 'hosts'
 						? _('Enter at least one LAN host, CIDR, range, or all.')
-						: _('Enter at least one service preset, domain, IPv4 address, CIDR, or range.')
+						: mode === 'anti-target'
+							? _('Enter at least one service preset, domain, IPv4 address, CIDR, or range that should bypass the proxy.')
+							: _('Enter at least one service preset, domain, IPv4 address, CIDR, or range.')
 				));
 				return Promise.resolve();
 			}
 
+			commands = commands.concat(this.draftCommands());
 			commands.push([ 'firewall', 'set', 'block-quic', blockQUIC ? 'true' : 'false' ]);
 			commands.push([ 'firewall', 'set', '--port', String(port), mode ].concat(selectors));
 
 			return this.runCommands(commands, _('Firewall settings saved.'));
 		}
 
+		commands = commands.concat(this.draftCommands());
 		commands.push([ 'firewall', 'set', 'block-quic', blockQUIC ? 'true' : 'false' ]);
 		commands.push([ 'firewall', 'set', 'port', String(port) ]);
 		commands.push([ 'firewall', 'disable' ]);
@@ -531,12 +637,16 @@ return view.extend({
 	},
 
 	handleDisable: function(ev) {
+		var commands = [];
+
 		if (!window.confirm(_('Disable transparent routing?')))
 			return Promise.resolve();
 
-		return this.runCommands([
-			[ 'firewall', 'disable' ]
-		], _('Firewall disabled.'));
+		this.saveCurrentDraftText(this.currentFormMode);
+		commands = commands.concat(this.draftCommands());
+		commands.push([ 'firewall', 'disable' ]);
+
+		return this.runCommands(commands, _('Firewall disabled.'));
 	},
 
 	render: function(data) {
@@ -552,7 +662,8 @@ return view.extend({
 		var activeNode = status.active_node || {};
 		var currentMode = firewallMode(firewall);
 		var selectedMode = formMode(firewall);
-		var selectorsText = selectorsForMode(firewall, selectedMode);
+		var selectorsDrafts = selectorsModeDrafts(firewall, currentMode, selectedMode);
+		var selectorsText = selectorsDrafts[selectedMode] || '';
 		var activeEntry = presentationForSubscription(activeSubscription, presentation);
 		var activeProvider = trim(activeSubscription.id) !== ''
 			? (activeEntry ? activeEntry.provider_title : providerTitle(activeSubscription))
@@ -575,6 +686,9 @@ return view.extend({
 		if (data[3] && data[3].__error__)
 			ui.addNotification(null, notificationParagraph(_('Firewall help error: %s').format(data[3].__error__)));
 
+		this.selectorDrafts = selectorsDrafts;
+		this.currentFormMode = selectedMode;
+
 		content.push(routefluxUI.renderSharedStyles());
 		content.push(E('style', { 'type': 'text/css' }, [
 			'.routeflux-firewall-grid { display:grid; grid-template-columns:repeat(auto-fit, minmax(260px, 1fr)); gap:12px; margin-bottom:12px; }',
@@ -585,7 +699,7 @@ return view.extend({
 
 		content.push(E('h2', {}, [ _('RouteFlux - Firewall') ]));
 		content.push(E('p', { 'class': 'cbi-section-descr' }, [
-			_('Manage transparent routing for selected LAN hosts or service/domain/IPv4 targets without leaving LuCI. Use the Services tab to create custom target aliases for any service.')
+			_('Manage transparent routing for selected LAN hosts, explicit proxy targets, or anti-target bypass lists without leaving LuCI. Use the Services tab to create custom target aliases for any service.')
 		]));
 
 		content.push(E('div', { 'class': 'routeflux-overview-grid' }, [
@@ -627,11 +741,12 @@ return view.extend({
 						}, [
 							E('option', { 'value': 'disabled', 'selected': selectedMode === 'disabled' ? 'selected' : null }, [ _('Disabled') ]),
 							E('option', { 'value': 'hosts', 'selected': selectedMode === 'hosts' ? 'selected' : null }, [ _('Hosts') ]),
-							E('option', { 'value': 'targets', 'selected': selectedMode === 'targets' ? 'selected' : null }, [ _('Targets') ])
+							E('option', { 'value': 'targets', 'selected': selectedMode === 'targets' ? 'selected' : null }, [ _('Targets') ]),
+							E('option', { 'value': 'anti-target', 'selected': selectedMode === 'anti-target' ? 'selected' : null }, [ _('Anti-target') ])
 						])
 					]),
 					E('div', { 'class': 'cbi-value-description' }, [
-						_('Hosts routes all TCP traffic from selected LAN clients. Targets routes only selected services, domains, or destination IPv4 targets.')
+						_('Hosts routes all traffic from selected LAN clients. Targets proxies only selected resources. Anti-target keeps selected resources direct and proxies everything else from LAN clients.')
 					])
 				]),
 				E('div', { 'class': 'cbi-value' }, [
@@ -677,7 +792,7 @@ return view.extend({
 								'type': 'checkbox',
 								'checked': firewall.block_quic === true ? 'checked' : null
 							}),
-							_('Drop UDP/443 traffic to stop QUIC from bypassing transparent TCP routing.')
+							_('Keep a legacy QUIC-compatibility flag for older TCP-only routing setups.')
 						])
 					]),
 					E('div', { 'id': 'routeflux-firewall-block-quic-help', 'class': 'cbi-value-description' }, [
@@ -709,6 +824,7 @@ return view.extend({
 
 		window.setTimeout(L.bind(function() {
 			this.updateModeUI(selectedMode);
+			this.restoreDraftText(selectedMode);
 		}, this), 0);
 
 		return E(content);

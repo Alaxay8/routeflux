@@ -2,6 +2,7 @@ package cli
 
 import (
 	"bytes"
+	"reflect"
 	"strings"
 	"testing"
 
@@ -130,7 +131,7 @@ func TestFirewallGetShowsCurrentValuesAndMeaning(t *testing.T) {
 	wants := []string{
 		"enabled=true",
 		"mode=hosts",
-		"mode-help=All TCP traffic from selected LAN devices goes through RouteFlux.",
+		"mode-help=All traffic from selected LAN devices goes through RouteFlux.",
 		"hosts=192.168.1.150",
 		"block-quic=true",
 	}
@@ -161,10 +162,12 @@ func TestFirewallExplainOutputsFriendlyGuide(t *testing.T) {
 	wants := []string{
 		"disabled: Do not redirect router traffic through RouteFlux.",
 		"targets: Send traffic through RouteFlux only when the destination matches selected services, domains, or IPv4 targets.",
+		"anti-target: Send all other LAN traffic through RouteFlux, but keep selected services, domains, or destination IPv4 targets direct.",
 		"Service presets: discord, facetime, gemini, gemini-mobile, instagram, netflix, notebooklm, notebooklm-mobile, telegram, telegram-web, twitter, whatsapp, youtube.",
 		"Popular root domains like youtube.com, instagram.com, netflix.com, x.com, gemini.google.com, and notebooklm.google.com still auto-expand to the domain families they need.",
 		"Gemini and NotebookLM mobile presets are broader and still best-effort because Google apps can use extra shared infrastructure and direct IPv4 endpoints.",
-		"hosts: Send all TCP traffic from selected LAN devices through RouteFlux.",
+		"hosts: Send all traffic from selected LAN devices through RouteFlux.",
+		"block-quic: legacy compatibility flag for older TCP-only setups; current LAN transparent routing already intercepts QUIC directly",
 		"all or *: all common private LAN ranges",
 		"routeflux firewall set hosts 192.168.1.150",
 	}
@@ -246,6 +249,92 @@ func TestFirewallSetTargetsSupportsServicesAndDomains(t *testing.T) {
 	}
 	if len(settings.TargetCIDRs) != 1 || settings.TargetCIDRs[0] != "1.1.1.1" {
 		t.Fatalf("unexpected target cidrs: %v", settings.TargetCIDRs)
+	}
+}
+
+func TestFirewallSetAntiTargetSupportsServicesAndDomains(t *testing.T) {
+	t.Parallel()
+
+	store := &cliMemoryStore{
+		settings: domain.DefaultSettings(),
+		state:    domain.DefaultRuntimeState(),
+	}
+	service := app.NewService(app.Dependencies{Store: store})
+
+	cmd := newFirewallCmd(&rootOptions{service: service})
+	var stdout bytes.Buffer
+	cmd.SetOut(&stdout)
+	cmd.SetErr(new(bytes.Buffer))
+	cmd.SetArgs([]string{"set", "anti-target", "YouTube", "YouTube.com", "1.1.1.1"})
+
+	if err := cmd.Execute(); err != nil {
+		t.Fatalf("execute firewall set anti-target: %v", err)
+	}
+
+	if got := stdout.String(); !strings.Contains(got, "Firewall anti-targets set to youtube, youtube.com, 1.1.1.1") {
+		t.Fatalf("unexpected output: %q", got)
+	}
+
+	settings, err := service.GetFirewallSettings()
+	if err != nil {
+		t.Fatalf("get firewall settings: %v", err)
+	}
+	if settings.TargetMode != domain.FirewallTargetModeBypass {
+		t.Fatalf("unexpected target mode: %q", settings.TargetMode)
+	}
+	if len(settings.TargetServices) != 1 || settings.TargetServices[0] != "youtube" {
+		t.Fatalf("unexpected target services: %v", settings.TargetServices)
+	}
+	if len(settings.TargetDomains) != 1 || settings.TargetDomains[0] != "youtube.com" {
+		t.Fatalf("unexpected target domains: %v", settings.TargetDomains)
+	}
+	if len(settings.TargetCIDRs) != 1 || settings.TargetCIDRs[0] != "1.1.1.1" {
+		t.Fatalf("unexpected target cidrs: %v", settings.TargetCIDRs)
+	}
+}
+
+func TestFirewallDraftCommandStoresAndClearsDrafts(t *testing.T) {
+	t.Parallel()
+
+	store := &cliMemoryStore{
+		settings: domain.DefaultSettings(),
+		state:    domain.DefaultRuntimeState(),
+	}
+	service := app.NewService(app.Dependencies{Store: store})
+
+	cmd := newFirewallCmd(&rootOptions{service: service})
+	cmd.SetOut(new(bytes.Buffer))
+	cmd.SetErr(new(bytes.Buffer))
+	cmd.SetArgs([]string{"draft", "targets", "youtube", "1.1.1.1"})
+	if err := cmd.Execute(); err != nil {
+		t.Fatalf("execute firewall draft targets: %v", err)
+	}
+
+	settings, err := service.GetFirewallSettings()
+	if err != nil {
+		t.Fatalf("get firewall settings: %v", err)
+	}
+	if want := []string{"youtube"}; !reflect.DeepEqual(settings.ModeDrafts.Targets.TargetServices, want) {
+		t.Fatalf("unexpected target draft services: %+v", settings.ModeDrafts.Targets.TargetServices)
+	}
+	if want := []string{"1.1.1.1"}; !reflect.DeepEqual(settings.ModeDrafts.Targets.TargetCIDRs, want) {
+		t.Fatalf("unexpected target draft cidrs: %+v", settings.ModeDrafts.Targets.TargetCIDRs)
+	}
+
+	clearCmd := newFirewallCmd(&rootOptions{service: service})
+	clearCmd.SetOut(new(bytes.Buffer))
+	clearCmd.SetErr(new(bytes.Buffer))
+	clearCmd.SetArgs([]string{"draft", "targets"})
+	if err := clearCmd.Execute(); err != nil {
+		t.Fatalf("execute firewall draft clear: %v", err)
+	}
+
+	settings, err = service.GetFirewallSettings()
+	if err != nil {
+		t.Fatalf("get firewall settings after clear: %v", err)
+	}
+	if !reflect.DeepEqual(settings.ModeDrafts.Targets, domain.FirewallModeDraft{}) {
+		t.Fatalf("expected cleared target draft, got %+v", settings.ModeDrafts.Targets)
 	}
 }
 

@@ -1,6 +1,6 @@
 module github.com/Alaxay8/routeflux
 
-go 1.26
+go 1.26.1
 
 require (
 	github.com/charmbracelet/bubbletea v1.3.4

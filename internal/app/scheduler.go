@@ -11,6 +11,8 @@ type Scheduler struct {
 	now     func() time.Time
 	tick    time.Duration
 	stopCh  chan struct{}
+
+	lastHealthLoopConfigErr string
 }
 
 // NewScheduler creates a scheduler instance.
@@ -139,9 +141,10 @@ func (s *Scheduler) healthLoopConfig() (time.Duration, bool) {
 
 	settings, err := s.service.store.LoadSettings()
 	if err != nil {
-		s.logWarn("load settings for auto health loop", "error", err.Error())
+		s.logHealthLoopConfigError(err)
 		return time.Minute, false
 	}
+	s.lastHealthLoopConfigErr = ""
 
 	interval := settings.HealthCheckInterval.Duration()
 	if interval > 0 {
@@ -181,4 +184,18 @@ func (s *Scheduler) logWarn(msg string, args ...any) {
 	if s.service != nil && s.service.logger != nil {
 		s.service.logger.Warn(msg, args...)
 	}
+}
+
+func (s *Scheduler) logHealthLoopConfigError(err error) {
+	if err == nil {
+		return
+	}
+
+	message := err.Error()
+	if s.lastHealthLoopConfigErr == message {
+		return
+	}
+
+	s.lastHealthLoopConfigErr = message
+	s.logWarn("load settings for auto health loop", "error", message)
 }

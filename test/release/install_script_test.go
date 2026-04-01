@@ -12,11 +12,15 @@ import (
 	"testing"
 )
 
+func supportedReleaseArches() []string {
+	return []string{"mipsel_24kc", "x86_64", "aarch64_cortex-a53"}
+}
+
 func TestInstallScriptInstallsMatchedOpenWrtTarball(t *testing.T) {
 	t.Parallel()
 
 	version := "1.2.3"
-	scriptPath := renderInstallScript(t, version, "mipsel_24kc", "x86_64")
+	scriptPath := renderInstallScript(t, version, supportedReleaseArches()...)
 
 	downloadDir := t.TempDir()
 	installRoot := t.TempDir()
@@ -76,15 +80,73 @@ func TestInstallScriptInstallsMatchedOpenWrtTarball(t *testing.T) {
 	}
 }
 
+func TestInstallScriptHardensExistingSecretFilePermissions(t *testing.T) {
+	t.Parallel()
+
+	version := "1.2.3"
+	scriptPath := renderInstallScript(t, version, supportedReleaseArches()...)
+
+	downloadDir := t.TempDir()
+	installRoot := t.TempDir()
+	serviceLogPath := filepath.Join(t.TempDir(), "services.log")
+
+	writeTestTarball(t, filepath.Join(downloadDir, "routeflux_"+version+"_mipsel_24kc.tar.gz"))
+	writeServiceStub(t, filepath.Join(installRoot, "etc", "init.d", "cron"))
+	writeServiceStub(t, filepath.Join(installRoot, "etc", "init.d", "rpcd"))
+	writeServiceStub(t, filepath.Join(installRoot, "etc", "init.d", "uhttpd"))
+	writeExecutable(t, filepath.Join(installRoot, "usr", "bin", "xray"), "#!/bin/sh\nexit 0\n")
+	writeExecutable(t, filepath.Join(installRoot, "etc", "init.d", "xray"), "#!/bin/sh\nexit 0\n")
+
+	routefluxRoot := filepath.Join(installRoot, "etc", "routeflux")
+	if err := os.MkdirAll(routefluxRoot, 0o755); err != nil {
+		t.Fatalf("create routeflux root: %v", err)
+	}
+	for _, path := range []string{
+		filepath.Join(routefluxRoot, "subscriptions.json"),
+		filepath.Join(routefluxRoot, "settings.json"),
+		filepath.Join(routefluxRoot, "state.json"),
+		filepath.Join(routefluxRoot, ".routeflux.lock"),
+		filepath.Join(routefluxRoot, "speedtest.lock"),
+		filepath.Join(routefluxRoot, "settings.corrupt-20260329T120000Z.json"),
+		filepath.Join(installRoot, "etc", "xray", "config.json"),
+		filepath.Join(installRoot, "etc", "xray", "config.json.last-known-good"),
+	} {
+		writeFile(t, path, "{}\n", 0o644)
+	}
+
+	binDir := t.TempDir()
+	writeExecutable(t, filepath.Join(binDir, "opkg"), "#!/bin/sh\nset -eu\n[ \"${1:-}\" = \"print-architecture\" ] || exit 1\nprintf 'arch all 1\\narch noarch 1\\narch mipsel_24kc 10\\n'\n")
+	writeExecutable(t, filepath.Join(binDir, "wget"), "#!/bin/sh\nset -eu\nout=''\nwhile [ \"$#\" -gt 0 ]; do\n\tcase \"$1\" in\n\t\t-O)\n\t\t\tout=\"$2\"\n\t\t\tshift 2\n\t\t\t;;\n\t\t*)\n\t\t\turl=\"$1\"\n\t\t\tshift\n\t\t\t;;\n\tesac\ndone\nmkdir -p \"$(dirname \"$out\")\"\ncp \"${ROUTEFLUX_TEST_DOWNLOAD_DIR:?}/${url##*/}\" \"$out\"\n")
+
+	stdout, stderr, err := runInstallScript(t, scriptPath, installRoot, binDir, downloadDir, serviceLogPath)
+	if err != nil {
+		t.Fatalf("run install script: %v\nstdout:\n%s\nstderr:\n%s", err, stdout, stderr)
+	}
+
+	assertMode(t, routefluxRoot, 0o700)
+	for _, path := range []string{
+		filepath.Join(routefluxRoot, "subscriptions.json"),
+		filepath.Join(routefluxRoot, "settings.json"),
+		filepath.Join(routefluxRoot, "state.json"),
+		filepath.Join(routefluxRoot, ".routeflux.lock"),
+		filepath.Join(routefluxRoot, "speedtest.lock"),
+		filepath.Join(routefluxRoot, "settings.corrupt-20260329T120000Z.json"),
+		filepath.Join(installRoot, "etc", "xray", "config.json"),
+		filepath.Join(installRoot, "etc", "xray", "config.json.last-known-good"),
+	} {
+		assertMode(t, path, 0o600)
+	}
+}
+
 func TestInstallScriptRejectsUnsupportedArchitecture(t *testing.T) {
 	t.Parallel()
 
 	version := "1.2.3"
-	scriptPath := renderInstallScript(t, version, "mipsel_24kc", "x86_64")
+	scriptPath := renderInstallScript(t, version, supportedReleaseArches()...)
 	installRoot := t.TempDir()
 	binDir := t.TempDir()
 
-	writeExecutable(t, filepath.Join(binDir, "opkg"), "#!/bin/sh\nset -eu\n[ \"${1:-}\" = \"print-architecture\" ] || exit 1\nprintf 'arch all 1\\narch noarch 1\\narch aarch64_cortex-a53 10\\n'\n")
+	writeExecutable(t, filepath.Join(binDir, "opkg"), "#!/bin/sh\nset -eu\n[ \"${1:-}\" = \"print-architecture\" ] || exit 1\nprintf 'arch all 1\\narch noarch 1\\narch aarch64_generic 10\\n'\n")
 
 	stdout, stderr, err := runInstallScript(t, scriptPath, installRoot, binDir, t.TempDir(), filepath.Join(t.TempDir(), "services.log"))
 	if err == nil {
@@ -95,8 +157,10 @@ func TestInstallScriptRejectsUnsupportedArchitecture(t *testing.T) {
 	if !strings.Contains(combined, "unsupported architecture") {
 		t.Fatalf("expected unsupported architecture error, got %q", combined)
 	}
-	if !strings.Contains(combined, "mipsel_24kc") || !strings.Contains(combined, "x86_64") {
-		t.Fatalf("expected supported arch list in output, got %q", combined)
+	for _, arch := range supportedReleaseArches() {
+		if !strings.Contains(combined, arch) {
+			t.Fatalf("expected supported arch list in output, got %q", combined)
+		}
 	}
 }
 
@@ -104,7 +168,7 @@ func TestInstallScriptInstallsBundledXrayWhenMissing(t *testing.T) {
 	t.Parallel()
 
 	version := "1.2.3"
-	scriptPath := renderInstallScript(t, version, "mipsel_24kc", "x86_64")
+	scriptPath := renderInstallScript(t, version, supportedReleaseArches()...)
 	downloadDir := t.TempDir()
 	installRoot := t.TempDir()
 	serviceLogPath := filepath.Join(t.TempDir(), "services.log")
@@ -141,7 +205,7 @@ func TestInstallScriptFallsBackToUnameForX8664(t *testing.T) {
 	t.Parallel()
 
 	version := "1.2.3"
-	scriptPath := renderInstallScript(t, version, "mipsel_24kc", "x86_64")
+	scriptPath := renderInstallScript(t, version, supportedReleaseArches()...)
 
 	downloadDir := t.TempDir()
 	installRoot := t.TempDir()
@@ -174,7 +238,7 @@ func TestInstallScriptFailsWhenBundledXrayAssetIsMissing(t *testing.T) {
 	t.Parallel()
 
 	version := "1.2.3"
-	scriptPath := renderInstallScript(t, version, "mipsel_24kc", "x86_64")
+	scriptPath := renderInstallScript(t, version, supportedReleaseArches()...)
 
 	downloadDir := t.TempDir()
 	installRoot := t.TempDir()
@@ -196,6 +260,77 @@ func TestInstallScriptFailsWhenBundledXrayAssetIsMissing(t *testing.T) {
 	}
 	if _, err := os.Stat(filepath.Join(installRoot, "usr", "bin", "routeflux")); !os.IsNotExist(err) {
 		t.Fatalf("expected routeflux binary to remain uninstalled, stat err=%v", err)
+	}
+}
+
+func TestInstallScriptInstallsMatchedAArch64OpenWrtTarball(t *testing.T) {
+	t.Parallel()
+
+	version := "1.2.3"
+	scriptPath := renderInstallScript(t, version, supportedReleaseArches()...)
+
+	downloadDir := t.TempDir()
+	installRoot := t.TempDir()
+	serviceLogPath := filepath.Join(t.TempDir(), "services.log")
+
+	writeTestTarball(t, filepath.Join(downloadDir, "routeflux_"+version+"_aarch64_cortex-a53.tar.gz"))
+	writeServiceStub(t, filepath.Join(installRoot, "etc", "init.d", "cron"))
+	writeServiceStub(t, filepath.Join(installRoot, "etc", "init.d", "rpcd"))
+	writeServiceStub(t, filepath.Join(installRoot, "etc", "init.d", "uhttpd"))
+	writeExecutable(t, filepath.Join(installRoot, "usr", "bin", "xray"), "#!/bin/sh\nexit 0\n")
+	writeExecutable(t, filepath.Join(installRoot, "etc", "init.d", "xray"), "#!/bin/sh\nexit 0\n")
+
+	binDir := t.TempDir()
+	writeExecutable(t, filepath.Join(binDir, "opkg"), "#!/bin/sh\nset -eu\n[ \"${1:-}\" = \"print-architecture\" ] || exit 1\nprintf 'arch all 1\\narch noarch 1\\narch aarch64_cortex-a53 10\\n'\n")
+	writeExecutable(t, filepath.Join(binDir, "wget"), "#!/bin/sh\nset -eu\nout=''\nwhile [ \"$#\" -gt 0 ]; do\n\tcase \"$1\" in\n\t\t-O)\n\t\t\tout=\"$2\"\n\t\t\tshift 2\n\t\t\t;;\n\t\t*)\n\t\t\turl=\"$1\"\n\t\t\tshift\n\t\t\t;;\n\tesac\ndone\nmkdir -p \"$(dirname \"$out\")\"\ncp \"${ROUTEFLUX_TEST_DOWNLOAD_DIR:?}/${url##*/}\" \"$out\"\n")
+
+	stdout, stderr, err := runInstallScript(t, scriptPath, installRoot, binDir, downloadDir, serviceLogPath)
+	if err != nil {
+		t.Fatalf("run install script: %v\nstdout:\n%s\nstderr:\n%s", err, stdout, stderr)
+	}
+
+	if _, err := os.Stat(filepath.Join(installRoot, "usr", "bin", "routeflux")); err != nil {
+		t.Fatalf("routeflux binary not installed: %v", err)
+	}
+	if !strings.Contains(stdout, "aarch64_cortex-a53") {
+		t.Fatalf("expected stdout to mention resolved arch, got %q", stdout)
+	}
+}
+
+func TestInstallScriptInstallsBundledXrayForAArch64WhenMissing(t *testing.T) {
+	t.Parallel()
+
+	version := "1.2.3"
+	scriptPath := renderInstallScript(t, version, supportedReleaseArches()...)
+	downloadDir := t.TempDir()
+	installRoot := t.TempDir()
+	serviceLogPath := filepath.Join(t.TempDir(), "services.log")
+
+	writeTestTarball(t, filepath.Join(downloadDir, "routeflux_"+version+"_aarch64_cortex-a53.tar.gz"))
+	writeXrayTarball(t, filepath.Join(downloadDir, "xray_"+version+"_aarch64_cortex-a53.tar.gz"))
+	writeServiceStub(t, filepath.Join(installRoot, "etc", "init.d", "rpcd"))
+	writeServiceStub(t, filepath.Join(installRoot, "etc", "init.d", "uhttpd"))
+
+	binDir := t.TempDir()
+	writeExecutable(t, filepath.Join(binDir, "opkg"), "#!/bin/sh\nset -eu\n[ \"${1:-}\" = \"print-architecture\" ] || exit 1\nprintf 'arch all 1\\narch noarch 1\\narch aarch64_cortex-a53 10\\n'\n")
+	writeExecutable(t, filepath.Join(binDir, "wget"), "#!/bin/sh\nset -eu\nout=''\nwhile [ \"$#\" -gt 0 ]; do\n\tcase \"$1\" in\n\t\t-O)\n\t\t\tout=\"$2\"\n\t\t\tshift 2\n\t\t\t;;\n\t\t*)\n\t\t\turl=\"$1\"\n\t\t\tshift\n\t\t\t;;\n\tesac\ndone\nmkdir -p \"$(dirname \"$out\")\"\ncp \"${ROUTEFLUX_TEST_DOWNLOAD_DIR:?}/${url##*/}\" \"$out\"\n")
+
+	stdout, stderr, err := runInstallScript(t, scriptPath, installRoot, binDir, downloadDir, serviceLogPath)
+	if err != nil {
+		t.Fatalf("run install script: %v\nstdout:\n%s\nstderr:\n%s", err, stdout, stderr)
+	}
+
+	if _, err := os.Stat(filepath.Join(installRoot, "usr", "bin", "routeflux")); err != nil {
+		t.Fatalf("expected routeflux binary to be installed: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(installRoot, "usr", "bin", "xray")); err != nil {
+		t.Fatalf("expected xray binary to be installed: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(installRoot, "etc", "init.d", "xray")); err != nil {
+		t.Fatalf("expected xray service to be installed: %v", err)
+	}
+	if !strings.Contains(stdout, "Bundled Xray installed") {
+		t.Fatalf("expected stdout to mention bundled xray install, got %q", stdout)
 	}
 }
 
@@ -317,6 +452,18 @@ func writeExecutable(t *testing.T, path, content string) {
 	}
 	if err := os.WriteFile(path, []byte(content), 0o755); err != nil {
 		t.Fatalf("write %s: %v", path, err)
+	}
+}
+
+func assertMode(t *testing.T, path string, want os.FileMode) {
+	t.Helper()
+
+	info, err := os.Stat(path)
+	if err != nil {
+		t.Fatalf("stat %s: %v", path, err)
+	}
+	if got := info.Mode().Perm(); got != want {
+		t.Fatalf("unexpected mode for %s: got %o want %o", path, got, want)
 	}
 }
 

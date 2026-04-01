@@ -17,6 +17,13 @@ import (
 
 const defaultFirewallRulesPath = "/tmp/routeflux-firewall.nft"
 
+const (
+	udpTProxyMark     = "0x1"
+	udpTProxyMarkMask = "0x1"
+	udpTProxyTable    = "100"
+	udpTProxyPriority = "1000"
+)
+
 var allLANSourceCIDRs = []string{
 	"10.0.0.0/8",
 	"172.16.0.0/12",
@@ -46,6 +53,7 @@ func FirewallRulesPath() string {
 // FirewallManager applies transient nftables rules for transparent proxy routing.
 type FirewallManager struct {
 	NFTPath            string
+	IPPath             string
 	RulesPath          string
 	DNSMasqPath        string
 	DNSMasqServicePath string
@@ -57,6 +65,7 @@ type FirewallManager struct {
 func NewFirewallManager() FirewallManager {
 	return FirewallManager{
 		NFTPath:            "/usr/sbin/nft",
+		IPPath:             "/sbin/ip",
 		RulesPath:          FirewallRulesPath(),
 		DNSMasqPath:        dnsmasqBinaryPath(),
 		DNSMasqServicePath: dnsmasqServicePath(),
@@ -67,6 +76,9 @@ func NewFirewallManager() FirewallManager {
 
 // Validate ensures the current platform supports the requested firewall mode.
 func (m FirewallManager) Validate(ctx context.Context, settings domain.FirewallSettings) error {
+	if domain.NormalizeFirewallTargetMode(settings.TargetMode) == domain.FirewallTargetModeBypass {
+		return nil
+	}
 	expandedDomains := domain.ExpandFirewallTargetDomains(settings.TargetServiceCatalog, settings.TargetServices, settings.TargetDomains)
 	if len(expandedDomains) == 0 {
 		return nil
@@ -94,12 +106,30 @@ func (m FirewallManager) Apply(ctx context.Context, settings domain.FirewallSett
 		return fmt.Errorf("write firewall rules: %w", err)
 	}
 
+	m.cleanupPolicyRouting(ctx)
 	_ = m.run(ctx, "delete", "table", "inet", "routeflux")
 	if err := m.run(ctx, "-f", m.RulesPath); err != nil {
 		return fmt.Errorf("apply nftables rules: %w", err)
 	}
+	if needsUDPPolicyRouting(settings) {
+		if err := m.setupPolicyRouting(ctx); err != nil {
+			_ = m.run(ctx, "delete", "table", "inet", "routeflux")
+			m.cleanupPolicyRouting(ctx)
+			return err
+		}
+	}
 
-	if err := m.syncDNSMasqTargets(ctx, settings.TargetServiceCatalog, settings.TargetServices, settings.TargetDomains); err != nil {
+	targetMode := domain.NormalizeFirewallTargetMode(settings.TargetMode)
+	catalog := settings.TargetServiceCatalog
+	services := settings.TargetServices
+	domains := settings.TargetDomains
+	if targetMode == domain.FirewallTargetModeBypass {
+		catalog = nil
+		services = nil
+		domains = nil
+	}
+
+	if err := m.syncDNSMasqTargets(ctx, catalog, services, domains); err != nil {
 		return fmt.Errorf("sync dnsmasq targets: %w", err)
 	}
 
@@ -108,6 +138,7 @@ func (m FirewallManager) Apply(ctx context.Context, settings domain.FirewallSett
 
 // Disable removes the transient RouteFlux nftables table.
 func (m FirewallManager) Disable(ctx context.Context) error {
+	m.cleanupPolicyRouting(ctx)
 	err := m.run(ctx, "delete", "table", "inet", "routeflux")
 	if err != nil && !strings.Contains(strings.ToLower(err.Error()), "no such file or directory") {
 		return err
@@ -132,6 +163,7 @@ func BuildNFTablesRules(settings domain.FirewallSettings) (string, error) {
 		return "", err
 	}
 	targetMode := len(targets) > 0 || len(targetDomains) > 0
+	targetBypassMode := domain.NormalizeFirewallTargetMode(settings.TargetMode) == domain.FirewallTargetModeBypass
 	if !targetMode && len(sources) == 0 {
 		return "", fmt.Errorf("at least one target service/domain/IP/CIDR or one source host is required")
 	}
@@ -151,7 +183,7 @@ func BuildNFTablesRules(settings domain.FirewallSettings) (string, error) {
 
 	var builder strings.Builder
 	builder.WriteString("table inet routeflux {\n")
-	if len(targets) > 0 || len(targetDomains) > 0 {
+	if targetMode && !targetBypassMode {
 		builder.WriteString("  set target_v4 {\n    type ipv4_addr\n    flags interval\n")
 		if len(targets) > 0 {
 			fmt.Fprintf(&builder, "    elements = { %s }\n", strings.Join(targets, ", "))
@@ -167,13 +199,17 @@ func BuildNFTablesRules(settings domain.FirewallSettings) (string, error) {
 	if len(redirectSources) > 0 {
 		builder.WriteString("    ip daddr @bypass_v4 return\n")
 		fmt.Fprintf(&builder, "    ip saddr @source_v4 tcp dport != %d redirect to :%d\n", port, port)
-		if settings.BlockQUIC {
-			builder.WriteString("    ip saddr @source_v4 udp dport 443 drop\n")
-		}
 	}
 	builder.WriteString("  }\n")
 
-	if targetMode {
+	if len(redirectSources) > 0 {
+		builder.WriteString("\n  chain prerouting_mangle {\n    type filter hook prerouting priority mangle; policy accept;\n")
+		builder.WriteString("    ip daddr @bypass_v4 return\n")
+		fmt.Fprintf(&builder, "    ip saddr @source_v4 udp dport 443 meta mark set %s tproxy ip to :%d accept\n", udpTProxyMark, port)
+		builder.WriteString("  }\n")
+	}
+
+	if targetMode && !targetBypassMode {
 		fmt.Fprintf(&builder, "\n  chain output {\n    type nat hook output priority -100; policy accept;\n    ip daddr @target_v4 tcp dport != %d redirect to :%d\n  }\n", port, port)
 	}
 
@@ -304,6 +340,46 @@ func (m FirewallManager) run(ctx context.Context, args ...string) error {
 		return fmt.Errorf("%s %s: %w: %s", m.NFTPath, strings.Join(args, " "), err, strings.TrimSpace(string(output)))
 	}
 	return nil
+}
+
+func (m FirewallManager) runIP(ctx context.Context, args ...string) error {
+	cmd := exec.CommandContext(ctx, m.IPPath, args...)
+	output, err := cmd.CombinedOutput()
+	if err != nil {
+		return fmt.Errorf("%s %s: %w: %s", m.IPPath, strings.Join(args, " "), err, strings.TrimSpace(string(output)))
+	}
+	return nil
+}
+
+func (m FirewallManager) setupPolicyRouting(ctx context.Context) error {
+	if err := m.runIP(ctx, "route", "add", "local", "0.0.0.0/0", "dev", "lo", "table", udpTProxyTable); err != nil {
+		return fmt.Errorf("configure udp tproxy route: %w", err)
+	}
+	if err := m.runIP(ctx, "rule", "add", "fwmark", udpTProxyMark+"/"+udpTProxyMarkMask, "table", udpTProxyTable, "priority", udpTProxyPriority); err != nil {
+		_ = m.runIP(ctx, "route", "del", "local", "0.0.0.0/0", "dev", "lo", "table", udpTProxyTable)
+		return fmt.Errorf("configure udp tproxy rule: %w", err)
+	}
+	return nil
+}
+
+func (m FirewallManager) cleanupPolicyRouting(ctx context.Context) {
+	_ = m.runIP(ctx, "rule", "del", "fwmark", udpTProxyMark+"/"+udpTProxyMarkMask, "table", udpTProxyTable, "priority", udpTProxyPriority)
+	_ = m.runIP(ctx, "route", "del", "local", "0.0.0.0/0", "dev", "lo", "table", udpTProxyTable)
+}
+
+func needsUDPPolicyRouting(settings domain.FirewallSettings) bool {
+	if !settings.Enabled {
+		return false
+	}
+
+	targetCIDRs := domain.ExpandFirewallTargetCIDRs(settings.TargetServiceCatalog, settings.TargetServices, settings.TargetCIDRs)
+	targetDomains := domain.ExpandFirewallTargetDomains(settings.TargetServiceCatalog, settings.TargetServices, settings.TargetDomains)
+	if len(targetCIDRs) > 0 || len(targetDomains) > 0 {
+		return true
+	}
+
+	sources, err := normalizeFirewallSources(settings.SourceCIDRs)
+	return err == nil && len(sources) > 0
 }
 
 func atomicWriteText(path, data string, perm os.FileMode) error {

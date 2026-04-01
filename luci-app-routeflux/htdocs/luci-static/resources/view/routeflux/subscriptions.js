@@ -304,15 +304,6 @@ function normalizeCommandError(value, fallback) {
 	return fallback || _('RouteFlux command failed.');
 }
 
-function stringifyJSON(value) {
-	try {
-		return JSON.stringify(value, null, 2);
-	}
-	catch (err) {
-		return String(value);
-	}
-}
-
 function formatMbps(value) {
 	var parsed = Number(value);
 
@@ -524,6 +515,45 @@ return view.extend({
 		});
 	},
 
+	copyTextToClipboard: function(text) {
+		var value = String(text || '');
+
+		if (value === '')
+			return Promise.reject(new Error(_('Nothing to export.')));
+
+		if (typeof navigator !== 'undefined' && navigator.clipboard && typeof navigator.clipboard.writeText === 'function')
+			return navigator.clipboard.writeText(value);
+
+		return new Promise(function(resolve, reject) {
+			var area;
+
+			if (!document || !document.body) {
+				reject(new Error(_('Clipboard export is unavailable.')));
+				return;
+			}
+
+			area = E('textarea', {
+				'style': 'position:fixed; left:-9999px; top:-9999px; opacity:0'
+			}, [ value ]);
+
+			document.body.appendChild(area);
+			area.focus();
+			area.select();
+
+			try {
+				if (!document.execCommand('copy'))
+					throw new Error(_('Clipboard export is unavailable.'));
+				resolve();
+			}
+			catch (err) {
+				reject(err);
+			}
+			finally {
+				document.body.removeChild(area);
+			}
+		});
+	},
+
 	withRPCTimeout: function(timeoutSeconds, executor) {
 		var nextTimeout = Number(timeoutSeconds);
 		var previousRaw;
@@ -542,48 +572,6 @@ return view.extend({
 			else
 				delete L.env.rpctimeout;
 		});
-	},
-
-	copyText: function(value) {
-		var text = String(value == null ? '' : value);
-
-		if (navigator.clipboard && navigator.clipboard.writeText)
-			return navigator.clipboard.writeText(text);
-
-		return new Promise(function(resolve, reject) {
-			var input = document.createElement('textarea');
-			input.value = text;
-			input.setAttribute('readonly', 'readonly');
-			input.style.position = 'fixed';
-			input.style.left = '-9999px';
-			document.body.appendChild(input);
-			input.focus();
-			input.select();
-
-			try {
-				document.execCommand('copy');
-				resolve();
-			}
-			catch (err) {
-				reject(err);
-			}
-			finally {
-				document.body.removeChild(input);
-			}
-		});
-	},
-
-	downloadJSON: function(filename, value) {
-		var blob = new Blob([ stringifyJSON(value) + '\n' ], { 'type': 'application/json;charset=utf-8' });
-		var href = URL.createObjectURL(blob);
-		var link = document.createElement('a');
-
-		link.href = href;
-		link.download = filename;
-		document.body.appendChild(link);
-		link.click();
-		document.body.removeChild(link);
-		setTimeout(function() { URL.revokeObjectURL(href); }, 0);
 	},
 
 	actionKey: function(scope, subscriptionId, nodeId) {
@@ -708,52 +696,6 @@ return view.extend({
 		});
 	},
 
-	showJSONModal: function(subscriptionId, node, payload) {
-		var nodeName = nodeDisplayName(node, node && node.id);
-		var content = stringifyJSON(payload);
-		var filename = 'routeflux-' + subscriptionId + '-' + trim(node && node.id) + '.json';
-
-		routefluxUI.showModal(
-			_('Generated Xray JSON: %s').format(nodeName),
-			[
-				E('p', { 'class': 'routeflux-modal-help' }, [
-					_('This preview shows the full RouteFlux-generated Xray config for the selected node with the current app settings.')
-				]),
-				E('pre', { 'class': 'routeflux-inspect-pre' }, [ content ])
-			],
-			{
-				'actions': [
-					E('button', {
-						'class': 'cbi-button cbi-button-action',
-						'click': ui.createHandlerFn(this, function() {
-							return this.copyText(content).then(function() {
-								ui.addNotification(null, notificationParagraph(_('JSON copied to clipboard.')), 'info');
-							}).catch(function(err) {
-								ui.addNotification(null, notificationParagraph(err.message || String(err)));
-							});
-						})
-					}, [ _('Copy') ]),
-					E('button', {
-						'class': 'cbi-button cbi-button-action',
-						'click': ui.createHandlerFn(this, function() {
-							this.downloadJSON(filename, payload);
-							ui.addNotification(null, notificationParagraph(_('JSON file downloaded.')), 'info');
-						})
-					}, [ _('Download .json') ]),
-					E('button', {
-						'class': 'cbi-button',
-						'click': function(ev) {
-							ui.hideModal();
-							return false;
-						}
-					}, [ _('Close') ])
-				],
-				'bodyClass': 'routeflux-modal-json',
-				'modalClass': 'routeflux-modal-json'
-			}
-		);
-	},
-
 	showSpeedTestModal: function(node, state) {
 		var nodeName = nodeDisplayName(node, node && node.id);
 		var body = [
@@ -802,6 +744,52 @@ return view.extend({
 		routefluxUI.showModal(_('Speed Test: %s').format(nodeName), body, {
 			'bodyClass': 'routeflux-modal-speedtest',
 			'modalClass': 'routeflux-modal-speedtest'
+		});
+	},
+
+	showInspectPreviewModal: function(node, state) {
+		var nodeName = nodeDisplayName(node, node && node.id);
+		var actions = [];
+		var previewText = '';
+		var body = [
+			E('p', { 'class': 'routeflux-modal-help' }, [
+				_('Sensitive values are redacted. DNS and DoH settings remain visible in this preview.')
+			])
+		];
+
+		if (state === 'loading') {
+			body.push(E('p', { 'class': 'routeflux-speedtest-status' }, [
+				_('Loading generated Xray JSON preview...')
+			]));
+		}
+		else if (state && state.error) {
+			body.push(E('div', { 'class': 'alert-message warning' }, [ state.error ]));
+		}
+		else if (state && state.preview) {
+			previewText = JSON.stringify(state.preview, null, 2);
+			body.push(E('pre', { 'class': 'routeflux-inspect-pre' }, [
+				previewText
+			]));
+			actions.push(E('button', {
+				'class': 'cbi-button cbi-button-action',
+				'click': L.bind(function(ev) {
+					return this.handleExportPreviewJSON(previewText, ev);
+				}, this)
+			}, [ _('Export JSON') ]));
+		}
+
+		actions.push(E('button', {
+			'class': 'cbi-button',
+			'click': function(ev) {
+				ui.hideModal();
+				return false;
+			}
+		}, [ _('Close') ]));
+
+		routefluxUI.showModal(_('Xray JSON Preview: %s').format(nodeName), body, {
+			'bodyClass': 'routeflux-modal-json',
+			'modalClass': 'routeflux-modal-json',
+			'actions': actions
 		});
 	},
 
@@ -938,30 +926,6 @@ return view.extend({
 		);
 	},
 
-	handleInspectJSON: function(subscriptionId, node, ev) {
-		return this.runAction(
-			this.nodeActionKey(subscriptionId, trim(node && node.id)),
-			_('Loading generated Xray JSON...'),
-			L.bind(function() {
-				return this.execJSON([
-					'--json', 'inspect', 'xray',
-					'--subscription', subscriptionId,
-					'--node', trim(node && node.id)
-				]).then(L.bind(function(payload) {
-					this.showJSONModal(subscriptionId, node, payload);
-					return payload;
-				}, this)).catch(L.bind(function(err) {
-					var message = err.message || String(err);
-
-					this.setPageError(message);
-					ui.addNotification(null, notificationParagraph(message));
-					this.renderIntoRoot();
-					return null;
-				}, this));
-			}, this)
-		);
-	},
-
 	handleSpeedTest: function(subscriptionId, node, ev) {
 		var nodeID = trim(node && node.id);
 		var message;
@@ -1007,6 +971,49 @@ return view.extend({
 		}, this));
 	},
 
+	handleInspectPreview: function(subscriptionId, node, ev) {
+		var nodeID = trim(node && node.id);
+
+		this.showInspectPreviewModal(node, 'loading');
+		this.renderIntoRoot();
+
+		return this.runAction(
+			this.nodeActionKey(subscriptionId, nodeID),
+			_('Loading generated Xray JSON preview...'),
+			L.bind(function() {
+				return this.execJSON([
+					'inspect', 'xray-safe',
+					'--subscription', subscriptionId,
+					'--node', nodeID
+				]).then(L.bind(function(preview) {
+					this.showInspectPreviewModal(node, { 'preview': preview });
+					return preview;
+				}, this)).catch(L.bind(function(err) {
+					var errorMessage = err.message || String(err);
+
+					this.showInspectPreviewModal(node, { 'error': errorMessage });
+					this.setPageError(errorMessage);
+					ui.addNotification(null, notificationParagraph(errorMessage));
+					this.renderIntoRoot();
+					return null;
+				}, this));
+			}, this)
+		);
+	},
+
+	handleExportPreviewJSON: function(previewText, ev) {
+		return this.copyTextToClipboard(previewText).then(L.bind(function() {
+			ui.addNotification(null, notificationParagraph(_('JSON copied to clipboard.')), 'info');
+		}, this)).catch(L.bind(function(err) {
+			var errorMessage = err && err.message ? err.message : String(err);
+
+			this.setPageError(errorMessage);
+			ui.addNotification(null, notificationParagraph(errorMessage));
+			this.renderIntoRoot();
+			return null;
+		}, this));
+	},
+
 	renderNodeTable: function(subscription, activeSubscriptionId, activeNodeId) {
 		var nodes = Array.isArray(subscription.nodes) ? subscription.nodes : [];
 		var speedTestBusy = this.speedTestBusy === true;
@@ -1043,7 +1050,7 @@ return view.extend({
 							}, [ _('Connect') ]),
 							E('button', {
 								'class': 'cbi-button cbi-button-action',
-								'click': ui.createHandlerFn(this, 'handleInspectJSON', subscription.id, node),
+								'click': ui.createHandlerFn(this, 'handleInspectPreview', subscription.id, node),
 								'disabled': nodeBusy ? 'disabled' : null
 							}, [ _('JSON') ]),
 							E('button', {
@@ -1094,6 +1101,7 @@ return view.extend({
 			[ _('Profile'), displayName ],
 			[ _('Source Type'), firstNonEmpty([ subscription.source_type ], '-') ],
 			[ _('Updated'), routefluxUI.formatTimestamp(subscription.last_updated_at) || _('Never') ],
+			[ _('Expiration date'), routefluxUI.formatTimestamp(subscription.expires_at) || '-' ],
 			[ _('Status'), firstNonEmpty([ subscription.parser_status ], _('unknown')) ],
 			[ _('Nodes'), String(nodesCount) ]
 		].map(function(item) {
@@ -1187,14 +1195,14 @@ return view.extend({
 		content.push(routefluxUI.renderSharedStyles());
 		content.push(E('style', { 'type': 'text/css' }, [
 			'.routeflux-subscriptions-shell { width:100%; max-width:100%; min-width:0; box-sizing:border-box; }',
-			'.routeflux-subscription-card { margin-bottom:16px; overflow:hidden; }',
+			'.routeflux-subscription-card { margin-bottom:16px; }',
 			'.routeflux-subscription-header { display:grid; grid-template-columns:minmax(0, 1fr) auto; gap:14px 18px; align-items:start; margin-bottom:12px; }',
 			'.routeflux-subscription-heading { min-width:0; }',
 			'.routeflux-subscription-title { font-size:clamp(17px, 1.1vw + 14px, 22px); font-weight:600; line-height:1.25; overflow-wrap:anywhere; word-break:break-word; }',
 			'.routeflux-subscription-provider { color:var(--text-color-medium, #666); margin-top:4px; overflow-wrap:anywhere; word-break:break-word; }',
 			'.routeflux-subscription-badges { display:flex; flex-wrap:wrap; gap:8px; margin-top:8px; }',
-			'.routeflux-subscription-controls { display:grid; gap:8px; justify-items:end; min-width:min(100%, 360px); }',
-			'.routeflux-subscription-actions { display:flex; flex-wrap:nowrap; justify-content:flex-end; gap:8px; align-items:flex-start; }',
+			'.routeflux-subscription-controls { display:grid; gap:8px; justify-items:end; min-width:0; max-width:100%; }',
+			'.routeflux-subscription-actions { display:flex; flex-wrap:wrap; justify-content:flex-end; gap:8px; align-items:flex-start; max-width:100%; }',
 			'.routeflux-subscription-actions .cbi-button, .routeflux-node-actions .cbi-button { white-space:nowrap; }',
 			'.routeflux-meta-table { width:100%; table-layout:fixed; margin-bottom:0; }',
 			'.routeflux-meta-label { width:180px; color:var(--text-color-medium, #586677); font-weight:600; }',

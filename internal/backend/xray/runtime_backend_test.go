@@ -11,6 +11,7 @@ import (
 
 	"github.com/Alaxay8/routeflux/internal/backend"
 	"github.com/Alaxay8/routeflux/internal/domain"
+	"github.com/Alaxay8/routeflux/internal/store"
 )
 
 func TestRuntimeBackendApplyConfigValidationFailureKeepsLiveConfig(t *testing.T) {
@@ -43,6 +44,12 @@ func TestRuntimeBackendApplyConfigValidationFailureKeepsLiveConfig(t *testing.T)
 	}
 	if got := tester.configPaths[0]; filepath.Ext(got) != ".json" {
 		t.Fatalf("expected candidate config to keep .json extension, got %q", got)
+	}
+	if len(tester.configModes) != 1 {
+		t.Fatalf("expected one candidate config mode, got %d", len(tester.configModes))
+	}
+	if got := tester.configModes[0]; got != store.SecretFilePerm {
+		t.Fatalf("unexpected candidate config mode: got %o want %o", got, store.SecretFilePerm)
 	}
 
 	got, err := os.ReadFile(livePath)
@@ -124,6 +131,8 @@ func TestRuntimeBackendApplyConfigReloadFailureRollsBack(t *testing.T) {
 	if !jsonEqual(t, backup, liveConfig) {
 		t.Fatalf("unexpected backup config\nwant:\n%s\ngot:\n%s", liveConfig, backup)
 	}
+	assertPerm(t, livePath, store.SecretFilePerm)
+	assertPerm(t, runtimeBackend.backupPath, store.SecretFilePerm)
 }
 
 func TestRuntimeBackendApplyConfigRollbackReloadFailureIncludesRollbackError(t *testing.T) {
@@ -160,6 +169,7 @@ func TestRuntimeBackendApplyConfigRollbackReloadFailureIncludesRollbackError(t *
 	if !jsonEqual(t, got, liveConfig) {
 		t.Fatalf("expected rollback to restore live config\nwant:\n%s\ngot:\n%s", liveConfig, got)
 	}
+	assertPerm(t, livePath, store.SecretFilePerm)
 }
 
 func TestRuntimeBackendApplyConfigSuccessUpdatesLastKnownGood(t *testing.T) {
@@ -190,6 +200,8 @@ func TestRuntimeBackendApplyConfigSuccessUpdatesLastKnownGood(t *testing.T) {
 	if string(backup) != string(liveConfig) {
 		t.Fatalf("expected backup to track last known good config\nwant:\n%s\ngot:\n%s", liveConfig, backup)
 	}
+	assertPerm(t, livePath, store.SecretFilePerm)
+	assertPerm(t, runtimeBackend.backupPath, store.SecretFilePerm)
 }
 
 func TestRuntimeBackendApplyConfigReloadFailureWithoutRollbackRemovesBrokenConfig(t *testing.T) {
@@ -241,11 +253,15 @@ func testConfigRequest() backend.ConfigRequest {
 
 type recordingConfigTester struct {
 	configPaths []string
+	configModes []os.FileMode
 	err         error
 }
 
 func (t *recordingConfigTester) Test(_ context.Context, configPath string) error {
 	t.configPaths = append(t.configPaths, configPath)
+	if info, err := os.Stat(configPath); err == nil {
+		t.configModes = append(t.configModes, info.Mode().Perm())
+	}
 	return t.err
 }
 
@@ -294,4 +310,16 @@ func jsonEqual(t *testing.T, got, want []byte) bool {
 	}
 
 	return string(gotNormalized) == string(wantNormalized)
+}
+
+func assertPerm(t *testing.T, path string, want os.FileMode) {
+	t.Helper()
+
+	info, err := os.Stat(path)
+	if err != nil {
+		t.Fatalf("stat %s: %v", path, err)
+	}
+	if got := info.Mode().Perm(); got != want {
+		t.Fatalf("unexpected mode for %s: got %o want %o", path, got, want)
+	}
 }

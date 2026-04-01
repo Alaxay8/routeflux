@@ -80,6 +80,7 @@ Current easy-install release assets are published for:
 
 - `mipsel_24kc`
 - `x86_64`
+- `aarch64_cortex-a53`
 
 To remove RouteFlux and the bundled Xray runtime:
 
@@ -105,6 +106,7 @@ Cross-build for OpenWrt:
 ```bash
 make build-openwrt
 make build-openwrt-x86_64
+make build-openwrt-aarch64_cortex-a53
 ```
 
 Create release artifacts:
@@ -117,8 +119,9 @@ For a manual router install, copy the generated tarball to the router and extrac
 
 ```bash
 VERSION="$(git describe --tags --always --dirty | sed 's/^v//')"
-scp -O "./dist/routeflux_${VERSION}_mipsel_24kc.tar.gz" root@router:/tmp/
-ssh root@router "tar -xzf /tmp/routeflux_${VERSION}_mipsel_24kc.tar.gz -C / && rm -f /tmp/luci-indexcache && rm -rf /tmp/luci-modulecache && /etc/init.d/rpcd reload && /etc/init.d/uhttpd reload"
+ARCH="${ARCH:-aarch64_cortex-a53}"
+scp -O "./dist/routeflux_${VERSION}_${ARCH}.tar.gz" root@router:/tmp/
+ssh root@router "tar -xzf /tmp/routeflux_${VERSION}_${ARCH}.tar.gz -C / && rm -f /tmp/luci-indexcache && rm -rf /tmp/luci-modulecache && /etc/init.d/rpcd reload && /etc/init.d/uhttpd reload"
 ```
 
 ## Usage
@@ -160,6 +163,7 @@ routeflux dns explain
 routeflux firewall get
 routeflux firewall set hosts 192.168.1.150
 routeflux firewall set targets youtube instagram 1.1.1.1
+routeflux firewall set anti-target gosuslugi.ru sberbank.ru
 routeflux services set openai openai.com chatgpt.com oaistatic.com
 routeflux services list
 routeflux firewall explain
@@ -216,6 +220,13 @@ Create a custom target alias once and reuse it in firewall targets:
 ```bash
 routeflux services set openai openai.com chatgpt.com oaistatic.com
 routeflux firewall set targets openai youtube
+```
+
+Keep selected banking or government sites direct and proxy the rest of the LAN traffic:
+
+```bash
+routeflux firewall set anti-target gosuslugi.ru sberbank.ru
+routeflux connect --subscription sub-1234567890 --node 90c42d5dd302
 ```
 
 ## Configuration
@@ -308,7 +319,7 @@ What does not happen when firewall is disabled:
 
 - RouteFlux does not add nftables redirect rules
 - router traffic is not sent through the proxy automatically
-- LAN devices do not use the selected node until you enable `hosts` or `targets`
+- LAN devices do not use the selected node until you enable `hosts`, `targets`, or `anti-target`
 - transparent proxy mode is not enabled for intercepted traffic
 
 In simple words: RouteFlux still manages subscriptions and the active Xray runtime, but it does not capture traffic from the router or your LAN by itself.
@@ -345,7 +356,31 @@ Notes for domain targets:
 - Domain targets depend on router-visible DNS answers. If clients use their own DoH or DoT directly, target IP sets may stay empty.
 - On shared CDNs, RouteFlux now falls back to direct routing for non-matching transparent traffic instead of sending every matched IP through the selected node.
 
-- `hosts`: send all TCP traffic from selected LAN devices through RouteFlux
+- `anti-target`: keep selected services, domains, or IPv4 targets direct and send all other LAN traffic through RouteFlux
+  Example: keep banking or government sites direct while the rest of the LAN uses the proxy.
+
+```bash
+routeflux firewall set anti-target gosuslugi.ru sberbank.ru
+```
+
+Anti-target selectors:
+
+- service preset: `discord`, `facetime`, `gemini`, `gemini-mobile`, `instagram`, `netflix`, `notebooklm`, `notebooklm-mobile`, `telegram`, `telegram-web`, `twitter`, `whatsapp`, `youtube`
+- custom service alias: `openai`
+- domain: `gosuslugi.ru`
+- IPv4 address: `1.1.1.1`
+- subnet: `8.8.8.0/24`
+- range: `203.0.113.10-203.0.113.20`
+
+Notes for anti-target:
+
+- Anti-target uses the same selector parsing and alias expansion as `targets`.
+- Anti-target is still best-effort and currently considered unstable. Some browsers, mobile apps, CDNs, and QUIC-heavy services may still require manual testing before you rely on it full time.
+- Domain anti-targets do not require `dnsmasq` nftset support because Xray matches them from transparent traffic sniffing.
+- Anti-target is designed for LAN clients. It does not redirect router-originated traffic.
+- `block-quic` is now a legacy compatibility flag for older TCP-only setups. Current LAN transparent routing intercepts QUIC directly.
+
+- `hosts`: send all traffic from selected LAN devices through RouteFlux
   Example: route one phone, TV, or laptop through the proxy.
 
 ```bash
@@ -369,7 +404,7 @@ routeflux firewall set hosts all
 
 Other firewall options:
 
-- `block-quic`: blocks UDP/443 in `hosts` mode, or from LAN clients in `targets` mode, so apps do not bypass proxy routing through QUIC
+- `block-quic`: legacy compatibility flag for older TCP-only routing setups
 - `port`: changes the transparent redirect port
 
 ## Development

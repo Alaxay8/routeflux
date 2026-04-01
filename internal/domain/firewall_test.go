@@ -89,6 +89,9 @@ func TestExpandFirewallTargetDomainsSupportsServiceFamilies(t *testing.T) {
 		"instagram.com",
 		"cdninstagram.com",
 		"fbcdn.net",
+		"facebook.com",
+		"facebook.net",
+		"fbsbx.com",
 		"example.com",
 		"youtube.com",
 		"youtu.be",
@@ -319,18 +322,18 @@ func TestParseFirewallTargetsRejectsUnknownBareAlias(t *testing.T) {
 	}
 }
 
-func TestParseFirewallTargetDefinitionRejectsReservedNamesAndAliases(t *testing.T) {
+func TestParseFirewallTargetDefinitionRejectsReservedNamesAndUnknownAliases(t *testing.T) {
 	t.Parallel()
 
-	if _, _, err := ParseFirewallTargetDefinition("youtube", []string{"example.com"}); err == nil {
+	if _, _, err := ParseFirewallTargetDefinition("youtube", []string{"example.com"}, nil); err == nil {
 		t.Fatal("expected builtin name to be reserved")
 	}
 
-	_, _, err := ParseFirewallTargetDefinition("openai", []string{"youtube"})
+	_, _, err := ParseFirewallTargetDefinition("openai", []string{"missing-alias"}, nil)
 	if err == nil {
 		t.Fatal("expected alias selector to fail")
 	}
-	if !strings.Contains(strings.ToLower(err.Error()), "domain") {
+	if !strings.Contains(strings.ToLower(err.Error()), "unknown target service") {
 		t.Fatalf("unexpected error: %v", err)
 	}
 }
@@ -342,7 +345,7 @@ func TestParseFirewallTargetDefinitionSupportsHyphenatedDomains(t *testing.T) {
 		"waa-pa.clients6.google.com",
 		"geminiweb-pa.clients6.google.com",
 		"www.google.com",
-	})
+	}, nil)
 	if err != nil {
 		t.Fatalf("parse target definition: %v", err)
 	}
@@ -357,6 +360,69 @@ func TestParseFirewallTargetDefinitionSupportsHyphenatedDomains(t *testing.T) {
 		"www.google.com",
 	}; !reflect.DeepEqual(definition.Domains, want) {
 		t.Fatalf("unexpected target domains:\nwant: %+v\n got: %+v", want, definition.Domains)
+	}
+}
+
+func TestParseFirewallTargetDefinitionSupportsCompositeServiceIncludes(t *testing.T) {
+	t.Parallel()
+
+	catalog := map[string]FirewallTargetDefinition{
+		"openai": {
+			Domains: []string{"openai.com", "chatgpt.com"},
+		},
+	}
+
+	name, definition, err := ParseFirewallTargetDefinition("daily", []string{
+		"youtube",
+		"openai",
+		"oaistatic.com",
+		"1.1.1.1",
+	}, catalog)
+	if err != nil {
+		t.Fatalf("parse target definition: %v", err)
+	}
+
+	if name != "daily" {
+		t.Fatalf("unexpected name: %q", name)
+	}
+	if want := []string{"youtube", "openai"}; !reflect.DeepEqual(definition.Services, want) {
+		t.Fatalf("unexpected included services:\nwant: %+v\n got: %+v", want, definition.Services)
+	}
+	if want := []string{"oaistatic.com"}; !reflect.DeepEqual(definition.Domains, want) {
+		t.Fatalf("unexpected target domains:\nwant: %+v\n got: %+v", want, definition.Domains)
+	}
+	if want := []string{"1.1.1.1"}; !reflect.DeepEqual(definition.CIDRs, want) {
+		t.Fatalf("unexpected target cidrs:\nwant: %+v\n got: %+v", want, definition.CIDRs)
+	}
+}
+
+func TestParseFirewallTargetDefinitionRejectsSelfReference(t *testing.T) {
+	t.Parallel()
+
+	_, _, err := ParseFirewallTargetDefinition("daily", []string{"daily"}, nil)
+	if err == nil {
+		t.Fatal("expected self-reference to fail")
+	}
+	if !strings.Contains(strings.ToLower(err.Error()), "self-reference") {
+		t.Fatalf("unexpected error: %v", err)
+	}
+}
+
+func TestParseFirewallTargetDefinitionRejectsCycles(t *testing.T) {
+	t.Parallel()
+
+	catalog := map[string]FirewallTargetDefinition{
+		"work": {
+			Services: []string{"daily"},
+		},
+	}
+
+	_, _, err := ParseFirewallTargetDefinition("daily", []string{"work"}, catalog)
+	if err == nil {
+		t.Fatal("expected cycle to fail")
+	}
+	if !strings.Contains(strings.ToLower(err.Error()), "cycle") {
+		t.Fatalf("unexpected error: %v", err)
 	}
 }
 
@@ -376,6 +442,44 @@ func TestExpandFirewallTargetsSupportCustomCatalog(t *testing.T) {
 	}
 
 	cidrs := ExpandFirewallTargetCIDRs(catalog, []string{"openai"}, []string{"1.1.1.1/32"})
+	if want := []string{"104.18.0.0/15", "1.1.1.1/32"}; !reflect.DeepEqual(cidrs, want) {
+		t.Fatalf("unexpected expanded cidrs:\nwant: %+v\n got: %+v", want, cidrs)
+	}
+}
+
+func TestExpandFirewallTargetsSupportCompositeCatalog(t *testing.T) {
+	t.Parallel()
+
+	catalog := map[string]FirewallTargetDefinition{
+		"openai": {
+			Domains: []string{"openai.com", "chatgpt.com"},
+			CIDRs:   []string{"104.18.0.0/15"},
+		},
+		"daily": {
+			Services: []string{"youtube", "openai", "youtube"},
+			Domains:  []string{"oaistatic.com", "youtube.com"},
+			CIDRs:    []string{"1.1.1.1/32"},
+		},
+	}
+
+	domains := ExpandFirewallTargetDomains(catalog, []string{"daily"}, []string{"chatgpt.com"})
+	if want := []string{
+		"youtube.com",
+		"youtu.be",
+		"youtube-nocookie.com",
+		"youtubei.googleapis.com",
+		"youtube.googleapis.com",
+		"googlevideo.com",
+		"ytimg.com",
+		"ggpht.com",
+		"openai.com",
+		"chatgpt.com",
+		"oaistatic.com",
+	}; !reflect.DeepEqual(domains, want) {
+		t.Fatalf("unexpected expanded domains:\nwant: %+v\n got: %+v", want, domains)
+	}
+
+	cidrs := ExpandFirewallTargetCIDRs(catalog, []string{"daily"}, []string{"104.18.0.0/15"})
 	if want := []string{"104.18.0.0/15", "1.1.1.1/32"}; !reflect.DeepEqual(cidrs, want) {
 		t.Fatalf("unexpected expanded cidrs:\nwant: %+v\n got: %+v", want, cidrs)
 	}

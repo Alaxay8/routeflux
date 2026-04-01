@@ -3,6 +3,7 @@ package app
 import (
 	"context"
 	"crypto/sha1"
+	"crypto/tls"
 	"encoding/base64"
 	"encoding/hex"
 	"encoding/json"
@@ -17,6 +18,7 @@ import (
 	"net/url"
 	"regexp"
 	"slices"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -70,19 +72,20 @@ type StatusSnapshot struct {
 
 // Service orchestrates subscription, health, and backend workflows.
 type Service struct {
-	store              Store
-	backend            backend.Backend
-	firewall           Firewaller
-	httpClient         *http.Client
-	checker            probe.Checker
-	speedTester        speedtest.Tester
-	logger             *slog.Logger
-	resolver           HostResolver
-	backendReadyChecks int
-	backendReadyDelay  time.Duration
-	now                func() time.Time
-	autoHealthStateMu  sync.Mutex
-	autoHealthState    *autoHealthStateCache
+	store                   Store
+	backend                 backend.Backend
+	firewall                Firewaller
+	httpClient              *http.Client
+	subscriptionTLS12Client *http.Client
+	checker                 probe.Checker
+	speedTester             speedtest.Tester
+	logger                  *slog.Logger
+	resolver                HostResolver
+	backendReadyChecks      int
+	backendReadyDelay       time.Duration
+	now                     func() time.Time
+	autoHealthStateMu       sync.Mutex
+	autoHealthState         *autoHealthStateCache
 }
 
 // Dependencies groups the service construction inputs.
@@ -99,6 +102,7 @@ type Dependencies struct {
 
 type subscriptionFetchMetadata struct {
 	ProviderName string
+	ExpiresAt    *time.Time
 }
 
 type subscriptionFetchResult struct {
@@ -107,12 +111,15 @@ type subscriptionFetchResult struct {
 }
 
 const (
-	subscriptionFetchMaxAttempts = 3
-	subscriptionFetchBaseBackoff = 250 * time.Millisecond
-	subscriptionFetchUserAgent   = "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/136.0.0.0 Safari/537.36"
-	subscriptionProfileTitleKey  = "Profile-Title"
-	backendReadyMaxChecks        = 8
-	backendReadyCheckDelay       = 250 * time.Millisecond
+	subscriptionFetchMaxAttempts          = 3
+	subscriptionFetchBaseBackoff          = 250 * time.Millisecond
+	subscriptionFetchUserAgent            = "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/136.0.0.0 Safari/537.36"
+	subscriptionMetadataFallbackUserAgent = "curl/8.7.1"
+	subscriptionProfileTitleKey           = "Profile-Title"
+	subscriptionUserInfoKey               = "Subscription-Userinfo"
+	subscriptionAltUserInfoKey            = "X-Subscription-Userinfo"
+	backendReadyMaxChecks                 = 8
+	backendReadyCheckDelay                = 250 * time.Millisecond
 )
 
 var subscriptionShareLinkPattern = regexp.MustCompile(`(?i)(vless|vmess|trojan|ss)://[^"'<>]+`)
@@ -138,17 +145,18 @@ func NewService(deps Dependencies) *Service {
 	}
 
 	return &Service{
-		store:              deps.Store,
-		backend:            deps.Backend,
-		firewall:           deps.Firewaller,
-		httpClient:         ensureSubscriptionHTTPClient(deps.HTTPClient),
-		checker:            checker,
-		speedTester:        deps.SpeedTester,
-		logger:             logger,
-		resolver:           resolver,
-		backendReadyChecks: backendReadyMaxChecks,
-		backendReadyDelay:  backendReadyCheckDelay,
-		now:                time.Now,
+		store:                   deps.Store,
+		backend:                 deps.Backend,
+		firewall:                deps.Firewaller,
+		httpClient:              ensureSubscriptionHTTPClient(deps.HTTPClient),
+		subscriptionTLS12Client: ensureSubscriptionTLS12HTTPClient(deps.HTTPClient),
+		checker:                 checker,
+		speedTester:             deps.SpeedTester,
+		logger:                  logger,
+		resolver:                resolver,
+		backendReadyChecks:      backendReadyMaxChecks,
+		backendReadyDelay:       backendReadyCheckDelay,
+		now:                     time.Now,
 	}
 }
 
@@ -195,6 +203,7 @@ func (s *Service) addSubscription(ctx context.Context, req AddSubscriptionReques
 		ProviderNameSource: providerNameSource,
 		DisplayName:        providerName,
 		LastUpdatedAt:      now,
+		ExpiresAt:          metadata.ExpiresAt,
 		RefreshInterval:    settings.RefreshInterval,
 		ParserStatus:       "ok",
 		Nodes:              nodes,
@@ -496,6 +505,9 @@ func (s *Service) refreshSubscription(ctx context.Context, subscriptionID string
 	sub.ProviderName = providerName
 	sub.DisplayName = displayName
 	sub.ProviderNameSource = providerNameSource
+	if metadata.ExpiresAt != nil {
+		sub.ExpiresAt = metadata.ExpiresAt
+	}
 	sub.LastError = ""
 	sub.ParserStatus = "ok"
 	sub.LastUpdatedAt = time.Now().UTC()
@@ -782,6 +794,92 @@ func (s *Service) GetFirewallSettings() (domain.FirewallSettings, error) {
 	return settings.Firewall, nil
 }
 
+// UpdateFirewallModeDraft stores selectors for one LuCI firewall mode without applying them.
+func (s *Service) UpdateFirewallModeDraft(ctx context.Context, mode string, selectors []string) (domain.FirewallSettings, error) {
+	return runStoreWriteLockedResult(s, func() (domain.FirewallSettings, error) {
+		return s.updateFirewallModeDraft(ctx, mode, selectors)
+	})
+}
+
+func (s *Service) updateFirewallModeDraft(ctx context.Context, mode string, selectors []string) (domain.FirewallSettings, error) {
+	_ = ctx
+
+	settings, err := s.store.LoadSettings()
+	if err != nil {
+		return domain.FirewallSettings{}, fmt.Errorf("load settings: %w", err)
+	}
+
+	mode = strings.TrimSpace(strings.ToLower(mode))
+	switch mode {
+	case "hosts":
+		settings.Firewall.ModeDrafts.Hosts = domain.FirewallModeDraft{
+			SourceCIDRs: normalizeFirewallSources(selectors),
+		}
+	case "targets":
+		parsed, err := domain.ParseFirewallTargets(selectors, settings.Firewall.TargetServiceCatalog)
+		if err != nil {
+			return domain.FirewallSettings{}, err
+		}
+		settings.Firewall.ModeDrafts.Targets = domain.FirewallModeDraft{
+			TargetServices: slices.Clone(parsed.Services),
+			TargetCIDRs:    slices.Clone(parsed.CIDRs),
+			TargetDomains:  slices.Clone(parsed.Domains),
+		}
+	case "anti-target":
+		parsed, err := domain.ParseFirewallTargets(selectors, settings.Firewall.TargetServiceCatalog)
+		if err != nil {
+			return domain.FirewallSettings{}, err
+		}
+		settings.Firewall.ModeDrafts.AntiTarget = domain.FirewallModeDraft{
+			TargetServices: slices.Clone(parsed.Services),
+			TargetCIDRs:    slices.Clone(parsed.CIDRs),
+			TargetDomains:  slices.Clone(parsed.Domains),
+		}
+	default:
+		return domain.FirewallSettings{}, fmt.Errorf("unsupported firewall draft mode %q", mode)
+	}
+
+	if err := s.store.SaveSettings(settings); err != nil {
+		return domain.FirewallSettings{}, fmt.Errorf("save settings: %w", err)
+	}
+
+	return settings.Firewall, nil
+}
+
+// ClearFirewallModeDraft removes saved selectors for one LuCI firewall mode.
+func (s *Service) ClearFirewallModeDraft(ctx context.Context, mode string) (domain.FirewallSettings, error) {
+	return runStoreWriteLockedResult(s, func() (domain.FirewallSettings, error) {
+		return s.clearFirewallModeDraft(ctx, mode)
+	})
+}
+
+func (s *Service) clearFirewallModeDraft(ctx context.Context, mode string) (domain.FirewallSettings, error) {
+	_ = ctx
+
+	settings, err := s.store.LoadSettings()
+	if err != nil {
+		return domain.FirewallSettings{}, fmt.Errorf("load settings: %w", err)
+	}
+
+	mode = strings.TrimSpace(strings.ToLower(mode))
+	switch mode {
+	case "hosts":
+		settings.Firewall.ModeDrafts.Hosts = domain.FirewallModeDraft{}
+	case "targets":
+		settings.Firewall.ModeDrafts.Targets = domain.FirewallModeDraft{}
+	case "anti-target":
+		settings.Firewall.ModeDrafts.AntiTarget = domain.FirewallModeDraft{}
+	default:
+		return domain.FirewallSettings{}, fmt.Errorf("unsupported firewall draft mode %q", mode)
+	}
+
+	if err := s.store.SaveSettings(settings); err != nil {
+		return domain.FirewallSettings{}, fmt.Errorf("save settings: %w", err)
+	}
+
+	return settings.Firewall, nil
+}
+
 // ListFirewallTargetServices returns built-in and custom target services.
 func (s *Service) ListFirewallTargetServices() ([]domain.FirewallTargetService, error) {
 	settings, err := s.store.LoadSettings()
@@ -820,7 +918,7 @@ func (s *Service) setFirewallTargetService(ctx context.Context, name string, sel
 		return domain.FirewallTargetService{}, fmt.Errorf("load settings: %w", err)
 	}
 
-	normalizedName, definition, err := domain.ParseFirewallTargetDefinition(name, selectors)
+	normalizedName, definition, err := domain.ParseFirewallTargetDefinition(name, selectors, settings.Firewall.TargetServiceCatalog)
 	if err != nil {
 		return domain.FirewallTargetService{}, err
 	}
@@ -870,8 +968,17 @@ func (s *Service) deleteFirewallTargetService(ctx context.Context, name string) 
 	if entry.ReadOnly {
 		return fmt.Errorf("target service %q is readonly and cannot be deleted", entry.Name)
 	}
-	if slices.Contains(settings.Firewall.TargetServices, entry.Name) {
+	if firewallTargetsReferenceService(settings.Firewall.TargetServices, settings.Firewall.TargetServiceCatalog, entry.Name) {
 		return fmt.Errorf("target service %q is still used by firewall targets; remove it from firewall targets first", entry.Name)
+	}
+	if firewallTargetsReferenceService(settings.Firewall.ModeDrafts.Targets.TargetServices, settings.Firewall.TargetServiceCatalog, entry.Name) {
+		return fmt.Errorf("target service %q is still referenced by the saved targets draft", entry.Name)
+	}
+	if firewallTargetsReferenceService(settings.Firewall.ModeDrafts.AntiTarget.TargetServices, settings.Firewall.TargetServiceCatalog, entry.Name) {
+		return fmt.Errorf("target service %q is still referenced by the saved anti-target draft", entry.Name)
+	}
+	if referrer, ok := findReferencingTargetService(settings.Firewall.TargetServiceCatalog, entry.Name); ok {
+		return fmt.Errorf("target service %q is still referenced by target service %q", entry.Name, referrer)
 	}
 
 	delete(settings.Firewall.TargetServiceCatalog, entry.Name)
@@ -895,14 +1002,77 @@ func (s *Service) deleteFirewallTargetService(ctx context.Context, name string) 
 	return nil
 }
 
+func firewallTargetsReferenceService(roots []string, catalog map[string]domain.FirewallTargetDefinition, target string) bool {
+	for _, root := range roots {
+		if targetServiceDependencyMatches(strings.TrimSpace(strings.ToLower(root)), target, catalog, make(map[string]struct{})) {
+			return true
+		}
+	}
+	return false
+}
+
+func findReferencingTargetService(catalog map[string]domain.FirewallTargetDefinition, target string) (string, bool) {
+	target = strings.TrimSpace(strings.ToLower(target))
+	for name := range catalog {
+		name = strings.TrimSpace(strings.ToLower(name))
+		if name == target {
+			continue
+		}
+		if targetServiceDependencyMatches(name, target, catalog, make(map[string]struct{})) {
+			return name, true
+		}
+	}
+	return "", false
+}
+
+func targetServiceDependencyMatches(root, target string, catalog map[string]domain.FirewallTargetDefinition, visiting map[string]struct{}) bool {
+	if root == target {
+		return true
+	}
+	if _, ok := visiting[root]; ok {
+		return false
+	}
+	definition, ok := catalog[root]
+	if !ok {
+		return false
+	}
+
+	visiting[root] = struct{}{}
+	defer delete(visiting, root)
+
+	for _, dependency := range definition.Services {
+		dependency = strings.TrimSpace(strings.ToLower(dependency))
+		if dependency == target {
+			return true
+		}
+		if targetServiceDependencyMatches(dependency, target, catalog, visiting) {
+			return true
+		}
+	}
+
+	return false
+}
+
 // ConfigureFirewall updates firewall targets and enabled state.
 func (s *Service) ConfigureFirewall(ctx context.Context, targets []string, enabled bool, port int) (domain.FirewallSettings, error) {
 	return runStoreWriteLockedResult(s, func() (domain.FirewallSettings, error) {
-		return s.configureFirewall(ctx, targets, enabled, port)
+		return s.configureFirewallTargets(ctx, targets, enabled, port, domain.FirewallTargetModeProxy)
 	})
 }
 
 func (s *Service) configureFirewall(ctx context.Context, targets []string, enabled bool, port int) (domain.FirewallSettings, error) {
+	return s.configureFirewallTargets(ctx, targets, enabled, port, domain.FirewallTargetModeProxy)
+}
+
+// ConfigureFirewallAntiTargets routes all other LAN traffic through the transparent proxy
+// while keeping selected targets direct.
+func (s *Service) ConfigureFirewallAntiTargets(ctx context.Context, targets []string, enabled bool, port int) (domain.FirewallSettings, error) {
+	return runStoreWriteLockedResult(s, func() (domain.FirewallSettings, error) {
+		return s.configureFirewallTargets(ctx, targets, enabled, port, domain.FirewallTargetModeBypass)
+	})
+}
+
+func (s *Service) configureFirewallTargets(ctx context.Context, targets []string, enabled bool, port int, targetMode domain.FirewallTargetMode) (domain.FirewallSettings, error) {
 	settings, err := s.store.LoadSettings()
 	if err != nil {
 		return domain.FirewallSettings{}, fmt.Errorf("load settings: %w", err)
@@ -914,10 +1084,24 @@ func (s *Service) configureFirewall(ctx context.Context, targets []string, enabl
 	}
 
 	settings.Firewall.Enabled = enabled
+	settings.Firewall.TargetMode = domain.NormalizeFirewallTargetMode(targetMode)
 	settings.Firewall.TargetServices = slices.Clone(parsedTargets.Services)
 	settings.Firewall.TargetCIDRs = slices.Clone(parsedTargets.CIDRs)
 	settings.Firewall.TargetDomains = slices.Clone(parsedTargets.Domains)
 	settings.Firewall.SourceCIDRs = nil
+	if targetMode == domain.FirewallTargetModeBypass {
+		settings.Firewall.ModeDrafts.AntiTarget = domain.FirewallModeDraft{
+			TargetServices: slices.Clone(parsedTargets.Services),
+			TargetCIDRs:    slices.Clone(parsedTargets.CIDRs),
+			TargetDomains:  slices.Clone(parsedTargets.Domains),
+		}
+	} else {
+		settings.Firewall.ModeDrafts.Targets = domain.FirewallModeDraft{
+			TargetServices: slices.Clone(parsedTargets.Services),
+			TargetCIDRs:    slices.Clone(parsedTargets.CIDRs),
+			TargetDomains:  slices.Clone(parsedTargets.Domains),
+		}
+	}
 	if port > 0 {
 		settings.Firewall.TransparentPort = port
 	}
@@ -937,7 +1121,7 @@ func (s *Service) configureFirewall(ctx context.Context, targets []string, enabl
 	return settings.Firewall, nil
 }
 
-// ConfigureFirewallHosts routes all TCP traffic from selected client IPs through the transparent proxy.
+// ConfigureFirewallHosts routes all traffic from selected client IPs through the transparent proxy.
 func (s *Service) ConfigureFirewallHosts(ctx context.Context, sources []string, enabled bool, port int) (domain.FirewallSettings, error) {
 	return runStoreWriteLockedResult(s, func() (domain.FirewallSettings, error) {
 		return s.configureFirewallHosts(ctx, sources, enabled, port)
@@ -951,10 +1135,14 @@ func (s *Service) configureFirewallHosts(ctx context.Context, sources []string, 
 	}
 
 	settings.Firewall.Enabled = enabled
+	settings.Firewall.TargetMode = domain.FirewallTargetModeProxy
 	settings.Firewall.SourceCIDRs = normalizeFirewallSources(sources)
 	settings.Firewall.TargetServices = nil
 	settings.Firewall.TargetCIDRs = nil
 	settings.Firewall.TargetDomains = nil
+	settings.Firewall.ModeDrafts.Hosts = domain.FirewallModeDraft{
+		SourceCIDRs: slices.Clone(settings.Firewall.SourceCIDRs),
+	}
 	if port > 0 {
 		settings.Firewall.TransparentPort = port
 	}
@@ -1048,6 +1236,7 @@ func (s *Service) disableFirewall(ctx context.Context) (domain.FirewallSettings,
 	}
 
 	settings.Firewall.Enabled = false
+	settings.Firewall.TargetMode = domain.FirewallTargetModeProxy
 	settings.Firewall.TargetServices = nil
 	settings.Firewall.TargetCIDRs = nil
 	settings.Firewall.TargetDomains = nil
@@ -1234,6 +1423,7 @@ func (s *Service) fetchSubscription(ctx context.Context, rawURL string) (subscri
 	for attempt := 1; attempt <= subscriptionFetchMaxAttempts; attempt++ {
 		result, retry, err := s.fetchSubscriptionOnce(ctx, rawURL)
 		if err == nil {
+			result.Metadata = s.enrichSubscriptionMetadata(ctx, rawURL, result.Metadata)
 			return result, nil
 		}
 
@@ -1255,7 +1445,29 @@ func (s *Service) fetchSubscription(ctx context.Context, rawURL string) (subscri
 	return subscriptionFetchResult{}, lastErr
 }
 
+func (s *Service) enrichSubscriptionMetadata(ctx context.Context, rawURL string, metadata subscriptionFetchMetadata) subscriptionFetchMetadata {
+	if !needsSubscriptionMetadataFallback(metadata) {
+		return metadata
+	}
+
+	fallback, err := s.fetchSubscriptionMetadata(ctx, rawURL, subscriptionMetadataFallbackUserAgent)
+	if err != nil {
+		return metadata
+	}
+
+	return mergeSubscriptionMetadata(metadata, fallback)
+}
+
 func (s *Service) fetchSubscriptionOnce(ctx context.Context, rawURL string) (subscriptionFetchResult, bool, error) {
+	result, retry, err := s.fetchSubscriptionOnceWithClient(ctx, rawURL, s.httpClient)
+	if err == nil || !shouldRetrySubscriptionTLS12(rawURL, err) || s.subscriptionTLS12Client == nil {
+		return result, retry, err
+	}
+
+	return s.fetchSubscriptionOnceWithClient(ctx, rawURL, s.subscriptionTLS12Client)
+}
+
+func (s *Service) fetchSubscriptionOnceWithClient(ctx context.Context, rawURL string, client *http.Client) (subscriptionFetchResult, bool, error) {
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, rawURL, nil)
 	if err != nil {
 		return subscriptionFetchResult{}, false, fmt.Errorf("build request: %w", err)
@@ -1264,7 +1476,7 @@ func (s *Service) fetchSubscriptionOnce(ctx context.Context, rawURL string) (sub
 	req.Header.Set("Accept-Language", "en-US,en;q=0.9")
 	req.Header.Set("User-Agent", subscriptionFetchUserAgent)
 
-	resp, err := s.httpClient.Do(req)
+	resp, err := client.Do(req)
 	if err != nil {
 		if ctx.Err() != nil {
 			return subscriptionFetchResult{}, false, fmt.Errorf("fetch %s: %w", rawURL, ctx.Err())
@@ -1276,7 +1488,7 @@ func (s *Service) fetchSubscriptionOnce(ctx context.Context, rawURL string) (sub
 
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
 		body, _ := io.ReadAll(io.LimitReader(resp.Body, 64<<10))
-		message := summarizeSubscriptionResponseBody(body)
+		message := summarizeSubscriptionFailure(resp, body)
 		if message != "" {
 			return subscriptionFetchResult{}, isTransientSubscriptionStatus(resp.StatusCode), fmt.Errorf("fetch %s: unexpected status %s: %s", rawURL, resp.Status, message)
 		}
@@ -1297,8 +1509,79 @@ func (s *Service) fetchSubscriptionOnce(ctx context.Context, rawURL string) (sub
 		Content: content,
 		Metadata: subscriptionFetchMetadata{
 			ProviderName: decodeProfileTitle(resp.Header.Get(subscriptionProfileTitleKey)),
+			ExpiresAt:    parseSubscriptionExpiry(resp.Header),
 		},
 	}, false, nil
+}
+
+func (s *Service) fetchSubscriptionMetadata(ctx context.Context, rawURL, userAgent string) (subscriptionFetchMetadata, error) {
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, rawURL, nil)
+	if err != nil {
+		return subscriptionFetchMetadata{}, fmt.Errorf("build metadata request: %w", err)
+	}
+	req.Header.Set("Accept", "*/*")
+	req.Header.Set("User-Agent", userAgent)
+
+	resp, err := s.httpClient.Do(req)
+	if err != nil {
+		return subscriptionFetchMetadata{}, fmt.Errorf("fetch metadata %s: %w", rawURL, err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		return subscriptionFetchMetadata{}, fmt.Errorf("fetch metadata %s: unexpected status %s", rawURL, resp.Status)
+	}
+
+	return subscriptionFetchMetadata{
+		ProviderName: decodeProfileTitle(resp.Header.Get(subscriptionProfileTitleKey)),
+		ExpiresAt:    parseSubscriptionExpiry(resp.Header),
+	}, nil
+}
+
+func needsSubscriptionMetadataFallback(metadata subscriptionFetchMetadata) bool {
+	return metadata.ExpiresAt == nil
+}
+
+func mergeSubscriptionMetadata(primary, fallback subscriptionFetchMetadata) subscriptionFetchMetadata {
+	if strings.TrimSpace(primary.ProviderName) == "" {
+		primary.ProviderName = fallback.ProviderName
+	}
+	if primary.ExpiresAt == nil {
+		primary.ExpiresAt = fallback.ExpiresAt
+	}
+	return primary
+}
+
+func parseSubscriptionExpiry(headers http.Header) *time.Time {
+	for _, value := range []string{
+		headers.Get(subscriptionUserInfoKey),
+		headers.Get(subscriptionAltUserInfoKey),
+	} {
+		if parsed := parseSubscriptionUserinfoExpiry(value); parsed != nil {
+			return parsed
+		}
+	}
+
+	return nil
+}
+
+func parseSubscriptionUserinfoExpiry(raw string) *time.Time {
+	for _, part := range strings.Split(raw, ";") {
+		key, value, ok := strings.Cut(strings.TrimSpace(part), "=")
+		if !ok || !strings.EqualFold(strings.TrimSpace(key), "expire") {
+			continue
+		}
+
+		seconds, err := strconv.ParseInt(strings.TrimSpace(value), 10, 64)
+		if err != nil || seconds <= 0 {
+			return nil
+		}
+
+		expiresAt := time.Unix(seconds, 0).UTC()
+		return &expiresAt
+	}
+
+	return nil
 }
 
 func isTransientSubscriptionStatus(code int) bool {
@@ -1332,6 +1615,58 @@ func ensureSubscriptionHTTPClient(base *http.Client) *http.Client {
 	return client
 }
 
+func ensureSubscriptionTLS12HTTPClient(base *http.Client) *http.Client {
+	client := ensureSubscriptionHTTPClient(base)
+	transport, ok := cloneSubscriptionTransportWithTLSMaxVersion(client.Transport, tls.VersionTLS12)
+	if !ok {
+		return nil
+	}
+
+	copy := *client
+	copy.Transport = transport
+	return &copy
+}
+
+func cloneSubscriptionTransportWithTLSMaxVersion(base http.RoundTripper, maxVersion uint16) (*http.Transport, bool) {
+	if base == nil {
+		transport := http.DefaultTransport.(*http.Transport).Clone()
+		transport.TLSClientConfig = cloneTLSConfigWithMaxVersion(transport.TLSClientConfig, maxVersion)
+		return transport, true
+	}
+
+	transport, ok := base.(*http.Transport)
+	if !ok {
+		return nil, false
+	}
+
+	clone := transport.Clone()
+	clone.TLSClientConfig = cloneTLSConfigWithMaxVersion(clone.TLSClientConfig, maxVersion)
+	return clone, true
+}
+
+func cloneTLSConfigWithMaxVersion(base *tls.Config, maxVersion uint16) *tls.Config {
+	if base == nil {
+		return &tls.Config{MaxVersion: maxVersion}
+	}
+
+	clone := base.Clone()
+	clone.MaxVersion = maxVersion
+	return clone
+}
+
+func shouldRetrySubscriptionTLS12(rawURL string, err error) bool {
+	if err == nil {
+		return false
+	}
+
+	parsed, parseErr := url.Parse(rawURL)
+	if parseErr != nil || !strings.EqualFold(parsed.Scheme, "https") {
+		return false
+	}
+
+	return strings.Contains(strings.ToLower(err.Error()), "tls handshake timeout")
+}
+
 func normalizeSubscriptionResponse(rawURL string, body []byte) (string, error) {
 	trimmed := strings.TrimSpace(string(body))
 	if trimmed == "" {
@@ -1357,6 +1692,14 @@ func normalizeSubscriptionResponse(rawURL string, body []byte) (string, error) {
 	return string(body), nil
 }
 
+func summarizeSubscriptionFailure(resp *http.Response, body []byte) string {
+	if message := summarizeDDoSGuardResponse(resp, body); message != "" {
+		return message
+	}
+
+	return summarizeSubscriptionResponseBody(body)
+}
+
 func summarizeSubscriptionResponseBody(body []byte) string {
 	trimmed := strings.TrimSpace(string(body))
 	if trimmed == "" {
@@ -1376,6 +1719,31 @@ func summarizeSubscriptionResponseBody(body []byte) string {
 		line = line[:160] + "..."
 	}
 	return line
+}
+
+func summarizeDDoSGuardResponse(resp *http.Response, body []byte) string {
+	if !isDDoSGuardResponse(resp, body) {
+		return ""
+	}
+
+	switch resp.StatusCode {
+	case http.StatusServiceUnavailable, http.StatusGatewayTimeout:
+		return "subscription endpoint is protected by DDoS-Guard and rejected the automated request"
+	default:
+		return "subscription endpoint is protected by DDoS-Guard"
+	}
+}
+
+func isDDoSGuardResponse(resp *http.Response, body []byte) bool {
+	if resp == nil {
+		return false
+	}
+
+	if strings.Contains(strings.ToLower(resp.Header.Get("Server")), "ddos-guard") {
+		return true
+	}
+
+	return strings.Contains(strings.ToLower(string(body)), "ddos-guard")
 }
 
 func summarizeJSONEndpointError(trimmed string) string {
@@ -1529,6 +1897,7 @@ func (s *Service) backendConfigRequest(settings domain.Settings, node domain.Nod
 		HTTPPort:                 httpPort,
 		TransparentProxy:         transparent,
 		TransparentPort:          settings.Firewall.TransparentPort,
+		TransparentTargetMode:    domain.NormalizeFirewallTargetMode(settings.Firewall.TargetMode),
 		TransparentTargetDomains: domain.ExpandFirewallTargetDomains(settings.Firewall.TargetServiceCatalog, settings.Firewall.TargetServices, settings.Firewall.TargetDomains),
 		TransparentTargetCIDRs:   domain.ExpandFirewallTargetCIDRs(settings.Firewall.TargetServiceCatalog, settings.Firewall.TargetServices, settings.Firewall.TargetCIDRs),
 	}

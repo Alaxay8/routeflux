@@ -18,6 +18,8 @@ import (
 	"sync/atomic"
 	"syscall"
 	"time"
+
+	"github.com/Alaxay8/routeflux/internal/store"
 )
 
 const (
@@ -583,11 +585,11 @@ func acquireLock(path string) (*fileLock, error) {
 		return nil, fmt.Errorf("speed test lock path is required")
 	}
 
-	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+	if err := os.MkdirAll(filepath.Dir(path), store.PrivateDirPerm); err != nil {
 		return nil, fmt.Errorf("create speed test lock dir: %w", err)
 	}
 
-	file, err := os.OpenFile(path, os.O_CREATE|os.O_RDWR, 0o600)
+	file, err := os.OpenFile(path, os.O_CREATE|os.O_RDWR, store.SecretFilePerm)
 	if err != nil {
 		return nil, fmt.Errorf("open speed test lock file: %w", err)
 	}

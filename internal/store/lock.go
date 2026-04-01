@@ -10,11 +10,11 @@ import (
 
 // WithWriteLock runs fn while holding the store's inter-process write lock.
 func (s *FileStore) WithWriteLock(fn func() error) error {
-	if err := os.MkdirAll(filepath.Dir(s.paths.LockPath), 0o755); err != nil {
+	if err := os.MkdirAll(filepath.Dir(s.paths.LockPath), PrivateDirPerm); err != nil {
 		return fmt.Errorf("create lock directory: %w", err)
 	}
 
-	file, err := os.OpenFile(s.paths.LockPath, os.O_CREATE|os.O_RDWR, 0o600)
+	file, err := os.OpenFile(s.paths.LockPath, os.O_CREATE|os.O_RDWR, SecretFilePerm)
 	if err != nil {
 		return fmt.Errorf("open lock file: %w", err)
 	}

@@ -33,18 +33,40 @@ func TestFirewallManagerValidateRejectsDNSMasqWithoutNFTSet(t *testing.T) {
 	}
 }
 
+func TestFirewallManagerValidateAllowsBypassTargetsWithoutDNSMasqNFTSet(t *testing.T) {
+	t.Parallel()
+
+	dir := t.TempDir()
+	dnsmasqPath := writeExecutable(t, filepath.Join(dir, "dnsmasq"), "#!/bin/sh\nif [ \"$1\" = \"--test\" ]; then\n  echo 'dnsmasq: recompile with HAVE_NFTSET defined to enable nftset directives' >&2\n  exit 1\nfi\necho '--nftset supported but disabled'\n")
+
+	manager := FirewallManager{
+		DNSMasqPath:        dnsmasqPath,
+		DNSMasqSnippetPath: filepath.Join(dir, "routeflux.conf"),
+	}
+
+	if err := manager.Validate(context.Background(), domain.FirewallSettings{
+		Enabled:        true,
+		TargetMode:     domain.FirewallTargetModeBypass,
+		TargetServices: []string{"youtube"},
+	}); err != nil {
+		t.Fatalf("expected bypass target validation to skip dnsmasq check, got %v", err)
+	}
+}
+
 func TestFirewallManagerApplyWritesDNSMasqSnippetAndReloads(t *testing.T) {
 	t.Parallel()
 
 	dir := t.TempDir()
 	logPath := filepath.Join(dir, "calls.log")
 	nftPath := writeExecutable(t, filepath.Join(dir, "nft"), "#!/bin/sh\nprintf 'nft %s\\n' \"$*\" >> \""+logPath+"\"\nexit 0\n")
+	ipPath := writeExecutable(t, filepath.Join(dir, "ip"), "#!/bin/sh\nprintf 'ip %s\\n' \"$*\" >> \""+logPath+"\"\nexit 0\n")
 	dnsmasqPath := writeExecutable(t, filepath.Join(dir, "dnsmasq"), "#!/bin/sh\nif [ \"$1\" = \"--test\" ]; then\n  exit 0\nfi\necho 'Dnsmasq test binary'\n")
 	servicePath := writeExecutable(t, filepath.Join(dir, "dnsmasq-service"), "#!/bin/sh\nprintf '%s\\n' \"$1\" >> \""+logPath+"\"\nexit 0\n")
 	snippetPath := filepath.Join(dir, "routeflux.conf")
 
 	manager := FirewallManager{
 		NFTPath:            nftPath,
+		IPPath:             ipPath,
 		RulesPath:          filepath.Join(dir, "routeflux-firewall.nft"),
 		DNSMasqPath:        dnsmasqPath,
 		DNSMasqServicePath: servicePath,
@@ -107,12 +129,14 @@ func TestFirewallManagerApplyWritesDNSMasqSnippetForCustomServices(t *testing.T)
 	dir := t.TempDir()
 	logPath := filepath.Join(dir, "calls.log")
 	nftPath := writeExecutable(t, filepath.Join(dir, "nft"), "#!/bin/sh\nprintf 'nft %s\\n' \"$*\" >> \""+logPath+"\"\nexit 0\n")
+	ipPath := writeExecutable(t, filepath.Join(dir, "ip"), "#!/bin/sh\nprintf 'ip %s\\n' \"$*\" >> \""+logPath+"\"\nexit 0\n")
 	dnsmasqPath := writeExecutable(t, filepath.Join(dir, "dnsmasq"), "#!/bin/sh\nif [ \"$1\" = \"--test\" ]; then\n  exit 0\nfi\necho 'Dnsmasq test binary'\n")
 	servicePath := writeExecutable(t, filepath.Join(dir, "dnsmasq-service"), "#!/bin/sh\nprintf '%s\\n' \"$1\" >> \""+logPath+"\"\nexit 0\n")
 	snippetPath := filepath.Join(dir, "routeflux.conf")
 
 	manager := FirewallManager{
 		NFTPath:            nftPath,
+		IPPath:             ipPath,
 		RulesPath:          filepath.Join(dir, "routeflux-firewall.nft"),
 		DNSMasqPath:        dnsmasqPath,
 		DNSMasqServicePath: servicePath,
@@ -154,6 +178,7 @@ func TestFirewallManagerDisableRemovesDNSMasqSnippet(t *testing.T) {
 
 	dir := t.TempDir()
 	nftPath := writeExecutable(t, filepath.Join(dir, "nft"), "#!/bin/sh\nexit 0\n")
+	ipPath := writeExecutable(t, filepath.Join(dir, "ip"), "#!/bin/sh\nexit 0\n")
 	servicePath := writeExecutable(t, filepath.Join(dir, "dnsmasq-service"), "#!/bin/sh\nexit 0\n")
 	snippetPath := filepath.Join(dir, "routeflux.conf")
 	if err := os.WriteFile(snippetPath, []byte("nftset=/youtube.com/4#inet#routeflux#target_v4\n"), 0o644); err != nil {
@@ -162,6 +187,7 @@ func TestFirewallManagerDisableRemovesDNSMasqSnippet(t *testing.T) {
 
 	manager := FirewallManager{
 		NFTPath:            nftPath,
+		IPPath:             ipPath,
 		RulesPath:          filepath.Join(dir, "routeflux-firewall.nft"),
 		DNSMasqServicePath: servicePath,
 		DNSMasqSnippetPath: snippetPath,

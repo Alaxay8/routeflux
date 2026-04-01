@@ -1,6 +1,10 @@
 package cli
 
-import "github.com/spf13/cobra"
+import (
+	"github.com/spf13/cobra"
+
+	"github.com/Alaxay8/routeflux/pkg/api"
+)
 
 func newStatusCmd(opts *rootOptions) *cobra.Command {
 	return &cobra.Command{
@@ -13,7 +17,7 @@ func newStatusCmd(opts *rootOptions) *cobra.Command {
 			}
 
 			if opts.jsonOutput {
-				return printOutput(cmd, true, status, "")
+				return printOutput(cmd, true, api.StatusResponseFromSnapshot(status), "")
 			}
 
 			text := "Disconnected"

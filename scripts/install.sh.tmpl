@@ -67,6 +67,33 @@ routeflux_cron_helper_path() {
 	root_path "usr/libexec/routeflux-cron"
 }
 
+xray_config_path() {
+	root_path "etc/xray/config.json"
+}
+
+chmod_if_exists() {
+	path="$1"
+	mode="$2"
+
+	[ -e "${path}" ] || return 0
+	chmod "${mode}" "${path}" >/dev/null 2>&1 || return 1
+}
+
+harden_secret_storage() {
+	routeflux_root="$(root_path "etc/routeflux")"
+	if [ -d "${routeflux_root}" ]; then
+		chmod 0700 "${routeflux_root}" >/dev/null 2>&1 || true
+		for name in subscriptions.json settings.json state.json .routeflux.lock speedtest.lock; do
+			chmod_if_exists "${routeflux_root}/${name}" 0600 || true
+		done
+		find "${routeflux_root}" -maxdepth 1 -type f -name '*.corrupt-*' -exec chmod 0600 {} \; >/dev/null 2>&1 || true
+	fi
+
+	xray_config="$(xray_config_path)"
+	chmod_if_exists "${xray_config}" 0600 || true
+	chmod_if_exists "${xray_config}.last-known-good" 0600 || true
+}
+
 require_root_if_needed() {
 	if [ "${ROUTEFLUX_INSTALL_ROOT}" = "/" ] && [ "$(id -u)" -ne 0 ]; then
 		die "run this installer as root on the router, or use --install-root for a staging directory"
@@ -285,6 +312,7 @@ if [ -f "${routeflux_service}" ]; then
 	chmod 0755 "${routeflux_service}" || true
 fi
 
+harden_secret_storage
 ensure_xray_log_retention
 
 rm -f "$(root_path "tmp/luci-indexcache")"

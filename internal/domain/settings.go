@@ -113,22 +113,49 @@ type DNSSettings struct {
 	DirectDomains []string     `json:"direct_domains"`
 }
 
+// FirewallTargetMode controls what happens when a transparent selector matches.
+type FirewallTargetMode string
+
+const (
+	// FirewallTargetModeProxy sends matched targets through the selected proxy node.
+	FirewallTargetModeProxy FirewallTargetMode = "proxy"
+	// FirewallTargetModeBypass keeps matched targets direct while the rest uses the proxy.
+	FirewallTargetModeBypass FirewallTargetMode = "bypass"
+)
+
+// FirewallModeDraft stores saved selectors for one LuCI firewall mode.
+type FirewallModeDraft struct {
+	TargetServices []string `json:"target_services"`
+	TargetCIDRs    []string `json:"target_cidrs"`
+	TargetDomains  []string `json:"target_domains"`
+	SourceCIDRs    []string `json:"source_cidrs"`
+}
+
+// FirewallModeDrafts stores saved selectors for each supported LuCI firewall mode.
+type FirewallModeDrafts struct {
+	Hosts      FirewallModeDraft `json:"hosts"`
+	Targets    FirewallModeDraft `json:"targets"`
+	AntiTarget FirewallModeDraft `json:"anti_target"`
+}
+
 // FirewallSettings stores transparent proxy routing preferences.
 type FirewallSettings struct {
 	Enabled              bool                                `json:"enabled"`
 	TransparentPort      int                                 `json:"transparent_port"`
+	TargetMode           FirewallTargetMode                  `json:"target_mode"`
 	TargetServices       []string                            `json:"target_services"`
 	TargetServiceCatalog map[string]FirewallTargetDefinition `json:"target_service_catalog"`
 	TargetCIDRs          []string                            `json:"target_cidrs"`
 	TargetDomains        []string                            `json:"target_domains"`
 	SourceCIDRs          []string                            `json:"source_cidrs"`
+	ModeDrafts           FirewallModeDrafts                  `json:"mode_drafts"`
 	BlockQUIC            bool                                `json:"block_quic"`
 }
 
 // DefaultSettings returns the baseline configuration used on first start.
 func DefaultSettings() Settings {
 	return Settings{
-		SchemaVersion:       4,
+		SchemaVersion:       6,
 		RefreshInterval:     NewDuration(time.Hour),
 		HealthCheckInterval: NewDuration(30 * time.Second),
 		SwitchCooldown:      NewDuration(5 * time.Minute),
@@ -137,11 +164,13 @@ func DefaultSettings() Settings {
 		Firewall: FirewallSettings{
 			Enabled:              false,
 			TransparentPort:      12345,
+			TargetMode:           FirewallTargetModeProxy,
 			TargetServices:       nil,
 			TargetServiceCatalog: nil,
 			TargetCIDRs:          nil,
 			TargetDomains:        nil,
 			SourceCIDRs:          nil,
+			ModeDrafts:           FirewallModeDrafts{},
 			BlockQUIC:            true,
 		},
 		AutoMode: false,
@@ -158,6 +187,35 @@ func DefaultDNSSettings() DNSSettings {
 		Servers:       []string{"1.1.1.1", "1.0.0.1"},
 		Bootstrap:     nil,
 		DirectDomains: []string{"domain:lan", "full:router.lan"},
+	}
+}
+
+// NormalizeFirewallTargetMode coerces unknown values to the default proxy behavior.
+func NormalizeFirewallTargetMode(mode FirewallTargetMode) FirewallTargetMode {
+	switch mode {
+	case FirewallTargetModeBypass:
+		return FirewallTargetModeBypass
+	default:
+		return FirewallTargetModeProxy
+	}
+}
+
+// CloneFirewallModeDraft deep-copies one firewall mode draft.
+func CloneFirewallModeDraft(draft FirewallModeDraft) FirewallModeDraft {
+	return FirewallModeDraft{
+		TargetServices: append([]string(nil), draft.TargetServices...),
+		TargetCIDRs:    append([]string(nil), draft.TargetCIDRs...),
+		TargetDomains:  append([]string(nil), draft.TargetDomains...),
+		SourceCIDRs:    append([]string(nil), draft.SourceCIDRs...),
+	}
+}
+
+// CloneFirewallModeDrafts deep-copies all firewall mode drafts.
+func CloneFirewallModeDrafts(drafts FirewallModeDrafts) FirewallModeDrafts {
+	return FirewallModeDrafts{
+		Hosts:      CloneFirewallModeDraft(drafts.Hosts),
+		Targets:    CloneFirewallModeDraft(drafts.Targets),
+		AntiTarget: CloneFirewallModeDraft(drafts.AntiTarget),
 	}
 }
 

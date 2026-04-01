@@ -10,15 +10,15 @@ import (
 
 	"github.com/spf13/cobra"
 
-	"github.com/Alaxay8/routeflux/internal/app"
 	"github.com/Alaxay8/routeflux/internal/backend"
 	"github.com/Alaxay8/routeflux/internal/platform/openwrt"
+	"github.com/Alaxay8/routeflux/pkg/api"
 )
 
 const routefluxBinaryPath = "/usr/bin/routeflux"
 
 type diagnosticsSnapshot struct {
-	Status       app.StatusSnapshot    `json:"status"`
+	Status       api.StatusResponse    `json:"status"`
 	Runtime      backend.RuntimeStatus `json:"runtime"`
 	RuntimeError string                `json:"runtime_error,omitempty"`
 	Files        diagnosticsFiles      `json:"files"`
@@ -81,7 +81,7 @@ func buildDiagnosticsSnapshot(ctx context.Context, opts *rootOptions) (diagnosti
 	}
 
 	snapshot := diagnosticsSnapshot{
-		Status:  status,
+		Status:  api.StatusResponseFromSnapshot(status),
 		Runtime: runtimeStatus,
 		Files: diagnosticsFiles{
 			RoutefluxBinary:   inspectPath(routefluxBinaryPath),

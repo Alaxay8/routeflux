@@ -58,6 +58,116 @@ func TestInspectXrayJSONOutputsRawConfig(t *testing.T) {
 	}
 }
 
+func TestInspectXraySafeOutputsRedactedConfig(t *testing.T) {
+	t.Parallel()
+
+	store := &cliMemoryStore{
+		subs: []domain.Subscription{
+			{
+				ID:          "sub-1",
+				DisplayName: "Demo VPN",
+				Nodes: []domain.Node{
+					{
+						ID:             "node-1",
+						SubscriptionID: "sub-1",
+						Name:           "Node 1",
+						Protocol:       domain.ProtocolVLESS,
+						Address:        "edge.example.com",
+						Port:           443,
+						UUID:           "11111111-1111-1111-1111-111111111111",
+					},
+				},
+			},
+		},
+		settings: domain.DefaultSettings(),
+		state:    domain.DefaultRuntimeState(),
+	}
+	service := app.NewService(app.Dependencies{
+		Store: store,
+		Backend: &cliInspectBackend{config: []byte(`{
+			"log": {
+				"loglevel": "info"
+			},
+			"dns": {
+				"servers": [
+					"https://dns.google/dns-query",
+					"https://user:secret@dns.example.com/dns-query?token=abc"
+				]
+			},
+			"outbounds": [{
+				"tag": "selected",
+				"protocol": "vless",
+				"settings": {
+					"vnext": [{
+						"address": "edge.example.com",
+						"port": 443,
+						"users": [{
+							"id": "11111111-1111-1111-1111-111111111111"
+						}]
+					}]
+				},
+				"streamSettings": {
+					"realitySettings": {
+						"publicKey": "pub",
+						"shortId": "ab12",
+						"serverName": "cdn.example.com"
+					}
+				}
+			}],
+			"routing": {
+				"domainStrategy": "AsIs",
+				"rules": [{
+					"type": "field",
+					"outboundTag": "selected",
+					"domain": ["domain:youtube.com"],
+					"ip": ["1.1.1.1"]
+				}]
+			}
+		}`)},
+	})
+
+	cmd := newInspectCmd(&rootOptions{service: service})
+	stdout := new(bytes.Buffer)
+	cmd.SetOut(stdout)
+	cmd.SetErr(new(bytes.Buffer))
+	cmd.SetArgs([]string{"xray-safe", "--subscription", "sub-1", "--node", "node-1"})
+
+	if err := cmd.Execute(); err != nil {
+		t.Fatalf("execute inspect xray-safe: %v", err)
+	}
+
+	got := stdout.String()
+	for _, want := range []string{
+		`"selected_node": {`,
+		`"remark": "Node 1"`,
+		`"server_name": "cdn.example.com"`,
+		`"https://dns.google/dns-query"`,
+		`"https://dns.example.com/dns-query"`,
+		`"serverName": "cdn.example.com"`,
+		`"domainStrategy": "AsIs"`,
+	} {
+		if !strings.Contains(got, want) {
+			t.Fatalf("expected %q in redacted preview, got %s", want, got)
+		}
+	}
+
+	for _, forbidden := range []string{
+		`11111111-1111-1111-1111-111111111111`,
+		`"password"`,
+		`"publicKey"`,
+		`"shortId"`,
+		`user:secret@`,
+		`token=abc`,
+		`"address": "edge.example.com"`,
+		`domain:youtube.com`,
+		`"ip": [`,
+	} {
+		if strings.Contains(got, forbidden) {
+			t.Fatalf("unexpected secret %q in redacted preview: %s", forbidden, got)
+		}
+	}
+}
+
 func TestInspectSpeedJSONOutputsMetrics(t *testing.T) {
 	t.Parallel()
 

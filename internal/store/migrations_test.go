@@ -161,6 +161,98 @@ func TestLoadSettingsDecodesTargetServiceCatalog(t *testing.T) {
 	}
 }
 
+func TestLoadSettingsDecodesFirewallTargetMode(t *testing.T) {
+	t.Parallel()
+
+	root := t.TempDir()
+	fileStore := store.NewFileStore(root)
+
+	settingsJSON := `{
+  "schema_version": 5,
+  "firewall": {
+    "target_mode": "bypass",
+    "target_domains": ["example.com"]
+  }
+}`
+	if err := os.WriteFile(filepath.Join(root, "settings.json"), []byte(settingsJSON), 0o644); err != nil {
+		t.Fatalf("write settings file: %v", err)
+	}
+
+	settings, err := fileStore.LoadSettings()
+	if err != nil {
+		t.Fatalf("load settings: %v", err)
+	}
+
+	if settings.Firewall.TargetMode != domain.FirewallTargetModeBypass {
+		t.Fatalf("unexpected firewall target mode: %q", settings.Firewall.TargetMode)
+	}
+	if !reflect.DeepEqual(settings.Firewall.ModeDrafts, domain.FirewallModeDrafts{}) {
+		t.Fatalf("expected empty mode drafts for schema 5, got %+v", settings.Firewall.ModeDrafts)
+	}
+}
+
+func TestLoadSettingsDecodesFirewallModeDraftsAndCompositeCatalog(t *testing.T) {
+	t.Parallel()
+
+	root := t.TempDir()
+	fileStore := store.NewFileStore(root)
+
+	settingsJSON := `{
+  "schema_version": 6,
+  "firewall": {
+    "mode_drafts": {
+      "hosts": {
+        "source_cidrs": ["192.168.1.150"]
+      },
+      "targets": {
+        "target_services": ["daily"],
+        "target_domains": ["example.com"],
+        "target_cidrs": ["1.1.1.1"]
+      },
+      "anti_target": {
+        "target_services": ["banking"],
+        "target_domains": ["bank.example"],
+        "target_cidrs": ["203.0.113.10"]
+      }
+    },
+    "target_service_catalog": {
+      "daily": {
+        "services": ["youtube", "openai"],
+        "domains": ["oaistatic.com"],
+        "cidrs": ["104.18.0.0/15"]
+      }
+    }
+  }
+}`
+	if err := os.WriteFile(filepath.Join(root, "settings.json"), []byte(settingsJSON), 0o644); err != nil {
+		t.Fatalf("write settings file: %v", err)
+	}
+
+	settings, err := fileStore.LoadSettings()
+	if err != nil {
+		t.Fatalf("load settings: %v", err)
+	}
+
+	if want := []string{"192.168.1.150"}; !reflect.DeepEqual(settings.Firewall.ModeDrafts.Hosts.SourceCIDRs, want) {
+		t.Fatalf("unexpected hosts draft: %+v", settings.Firewall.ModeDrafts.Hosts.SourceCIDRs)
+	}
+	if want := []string{"daily"}; !reflect.DeepEqual(settings.Firewall.ModeDrafts.Targets.TargetServices, want) {
+		t.Fatalf("unexpected targets draft services: %+v", settings.Firewall.ModeDrafts.Targets.TargetServices)
+	}
+	if want := []string{"banking"}; !reflect.DeepEqual(settings.Firewall.ModeDrafts.AntiTarget.TargetServices, want) {
+		t.Fatalf("unexpected anti-target draft services: %+v", settings.Firewall.ModeDrafts.AntiTarget.TargetServices)
+	}
+	if want := map[string]domain.FirewallTargetDefinition{
+		"daily": {
+			Services: []string{"youtube", "openai"},
+			Domains:  []string{"oaistatic.com"},
+			CIDRs:    []string{"104.18.0.0/15"},
+		},
+	}; !reflect.DeepEqual(settings.Firewall.TargetServiceCatalog, want) {
+		t.Fatalf("unexpected target service catalog:\nwant: %+v\n got: %+v", want, settings.Firewall.TargetServiceCatalog)
+	}
+}
+
 func TestLoadSettingsRejectsFutureSchemaVersion(t *testing.T) {
 	t.Parallel()
 
@@ -269,6 +361,11 @@ func TestLoadSettingsRecoversCorruptJSON(t *testing.T) {
 	if string(backupData) != `{"refresh_interval":` {
 		t.Fatalf("unexpected backup contents: %q", backupData)
 	}
+	if info, err := os.Stat(matches[0]); err != nil {
+		t.Fatalf("stat backup: %v", err)
+	} else if got := info.Mode().Perm(); got != store.SecretFilePerm {
+		t.Fatalf("unexpected backup mode: got %o want %o", got, store.SecretFilePerm)
+	}
 	if !strings.Contains(logs.String(), "recovered corrupt persisted file") {
 		t.Fatalf("expected recovery warning, got %q", logs.String())
 	}
@@ -299,6 +396,11 @@ func TestLoadStateRecoversCorruptJSON(t *testing.T) {
 	}
 	if len(matches) != 1 {
 		t.Fatalf("expected one corrupt backup, got %v", matches)
+	}
+	if info, err := os.Stat(matches[0]); err != nil {
+		t.Fatalf("stat backup: %v", err)
+	} else if got := info.Mode().Perm(); got != store.SecretFilePerm {
+		t.Fatalf("unexpected backup mode: got %o want %o", got, store.SecretFilePerm)
 	}
 	if !strings.Contains(logs.String(), "recovered corrupt persisted file") {
 		t.Fatalf("expected recovery warning, got %q", logs.String())
