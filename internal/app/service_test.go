@@ -917,6 +917,95 @@ func TestAddSubscriptionReturnsHTMLResponseError(t *testing.T) {
 	}
 }
 
+func TestAddSubscriptionRetriesTLS12AfterHandshakeTimeout(t *testing.T) {
+	t.Parallel()
+
+	store := &memoryStore{
+		settings: domain.DefaultSettings(),
+		state:    domain.DefaultRuntimeState(),
+	}
+
+	const subscriptionURL = "https://provider.example/sub"
+	const subscriptionBody = "vless://11111111-1111-1111-1111-111111111111@node1.example.com:443?encryption=none&security=tls&sni=edge.example.com&type=ws&path=%2Fone&host=cdn.example.com#Profile%201"
+
+	primaryCalls := 0
+	service := NewService(Dependencies{
+		Store: store,
+		HTTPClient: &http.Client{
+			Transport: roundTripFunc(func(req *http.Request) (*http.Response, error) {
+				primaryCalls++
+				return nil, &url.Error{
+					Op:  req.Method,
+					URL: req.URL.String(),
+					Err: fmt.Errorf("net/http: TLS handshake timeout"),
+				}
+			}),
+		},
+	})
+
+	fallbackCalls := 0
+	service.subscriptionTLS12Client = &http.Client{
+		Transport: roundTripFunc(func(req *http.Request) (*http.Response, error) {
+			fallbackCalls++
+			return &http.Response{
+				StatusCode: http.StatusOK,
+				Status:     "200 OK",
+				Header:     make(http.Header),
+				Body:       io.NopCloser(strings.NewReader(subscriptionBody)),
+			}, nil
+		}),
+	}
+
+	sub, err := service.AddSubscription(context.Background(), AddSubscriptionRequest{URL: subscriptionURL})
+	if err != nil {
+		t.Fatalf("add subscription: %v", err)
+	}
+	if primaryCalls < 1 {
+		t.Fatalf("expected at least one primary request, got %d", primaryCalls)
+	}
+	if fallbackCalls < 1 {
+		t.Fatalf("expected at least one TLS 1.2 fallback request, got %d", fallbackCalls)
+	}
+	if len(sub.Nodes) != 1 {
+		t.Fatalf("expected one parsed node, got %d", len(sub.Nodes))
+	}
+	if sub.Nodes[0].Address != "node1.example.com" {
+		t.Fatalf("unexpected parsed node: %+v", sub.Nodes[0])
+	}
+}
+
+func TestAddSubscriptionReturnsDDoSGuardError(t *testing.T) {
+	t.Parallel()
+
+	store := &memoryStore{
+		settings: domain.DefaultSettings(),
+		state:    domain.DefaultRuntimeState(),
+	}
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Server", "ddos-guard")
+		w.Header().Set("Content-Type", "text/html; charset=utf-8")
+		w.WriteHeader(http.StatusServiceUnavailable)
+		writeResponse(w, "<html><body><h1>503 Service Unavailable</h1>No server is available to handle this request.</body></html>")
+	}))
+	t.Cleanup(server.Close)
+
+	service := NewService(Dependencies{
+		Store:      store,
+		HTTPClient: server.Client(),
+	})
+
+	_, err := service.AddSubscription(context.Background(), AddSubscriptionRequest{
+		URL: server.URL,
+	})
+	if err == nil {
+		t.Fatal("expected add subscription to fail")
+	}
+	if got := err.Error(); !strings.Contains(got, "DDoS-Guard") {
+		t.Fatalf("unexpected error: %v", err)
+	}
+}
+
 func TestAddSubscriptionExtractsHTMLShareLinksWithSpacesInRemark(t *testing.T) {
 	t.Parallel()
 
@@ -2394,7 +2483,8 @@ type memoryStore struct {
 	settings domain.Settings
 	state    domain.RuntimeState
 
-	saveStateCalls int
+	loadSettingsErr error
+	saveStateCalls  int
 }
 
 type rewriteURLRoundTripper struct {
@@ -2433,6 +2523,9 @@ func (s *memoryStore) SaveSubscriptions(subs []domain.Subscription) error {
 }
 
 func (s *memoryStore) LoadSettings() (domain.Settings, error) {
+	if s.loadSettingsErr != nil {
+		return domain.Settings{}, s.loadSettingsErr
+	}
 	return s.settings, nil
 }
 
@@ -2546,6 +2639,12 @@ func (f fakeChecker) Check(_ context.Context, node domain.Node) probe.Result {
 type fakeResolver struct {
 	lookups map[string][]net.IPAddr
 	err     error
+}
+
+type roundTripFunc func(*http.Request) (*http.Response, error)
+
+func (f roundTripFunc) RoundTrip(req *http.Request) (*http.Response, error) {
+	return f(req)
 }
 
 func (r fakeResolver) LookupIPAddr(_ context.Context, host string) ([]net.IPAddr, error) {

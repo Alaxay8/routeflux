@@ -1,11 +1,16 @@
 package app
 
 import (
+	"bytes"
 	"context"
+	"fmt"
+	"log/slog"
+	"strings"
 	"testing"
 	"time"
 
 	"github.com/Alaxay8/routeflux/internal/domain"
+	storepkg "github.com/Alaxay8/routeflux/internal/store"
 )
 
 func TestSchedulerRunOnceRefreshesDueSubscription(t *testing.T) {
@@ -117,5 +122,69 @@ func TestSchedulerRunOnceRefreshesAndReconnectsActiveSubscription(t *testing.T) 
 	}
 	if !store.state.Connected || store.state.ActiveSubscriptionID != "sub-1" || store.state.ActiveNodeID != activeNode.ID {
 		t.Fatalf("unexpected state after refresh and reconnect: %+v", store.state)
+	}
+}
+
+func TestSchedulerHealthLoopConfigLogsRepeatedSettingsErrorOnce(t *testing.T) {
+	t.Parallel()
+
+	var logs bytes.Buffer
+	memStore := &memoryStore{
+		settings:        domain.DefaultSettings(),
+		loadSettingsErr: fmt.Errorf("%w 6", storepkg.ErrUnsupportedSettingsSchema),
+	}
+
+	service := NewService(Dependencies{
+		Store:  memStore,
+		Logger: slog.New(slog.NewTextHandler(&logs, &slog.HandlerOptions{Level: slog.LevelWarn})),
+	})
+	scheduler := NewScheduler(service)
+
+	for range 3 {
+		interval, enabled := scheduler.healthLoopConfig()
+		if enabled {
+			t.Fatal("expected auto health loop to stay disabled on settings load error")
+		}
+		if interval != time.Minute {
+			t.Fatalf("expected fallback interval of one minute, got %s", interval)
+		}
+	}
+
+	if count := strings.Count(logs.String(), "load settings for auto health loop"); count != 1 {
+		t.Fatalf("expected a single warning log, got %d\nlogs:\n%s", count, logs.String())
+	}
+}
+
+func TestSchedulerHealthLoopConfigLogsErrorAgainAfterRecovery(t *testing.T) {
+	t.Parallel()
+
+	var logs bytes.Buffer
+	memStore := &memoryStore{
+		settings:        domain.DefaultSettings(),
+		loadSettingsErr: fmt.Errorf("%w 6", storepkg.ErrUnsupportedSettingsSchema),
+	}
+
+	service := NewService(Dependencies{
+		Store:  memStore,
+		Logger: slog.New(slog.NewTextHandler(&logs, &slog.HandlerOptions{Level: slog.LevelWarn})),
+	})
+	scheduler := NewScheduler(service)
+
+	scheduler.healthLoopConfig()
+
+	memStore.loadSettingsErr = nil
+	interval, enabled := scheduler.healthLoopConfig()
+	if !enabled {
+		t.Fatal("expected auto health loop to be enabled after recovery")
+	}
+	if interval != memStore.settings.HealthCheckInterval.Duration() {
+		t.Fatalf("unexpected health loop interval after recovery: %s", interval)
+	}
+
+	memStore.loadSettingsErr = fmt.Errorf("%w 6", storepkg.ErrUnsupportedSettingsSchema)
+	scheduler.healthLoopConfig()
+
+	if count := strings.Count(logs.String(), "load settings for auto health loop"); count != 2 {
+		t.Fatalf("expected warning to be logged again after recovery, got %d\nlogs:\n%s", count, logs.String())
 	}
 }

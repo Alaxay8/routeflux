@@ -3,6 +3,7 @@ package app
 import (
 	"context"
 	"crypto/sha1"
+	"crypto/tls"
 	"encoding/base64"
 	"encoding/hex"
 	"encoding/json"
@@ -71,19 +72,20 @@ type StatusSnapshot struct {
 
 // Service orchestrates subscription, health, and backend workflows.
 type Service struct {
-	store              Store
-	backend            backend.Backend
-	firewall           Firewaller
-	httpClient         *http.Client
-	checker            probe.Checker
-	speedTester        speedtest.Tester
-	logger             *slog.Logger
-	resolver           HostResolver
-	backendReadyChecks int
-	backendReadyDelay  time.Duration
-	now                func() time.Time
-	autoHealthStateMu  sync.Mutex
-	autoHealthState    *autoHealthStateCache
+	store                   Store
+	backend                 backend.Backend
+	firewall                Firewaller
+	httpClient              *http.Client
+	subscriptionTLS12Client *http.Client
+	checker                 probe.Checker
+	speedTester             speedtest.Tester
+	logger                  *slog.Logger
+	resolver                HostResolver
+	backendReadyChecks      int
+	backendReadyDelay       time.Duration
+	now                     func() time.Time
+	autoHealthStateMu       sync.Mutex
+	autoHealthState         *autoHealthStateCache
 }
 
 // Dependencies groups the service construction inputs.
@@ -143,17 +145,18 @@ func NewService(deps Dependencies) *Service {
 	}
 
 	return &Service{
-		store:              deps.Store,
-		backend:            deps.Backend,
-		firewall:           deps.Firewaller,
-		httpClient:         ensureSubscriptionHTTPClient(deps.HTTPClient),
-		checker:            checker,
-		speedTester:        deps.SpeedTester,
-		logger:             logger,
-		resolver:           resolver,
-		backendReadyChecks: backendReadyMaxChecks,
-		backendReadyDelay:  backendReadyCheckDelay,
-		now:                time.Now,
+		store:                   deps.Store,
+		backend:                 deps.Backend,
+		firewall:                deps.Firewaller,
+		httpClient:              ensureSubscriptionHTTPClient(deps.HTTPClient),
+		subscriptionTLS12Client: ensureSubscriptionTLS12HTTPClient(deps.HTTPClient),
+		checker:                 checker,
+		speedTester:             deps.SpeedTester,
+		logger:                  logger,
+		resolver:                resolver,
+		backendReadyChecks:      backendReadyMaxChecks,
+		backendReadyDelay:       backendReadyCheckDelay,
+		now:                     time.Now,
 	}
 }
 
@@ -1456,6 +1459,15 @@ func (s *Service) enrichSubscriptionMetadata(ctx context.Context, rawURL string,
 }
 
 func (s *Service) fetchSubscriptionOnce(ctx context.Context, rawURL string) (subscriptionFetchResult, bool, error) {
+	result, retry, err := s.fetchSubscriptionOnceWithClient(ctx, rawURL, s.httpClient)
+	if err == nil || !shouldRetrySubscriptionTLS12(rawURL, err) || s.subscriptionTLS12Client == nil {
+		return result, retry, err
+	}
+
+	return s.fetchSubscriptionOnceWithClient(ctx, rawURL, s.subscriptionTLS12Client)
+}
+
+func (s *Service) fetchSubscriptionOnceWithClient(ctx context.Context, rawURL string, client *http.Client) (subscriptionFetchResult, bool, error) {
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, rawURL, nil)
 	if err != nil {
 		return subscriptionFetchResult{}, false, fmt.Errorf("build request: %w", err)
@@ -1464,7 +1476,7 @@ func (s *Service) fetchSubscriptionOnce(ctx context.Context, rawURL string) (sub
 	req.Header.Set("Accept-Language", "en-US,en;q=0.9")
 	req.Header.Set("User-Agent", subscriptionFetchUserAgent)
 
-	resp, err := s.httpClient.Do(req)
+	resp, err := client.Do(req)
 	if err != nil {
 		if ctx.Err() != nil {
 			return subscriptionFetchResult{}, false, fmt.Errorf("fetch %s: %w", rawURL, ctx.Err())
@@ -1476,7 +1488,7 @@ func (s *Service) fetchSubscriptionOnce(ctx context.Context, rawURL string) (sub
 
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
 		body, _ := io.ReadAll(io.LimitReader(resp.Body, 64<<10))
-		message := summarizeSubscriptionResponseBody(body)
+		message := summarizeSubscriptionFailure(resp, body)
 		if message != "" {
 			return subscriptionFetchResult{}, isTransientSubscriptionStatus(resp.StatusCode), fmt.Errorf("fetch %s: unexpected status %s: %s", rawURL, resp.Status, message)
 		}
@@ -1603,6 +1615,58 @@ func ensureSubscriptionHTTPClient(base *http.Client) *http.Client {
 	return client
 }
 
+func ensureSubscriptionTLS12HTTPClient(base *http.Client) *http.Client {
+	client := ensureSubscriptionHTTPClient(base)
+	transport, ok := cloneSubscriptionTransportWithTLSMaxVersion(client.Transport, tls.VersionTLS12)
+	if !ok {
+		return nil
+	}
+
+	copy := *client
+	copy.Transport = transport
+	return &copy
+}
+
+func cloneSubscriptionTransportWithTLSMaxVersion(base http.RoundTripper, maxVersion uint16) (*http.Transport, bool) {
+	if base == nil {
+		transport := http.DefaultTransport.(*http.Transport).Clone()
+		transport.TLSClientConfig = cloneTLSConfigWithMaxVersion(transport.TLSClientConfig, maxVersion)
+		return transport, true
+	}
+
+	transport, ok := base.(*http.Transport)
+	if !ok {
+		return nil, false
+	}
+
+	clone := transport.Clone()
+	clone.TLSClientConfig = cloneTLSConfigWithMaxVersion(clone.TLSClientConfig, maxVersion)
+	return clone, true
+}
+
+func cloneTLSConfigWithMaxVersion(base *tls.Config, maxVersion uint16) *tls.Config {
+	if base == nil {
+		return &tls.Config{MaxVersion: maxVersion}
+	}
+
+	clone := base.Clone()
+	clone.MaxVersion = maxVersion
+	return clone
+}
+
+func shouldRetrySubscriptionTLS12(rawURL string, err error) bool {
+	if err == nil {
+		return false
+	}
+
+	parsed, parseErr := url.Parse(rawURL)
+	if parseErr != nil || !strings.EqualFold(parsed.Scheme, "https") {
+		return false
+	}
+
+	return strings.Contains(strings.ToLower(err.Error()), "tls handshake timeout")
+}
+
 func normalizeSubscriptionResponse(rawURL string, body []byte) (string, error) {
 	trimmed := strings.TrimSpace(string(body))
 	if trimmed == "" {
@@ -1628,6 +1692,14 @@ func normalizeSubscriptionResponse(rawURL string, body []byte) (string, error) {
 	return string(body), nil
 }
 
+func summarizeSubscriptionFailure(resp *http.Response, body []byte) string {
+	if message := summarizeDDoSGuardResponse(resp, body); message != "" {
+		return message
+	}
+
+	return summarizeSubscriptionResponseBody(body)
+}
+
 func summarizeSubscriptionResponseBody(body []byte) string {
 	trimmed := strings.TrimSpace(string(body))
 	if trimmed == "" {
@@ -1647,6 +1719,31 @@ func summarizeSubscriptionResponseBody(body []byte) string {
 		line = line[:160] + "..."
 	}
 	return line
+}
+
+func summarizeDDoSGuardResponse(resp *http.Response, body []byte) string {
+	if !isDDoSGuardResponse(resp, body) {
+		return ""
+	}
+
+	switch resp.StatusCode {
+	case http.StatusServiceUnavailable, http.StatusGatewayTimeout:
+		return "subscription endpoint is protected by DDoS-Guard and rejected the automated request"
+	default:
+		return "subscription endpoint is protected by DDoS-Guard"
+	}
+}
+
+func isDDoSGuardResponse(resp *http.Response, body []byte) bool {
+	if resp == nil {
+		return false
+	}
+
+	if strings.Contains(strings.ToLower(resp.Header.Get("Server")), "ddos-guard") {
+		return true
+	}
+
+	return strings.Contains(strings.ToLower(string(body)), "ddos-guard")
 }
 
 func summarizeJSONEndpointError(trimmed string) string {
