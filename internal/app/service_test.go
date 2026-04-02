@@ -178,6 +178,40 @@ func TestConfigureFirewallAntiTargetsClearsHostsAndStoresTargetSelectors(t *test
 	}
 }
 
+func TestConfigureFirewallBypassStoresExcludedSources(t *testing.T) {
+	t.Parallel()
+
+	store := &memoryStore{
+		settings: domain.DefaultSettings(),
+		state:    domain.DefaultRuntimeState(),
+	}
+	store.settings.Firewall.Mode = domain.FirewallModeHosts
+	store.settings.Firewall.Hosts = []string{"192.168.1.150"}
+
+	service := NewService(Dependencies{Store: store, Firewaller: &recordingFirewaller{}})
+
+	settings, err := service.ConfigureFirewallBypass(context.Background(), []string{"vk.com", "1.1.1.1"}, []string{"192.168.1.50"}, true, 23456)
+	if err != nil {
+		t.Fatalf("configure firewall bypass: %v", err)
+	}
+
+	if settings.Mode != domain.FirewallModeSplit {
+		t.Fatalf("expected split mode, got %q", settings.Mode)
+	}
+	if settings.Split.DefaultAction != domain.FirewallDefaultActionProxy {
+		t.Fatalf("expected split default action proxy, got %q", settings.Split.DefaultAction)
+	}
+	if !reflect.DeepEqual(settings.Split.Bypass.Domains, []string{"vk.com"}) {
+		t.Fatalf("unexpected bypass domains: %+v", settings.Split.Bypass.Domains)
+	}
+	if !reflect.DeepEqual(settings.Split.Bypass.CIDRs, []string{"1.1.1.1"}) {
+		t.Fatalf("unexpected bypass cidrs: %+v", settings.Split.Bypass.CIDRs)
+	}
+	if !reflect.DeepEqual(settings.Split.ExcludedSources, []string{"192.168.1.50"}) {
+		t.Fatalf("unexpected excluded sources: %+v", settings.Split.ExcludedSources)
+	}
+}
+
 func TestUpdateFirewallBlockQUICCanonicalizesLegacyTargetsMode(t *testing.T) {
 	t.Parallel()
 

@@ -19,8 +19,8 @@ var whatsNewEntries = [
 	},
 	{
 		kind: _('Fix'),
-		title: _('Split tunnelling drafts and target bundles'),
-		summary: _('LuCI now keeps separate saved selector sets for Targets, Hosts, and Split Tunnelling, and custom target aliases can include other service aliases to build reusable bundles.')
+		title: _('Bypass mode and target bundles'),
+		summary: _('LuCI now keeps separate saved selector sets for Targets, Hosts, and Bypass, and custom target aliases can include other service aliases to build reusable bundles.')
 	}
 ];
 

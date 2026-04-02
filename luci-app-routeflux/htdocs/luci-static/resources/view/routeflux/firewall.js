@@ -453,10 +453,24 @@ function normalizedSplitSettings(firewall, mode) {
 	};
 }
 
+function splitLooksLikeBypass(split) {
+	return trim((split || {}).default_action) === 'proxy' && !selectorSetHasEntries((split || {}).proxy);
+}
+
+function splitLooksLikeTargets(split) {
+	return trim((split || {}).default_action) === 'direct' &&
+		selectorSetHasEntries((split || {}).proxy) &&
+		!selectorSetHasEntries((split || {}).bypass) &&
+		cleanList((split || {}).excluded_sources || []).length === 0;
+}
+
 function canonicalFirewall(firewall) {
 	var raw = firewall || {};
 	var mode = trim(raw.mode);
 	var enabled = raw.enabled === true;
+	var split;
+	var targets;
+	var compatibilityWarning = '';
 
 	if (mode !== 'hosts' && mode !== 'targets' && mode !== 'split' && mode !== 'disabled')
 		mode = legacyFirewallMode(raw);
@@ -464,15 +478,34 @@ function canonicalFirewall(firewall) {
 	if (!enabled && mode !== 'hosts' && mode !== 'targets' && mode !== 'split')
 		mode = 'disabled';
 
+	split = normalizedSplitSettings(raw, mode);
+	targets = normalizedSelectorSet(raw.targets || {}, mode === 'targets' ? raw : null);
+
+	if (enabled && mode === 'split') {
+		if (splitLooksLikeBypass(split))
+			mode = 'bypass';
+		else if (splitLooksLikeTargets(split)) {
+			mode = 'targets';
+			targets = cloneSelectorSet(split.proxy);
+		}
+		else
+			compatibilityWarning = _('The current firewall config uses advanced split tunnelling created outside LuCI. Choose Targets, Bypass, Hosts, or Disabled to replace it.');
+	}
+
 	return {
 		'enabled': enabled,
-		'mode': mode,
+		'mode': compatibilityWarning !== '' ? 'advanced-split' : mode,
 		'transparent_port': Number(raw.transparent_port) > 0 ? Number(raw.transparent_port) : 12345,
 		'block_quic': raw.block_quic === true,
 		'hosts': cleanList(raw.hosts || raw.source_cidrs || []),
-		'targets': normalizedSelectorSet(raw.targets || {}, mode === 'targets' ? raw : null),
-		'split': normalizedSplitSettings(raw, mode),
-		'mode_drafts': raw.mode_drafts || {}
+		'targets': targets,
+		'bypass': {
+			'selectors': cloneSelectorSet(split.bypass),
+			'excluded_sources': cleanList(split.excluded_sources || [])
+		},
+		'split': split,
+		'mode_drafts': raw.mode_drafts || {},
+		'compatibility_warning': compatibilityWarning
 	};
 }
 
@@ -485,9 +518,8 @@ function buildFormState(firewall) {
 	var drafts = current.mode_drafts || {};
 	var hosts = listEditorFromEntries((drafts.hosts || {}).source_cidrs || []);
 	var targets = selectorEditorFromSet(selectorSetFromDraft(drafts.targets || {}));
-	var split = {
-		'proxy': selectorEditorFromSet(((drafts.split || {}).proxy) || emptySelectorSet()),
-		'bypass': selectorEditorFromSet(((drafts.split || {}).bypass) || emptySelectorSet()),
+	var bypass = {
+		'selectors': selectorEditorFromSet(((drafts.split || {}).bypass) || emptySelectorSet()),
 		'excluded': listEditorFromEntries(((drafts.split || {}).excluded_sources) || [])
 	};
 
@@ -495,10 +527,14 @@ function buildFormState(firewall) {
 		hosts = listEditorFromEntries(current.hosts);
 	else if (current.mode === 'targets')
 		targets = selectorEditorFromSet(current.targets);
-	else if (current.mode === 'split') {
-		split.proxy = selectorEditorFromSet(current.split.proxy);
-		split.bypass = selectorEditorFromSet(current.split.bypass);
-		split.excluded = listEditorFromEntries(current.split.excluded_sources);
+	else if (current.mode === 'bypass') {
+		bypass.selectors = selectorEditorFromSet(current.bypass.selectors);
+		bypass.excluded = listEditorFromEntries(current.bypass.excluded_sources);
+	}
+	else if (current.mode === 'advanced-split') {
+		targets = selectorEditorFromSet(current.split.proxy);
+		bypass.selectors = selectorEditorFromSet(current.bypass.selectors);
+		bypass.excluded = listEditorFromEntries(current.bypass.excluded_sources);
 	}
 
 	return {
@@ -507,7 +543,8 @@ function buildFormState(firewall) {
 		'block_quic': current.block_quic === true,
 		'hosts': hosts,
 		'targets': targets,
-		'split': split
+		'bypass': bypass,
+		'compatibility_warning': current.compatibility_warning || ''
 	};
 }
 
@@ -517,8 +554,10 @@ function modeSummary(mode) {
 		return _('Hosts');
 	case 'targets':
 		return _('Targets');
-	case 'split':
-		return _('Split Tunnelling');
+	case 'bypass':
+		return _('Bypass');
+	case 'advanced-split':
+		return _('Advanced Split');
 	default:
 		return _('Disabled');
 	}
@@ -531,10 +570,8 @@ function editorByKey(view, key) {
 	switch (key) {
 	case 'targets':
 		return view.formState.targets;
-	case 'split-proxy':
-		return view.formState.split.proxy;
-	case 'split-bypass':
-		return view.formState.split.bypass;
+	case 'bypass':
+		return view.formState.bypass.selectors;
 	default:
 		return null;
 	}
@@ -547,8 +584,8 @@ function listByKey(view, key) {
 	switch (key) {
 	case 'hosts':
 		return view.formState.hosts;
-	case 'split-excluded':
-		return view.formState.split.excluded;
+	case 'bypass-excluded':
+		return view.formState.bypass.excluded;
 	default:
 		return null;
 	}
@@ -832,15 +869,12 @@ return view.extend({
 
 	draftCommands: function() {
 		var commands = [];
-		var splitDraft = [ 'firewall', 'draft', 'split' ];
+		var bypassDraft = [ 'firewall', 'draft', 'bypass' ];
 
 		commands.push([ 'firewall', 'draft', 'hosts' ].concat(listValues(this.formState.hosts)));
 		commands.push([ 'firewall', 'draft', 'targets' ].concat(selectorValues(selectorSetFromEditor(this.formState.targets))));
-
-		appendStringSliceFlags(splitDraft, '--proxy', selectorValues(selectorSetFromEditor(this.formState.split.proxy)));
-		appendStringSliceFlags(splitDraft, '--bypass', selectorValues(selectorSetFromEditor(this.formState.split.bypass)));
-		appendStringSliceFlags(splitDraft, '--exclude-host', listValues(this.formState.split.excluded));
-		commands.push(splitDraft);
+		appendStringSliceFlags(bypassDraft, '--exclude-host', listValues(this.formState.bypass.excluded));
+		commands.push(bypassDraft.concat(selectorValues(selectorSetFromEditor(this.formState.bypass.selectors))));
 
 		return commands;
 	},
@@ -851,10 +885,9 @@ return view.extend({
 		var mode = trim(this.formState.mode);
 		var commands = this.draftCommands();
 		var targetSelectors = selectorValues(selectorSetFromEditor(this.formState.targets));
-		var splitProxy = selectorValues(selectorSetFromEditor(this.formState.split.proxy));
-		var splitBypass = selectorValues(selectorSetFromEditor(this.formState.split.bypass));
-		var splitExcluded = listValues(this.formState.split.excluded);
-		var splitCommand = [ 'firewall', 'set', '--port', String(port), 'split' ];
+		var bypassSelectors = selectorValues(selectorSetFromEditor(this.formState.bypass.selectors));
+		var bypassExcluded = listValues(this.formState.bypass.excluded);
+		var bypassCommand = [ 'firewall', 'set', '--port', String(port), 'bypass' ];
 
 		if (ev && typeof ev.preventDefault === 'function')
 			ev.preventDefault();
@@ -874,8 +907,13 @@ return view.extend({
 			return Promise.resolve();
 		}
 
-		if (mode === 'split' && splitProxy.length === 0 && splitBypass.length === 0) {
-			ui.addNotification(null, notificationParagraph(_('Split tunnelling needs at least one Route Through RouteFlux or Keep Direct entry.')));
+		if (mode === 'bypass' && bypassSelectors.length === 0) {
+			ui.addNotification(null, notificationParagraph(_('Bypass needs at least one Keep Direct entry.')));
+			return Promise.resolve();
+		}
+
+		if (mode === 'advanced-split') {
+			ui.addNotification(null, notificationParagraph(_('Choose Targets, Bypass, Hosts, or Disabled to replace this advanced split tunnelling config.')));
 			return Promise.resolve();
 		}
 
@@ -891,11 +929,9 @@ return view.extend({
 			return this.runCommands(commands, _('Firewall settings saved.'));
 		}
 
-		if (mode === 'split') {
-			appendStringSliceFlags(splitCommand, '--proxy', splitProxy);
-			appendStringSliceFlags(splitCommand, '--bypass', splitBypass);
-			appendStringSliceFlags(splitCommand, '--exclude-host', splitExcluded);
-			commands.push(splitCommand);
+		if (mode === 'bypass') {
+			appendStringSliceFlags(bypassCommand, '--exclude-host', bypassExcluded);
+			commands.push(bypassCommand.concat(bypassSelectors));
 			commands.push([ 'firewall', 'set', 'block-quic', this.formState.block_quic ? 'true' : 'false' ]);
 			return this.runCommands(commands, _('Firewall settings saved.'));
 		}
@@ -1110,34 +1146,33 @@ return view.extend({
 			));
 		}
 
-		if (mode === 'split') {
-			panels.push(this.renderSelectorEditor(
-				_('Route Through RouteFlux'),
-				_('These service presets, domains, and IPv4 targets go through RouteFlux.'),
-				'split-proxy',
-				this.formState.split.proxy,
-				_('Examples: youtube.com 1.1.1.1 203.0.113.10-203.0.113.20')
-			));
+		if (mode === 'bypass') {
 			panels.push(this.renderSelectorEditor(
 				_('Keep Direct'),
-				_('These service presets, domains, and IPv4 targets stay direct and override Route Through RouteFlux when both match.'),
-				'split-bypass',
-				this.formState.split.bypass,
+				_('These service presets, domains, and IPv4 targets stay direct while all other traffic keeps using RouteFlux.'),
+				'bypass',
+				this.formState.bypass.selectors,
 				_('Examples: gosuslugi.ru 203.0.113.10 203.0.113.10-203.0.113.20')
 			));
 			panels.push(this.renderListEditor(
 				_('Excluded Devices'),
-				_('These LAN devices are never intercepted by split tunnelling.'),
-				'split-excluded',
-				this.formState.split.excluded,
+				_('These LAN devices are never intercepted by bypass mode.'),
+				'bypass-excluded',
+				this.formState.bypass.excluded,
 				_('Examples: 192.168.1.50 192.168.1.0/24 192.168.1.10-192.168.1.20 all'),
 				_('Excluded devices are optional.')
 			));
 		}
 
+		if (mode === 'advanced-split') {
+			panels.push(E('div', { 'class': 'alert-message warning' }, [
+				this.formState.compatibility_warning || _('The current firewall config uses advanced split tunnelling created outside LuCI. Choose a supported mode to replace it.')
+			]));
+		}
+
 		if (mode === 'disabled') {
 			panels.push(E('div', { 'class': 'routeflux-firewall-empty routeflux-firewall-disabled-note' }, [
-				_('Firewall routing is disabled. Drafts for Hosts, Targets, and Split Tunnelling will still be saved when you click Save.')
+				_('Firewall routing is disabled. Drafts for Hosts, Targets, and Bypass will still be saved when you click Save.')
 			]));
 		}
 
@@ -1199,7 +1234,7 @@ return view.extend({
 
 		content.push(E('h2', {}, [ _('RouteFlux - Firewall') ]));
 		content.push(E('p', { 'class': 'cbi-section-descr' }, [
-			_('Manage transparent routing with clear structured editors for Hosts, Targets, and Split Tunnelling. Use the Services tab to create reusable custom service presets.')
+			_('Manage transparent routing with clear structured editors for Hosts, Targets, and Bypass. Use the Services tab to create reusable custom service presets.')
 		]));
 
 		content.push(E('div', { 'class': 'routeflux-overview-grid' }, [
@@ -1239,11 +1274,14 @@ return view.extend({
 							E('option', { 'value': 'disabled', 'selected': this.formState.mode === 'disabled' ? 'selected' : null }, [ _('Disabled') ]),
 							E('option', { 'value': 'hosts', 'selected': this.formState.mode === 'hosts' ? 'selected' : null }, [ _('Hosts') ]),
 							E('option', { 'value': 'targets', 'selected': this.formState.mode === 'targets' ? 'selected' : null }, [ _('Targets') ]),
-							E('option', { 'value': 'split', 'selected': this.formState.mode === 'split' ? 'selected' : null }, [ _('Split Tunnelling') ])
-						])
+							E('option', { 'value': 'bypass', 'selected': this.formState.mode === 'bypass' ? 'selected' : null }, [ _('Bypass') ]),
+							this.formState.mode === 'advanced-split'
+								? E('option', { 'value': 'advanced-split', 'selected': 'selected', 'disabled': 'disabled' }, [ _('Advanced Split (switch required)') ])
+								: null
+						].filter(function(option) { return option !== null; }))
 					]),
 					E('div', { 'class': 'cbi-value-description' }, [
-						_('Hosts sends all traffic from selected LAN devices through RouteFlux. Targets proxies only selected resources. Split Tunnelling gives you separate proxy, direct, and excluded-device tables.')
+						_('Hosts sends all traffic from selected LAN devices through RouteFlux. Targets proxies only selected resources. Bypass keeps everything on RouteFlux except selected direct resources and excluded devices.')
 					])
 				]),
 				E('div', { 'class': 'cbi-value' }, [

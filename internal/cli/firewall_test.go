@@ -144,6 +144,48 @@ func TestFirewallGetShowsCurrentValuesAndMeaning(t *testing.T) {
 	}
 }
 
+func TestFirewallGetShowsBypassForProxyFallbackSplit(t *testing.T) {
+	t.Parallel()
+
+	store := &cliMemoryStore{
+		settings: domain.DefaultSettings(),
+		state:    domain.DefaultRuntimeState(),
+	}
+	store.settings.Firewall.Enabled = true
+	store.settings.Firewall.Mode = domain.FirewallModeSplit
+	store.settings.Firewall.Split = domain.FirewallSplitSettings{
+		Bypass: domain.FirewallSelectorSet{
+			Domains: []string{"vk.com"},
+		},
+		ExcludedSources: []string{"192.168.1.50"},
+		DefaultAction:   domain.FirewallDefaultActionProxy,
+	}
+
+	cmd := newFirewallCmd(&rootOptions{service: app.NewService(app.Dependencies{Store: store})})
+	var stdout bytes.Buffer
+	cmd.SetOut(&stdout)
+	cmd.SetErr(new(bytes.Buffer))
+	cmd.SetArgs([]string{"get"})
+
+	if err := cmd.Execute(); err != nil {
+		t.Fatalf("execute firewall get: %v", err)
+	}
+
+	output := stdout.String()
+	wants := []string{
+		"mode=bypass",
+		"mode-help=All traffic goes through RouteFlux except selected direct resources and excluded LAN devices.",
+		"default-action=proxy",
+		"split-bypass=vk.com",
+		"split-excluded-sources=192.168.1.50",
+	}
+	for _, want := range wants {
+		if !strings.Contains(output, want) {
+			t.Fatalf("firewall get missing %q\n%s", want, output)
+		}
+	}
+}
+
 func TestFirewallExplainOutputsFriendlyGuide(t *testing.T) {
 	t.Parallel()
 
@@ -164,8 +206,9 @@ func TestFirewallExplainOutputsFriendlyGuide(t *testing.T) {
 	wants := []string{
 		"disabled: Do not redirect router traffic through RouteFlux.",
 		"targets: Send traffic through RouteFlux only when the destination matches selected services, domains, or IPv4 targets.",
-		"split: Use separate proxy, bypass, and excluded-device lists.",
-		"anti-target: deprecated alias for split with default-action=proxy and bypass-only selectors.",
+		"bypass: Send all other traffic through RouteFlux while keeping selected resources direct and optionally excluding whole LAN devices.",
+		"anti-target: deprecated alias for bypass.",
+		"split: advanced CLI-only mode for explicit proxy, bypass, and excluded-device lists.",
 		"Service presets: discord, facetime, gemini, gemini-mobile, instagram, netflix, notebooklm, notebooklm-mobile, telegram, telegram-web, twitter, whatsapp, youtube.",
 		"Popular root domains like youtube.com, instagram.com, netflix.com, x.com, gemini.google.com, and notebooklm.google.com still auto-expand to the domain families they need.",
 		"Gemini and NotebookLM mobile presets are broader and still best-effort because Google apps can use extra shared infrastructure and direct IPv4 endpoints.",
@@ -282,7 +325,7 @@ func TestFirewallSetAntiTargetSupportsServicesAndDomains(t *testing.T) {
 		t.Fatalf("execute firewall set anti-target: %v", err)
 	}
 
-	if got := stdout.String(); !strings.Contains(got, "Firewall anti-targets set to youtube, youtube.com, 1.1.1.1 (deprecated: use routeflux firewall set split --bypass ...)") {
+	if got := stdout.String(); !strings.Contains(got, "Firewall anti-targets set to youtube, youtube.com, 1.1.1.1 (deprecated: use routeflux firewall set bypass ...)") {
 		t.Fatalf("unexpected output: %q", got)
 	}
 
@@ -304,6 +347,47 @@ func TestFirewallSetAntiTargetSupportsServicesAndDomains(t *testing.T) {
 	}
 	if len(settings.Split.Bypass.CIDRs) != 1 || settings.Split.Bypass.CIDRs[0] != "1.1.1.1" {
 		t.Fatalf("unexpected target cidrs: %v", settings.Split.Bypass.CIDRs)
+	}
+}
+
+func TestFirewallSetBypassSupportsExcludedHosts(t *testing.T) {
+	t.Parallel()
+
+	store := &cliMemoryStore{
+		settings: domain.DefaultSettings(),
+		state:    domain.DefaultRuntimeState(),
+	}
+	service := app.NewService(app.Dependencies{Store: store})
+
+	cmd := newFirewallCmd(&rootOptions{service: service})
+	var stdout bytes.Buffer
+	cmd.SetOut(&stdout)
+	cmd.SetErr(new(bytes.Buffer))
+	cmd.SetArgs([]string{"set", "bypass", "vk.com", "--exclude-host", "192.168.1.50"})
+
+	if err := cmd.Execute(); err != nil {
+		t.Fatalf("execute firewall set bypass: %v", err)
+	}
+
+	if got := stdout.String(); !strings.Contains(got, "Firewall bypass set to bypass=[vk.com]; excluded=[192.168.1.50]; default-action=proxy") {
+		t.Fatalf("unexpected output: %q", got)
+	}
+
+	settings, err := service.GetFirewallSettings()
+	if err != nil {
+		t.Fatalf("get firewall settings: %v", err)
+	}
+	if settings.Mode != domain.FirewallModeSplit {
+		t.Fatalf("unexpected firewall mode: %q", settings.Mode)
+	}
+	if settings.Split.DefaultAction != domain.FirewallDefaultActionProxy {
+		t.Fatalf("unexpected split default action: %q", settings.Split.DefaultAction)
+	}
+	if !reflect.DeepEqual(settings.Split.Bypass.Domains, []string{"vk.com"}) {
+		t.Fatalf("unexpected bypass domains: %+v", settings.Split.Bypass.Domains)
+	}
+	if !reflect.DeepEqual(settings.Split.ExcludedSources, []string{"192.168.1.50"}) {
+		t.Fatalf("unexpected excluded sources: %+v", settings.Split.ExcludedSources)
 	}
 }
 
@@ -412,6 +496,35 @@ func TestFirewallDraftSplitStoresFlagsOnly(t *testing.T) {
 	}
 	if !reflect.DeepEqual(settings.ModeDrafts.Split.ExcludedSources, []string{"192.168.1.50"}) {
 		t.Fatalf("unexpected split draft excluded sources: %+v", settings.ModeDrafts.Split.ExcludedSources)
+	}
+}
+
+func TestFirewallDraftBypassStoresSelectorsAndExcludedHosts(t *testing.T) {
+	t.Parallel()
+
+	store := &cliMemoryStore{
+		settings: domain.DefaultSettings(),
+		state:    domain.DefaultRuntimeState(),
+	}
+	service := app.NewService(app.Dependencies{Store: store})
+
+	cmd := newFirewallCmd(&rootOptions{service: service})
+	cmd.SetOut(new(bytes.Buffer))
+	cmd.SetErr(new(bytes.Buffer))
+	cmd.SetArgs([]string{"draft", "bypass", "vk.com", "--exclude-host", "192.168.1.50"})
+	if err := cmd.Execute(); err != nil {
+		t.Fatalf("execute firewall draft bypass: %v", err)
+	}
+
+	settings, err := service.GetFirewallSettings()
+	if err != nil {
+		t.Fatalf("get firewall settings: %v", err)
+	}
+	if !reflect.DeepEqual(settings.ModeDrafts.Split.Bypass.Domains, []string{"vk.com"}) {
+		t.Fatalf("unexpected bypass draft domains: %+v", settings.ModeDrafts.Split.Bypass.Domains)
+	}
+	if !reflect.DeepEqual(settings.ModeDrafts.Split.ExcludedSources, []string{"192.168.1.50"}) {
+		t.Fatalf("unexpected bypass draft excluded sources: %+v", settings.ModeDrafts.Split.ExcludedSources)
 	}
 }
 

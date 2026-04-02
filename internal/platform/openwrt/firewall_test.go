@@ -2,6 +2,7 @@ package openwrt
 
 import (
 	"context"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -498,5 +499,155 @@ func TestFirewallManagerDisableRemovesUDPPolicyRouting(t *testing.T) {
 		if !strings.Contains(string(calls), want) {
 			t.Fatalf("calls missing %q\n%s", want, calls)
 		}
+	}
+}
+
+func TestConntrackTargetForMemTotalKiB(t *testing.T) {
+	t.Parallel()
+
+	if got := conntrackTargetForMemTotalKiB(250312); got != 65536 {
+		t.Fatalf("unexpected conntrack target: got %d want %d", got, 65536)
+	}
+}
+
+func TestFirewallManagerTuneConntrackRaisesLimit(t *testing.T) {
+	t.Parallel()
+
+	dir := t.TempDir()
+	manager := FirewallManager{
+		ProcRoot:           dir,
+		ConntrackMaxPath:   filepath.Join(dir, "sys", "net", "netfilter", "nf_conntrack_max"),
+		ConntrackCountPath: filepath.Join(dir, "sys", "net", "netfilter", "nf_conntrack_count"),
+		MemInfoPath:        filepath.Join(dir, "meminfo"),
+	}
+
+	if err := os.MkdirAll(filepath.Dir(manager.ConntrackMaxPath), 0o755); err != nil {
+		t.Fatalf("mkdir conntrack dir: %v", err)
+	}
+	if err := os.WriteFile(manager.MemInfoPath, []byte("MemTotal:         250312 kB\n"), 0o644); err != nil {
+		t.Fatalf("write meminfo: %v", err)
+	}
+	if err := os.WriteFile(manager.ConntrackMaxPath, []byte("31744\n"), 0o644); err != nil {
+		t.Fatalf("write conntrack max: %v", err)
+	}
+	if err := os.WriteFile(manager.ConntrackCountPath, []byte("537\n"), 0o644); err != nil {
+		t.Fatalf("write conntrack count: %v", err)
+	}
+
+	stats, err := manager.autoTuneConntrack()
+	if err != nil {
+		t.Fatalf("auto tune conntrack: %v", err)
+	}
+
+	if !stats.Updated {
+		t.Fatal("expected conntrack limit to be updated")
+	}
+	if stats.Target != 65536 || stats.Max != 65536 {
+		t.Fatalf("unexpected conntrack stats: %+v", stats)
+	}
+
+	data, err := os.ReadFile(manager.ConntrackMaxPath)
+	if err != nil {
+		t.Fatalf("read conntrack max: %v", err)
+	}
+	if strings.TrimSpace(string(data)) != "65536" {
+		t.Fatalf("unexpected conntrack max contents: %q", data)
+	}
+}
+
+func TestFirewallManagerTuneConntrackWarnsOnHighUsage(t *testing.T) {
+	t.Parallel()
+
+	dir := t.TempDir()
+	manager := FirewallManager{
+		ProcRoot:           dir,
+		ConntrackMaxPath:   filepath.Join(dir, "sys", "net", "netfilter", "nf_conntrack_max"),
+		ConntrackCountPath: filepath.Join(dir, "sys", "net", "netfilter", "nf_conntrack_count"),
+		MemInfoPath:        filepath.Join(dir, "meminfo"),
+	}
+
+	if err := os.MkdirAll(filepath.Dir(manager.ConntrackMaxPath), 0o755); err != nil {
+		t.Fatalf("mkdir conntrack dir: %v", err)
+	}
+	if err := os.WriteFile(manager.MemInfoPath, []byte("MemTotal:         250312 kB\n"), 0o644); err != nil {
+		t.Fatalf("write meminfo: %v", err)
+	}
+	if err := os.WriteFile(manager.ConntrackMaxPath, []byte("65536\n"), 0o644); err != nil {
+		t.Fatalf("write conntrack max: %v", err)
+	}
+	if err := os.WriteFile(manager.ConntrackCountPath, []byte(fmt.Sprintf("%d\n", 65536*9/10)), 0o644); err != nil {
+		t.Fatalf("write conntrack count: %v", err)
+	}
+
+	stats, err := manager.autoTuneConntrack()
+	if err != nil {
+		t.Fatalf("auto tune conntrack: %v", err)
+	}
+
+	if stats.Updated {
+		t.Fatal("did not expect conntrack limit update")
+	}
+	if !stats.ShouldWarn {
+		t.Fatalf("expected high-usage warning, got %+v", stats)
+	}
+}
+
+func TestFirewallManagerDisableTunesConntrack(t *testing.T) {
+	t.Parallel()
+
+	dir := t.TempDir()
+	manager := FirewallManager{
+		NFTPath:            "/usr/bin/true",
+		DNSMasqServicePath: "/usr/bin/true",
+		DNSMasqSnippetPath: filepath.Join(dir, "routeflux.conf"),
+		ProcRoot:           dir,
+		ConntrackMaxPath:   filepath.Join(dir, "sys", "net", "netfilter", "nf_conntrack_max"),
+		ConntrackCountPath: filepath.Join(dir, "sys", "net", "netfilter", "nf_conntrack_count"),
+		MemInfoPath:        filepath.Join(dir, "meminfo"),
+	}
+
+	if err := os.MkdirAll(filepath.Dir(manager.ConntrackMaxPath), 0o755); err != nil {
+		t.Fatalf("mkdir conntrack dir: %v", err)
+	}
+	if err := os.WriteFile(manager.MemInfoPath, []byte("MemTotal:         250312 kB\n"), 0o644); err != nil {
+		t.Fatalf("write meminfo: %v", err)
+	}
+	if err := os.WriteFile(manager.ConntrackMaxPath, []byte("31744\n"), 0o644); err != nil {
+		t.Fatalf("write conntrack max: %v", err)
+	}
+	if err := os.WriteFile(manager.ConntrackCountPath, []byte("824\n"), 0o644); err != nil {
+		t.Fatalf("write conntrack count: %v", err)
+	}
+
+	if err := manager.Disable(context.Background()); err != nil {
+		t.Fatalf("disable firewall: %v", err)
+	}
+
+	data, err := os.ReadFile(manager.ConntrackMaxPath)
+	if err != nil {
+		t.Fatalf("read conntrack max: %v", err)
+	}
+	if strings.TrimSpace(string(data)) != "65536" {
+		t.Fatalf("unexpected conntrack max contents after disable: %q", data)
+	}
+}
+
+func TestFirewallManagerTuneConntrackIgnoresReadOnlyPaths(t *testing.T) {
+	t.Parallel()
+
+	dir := t.TempDir()
+	manager := FirewallManager{
+		ProcRoot:           dir,
+		ConntrackMaxPath:   filepath.Join(dir, "missing", "nf_conntrack_max"),
+		ConntrackCountPath: filepath.Join(dir, "missing", "nf_conntrack_count"),
+		MemInfoPath:        filepath.Join(dir, "missing", "meminfo"),
+	}
+
+	if _, err := manager.autoTuneConntrack(); err == nil {
+		t.Fatal("expected missing proc paths to return an error from autoTuneConntrack")
+	}
+
+	if err := manager.tuneConntrack(context.Background()); err != nil {
+		t.Fatalf("tuneConntrack should ignore missing proc paths: %v", err)
 	}
 }

@@ -75,6 +75,34 @@ func TestFirewallViewActionButtonsUseButtonType(t *testing.T) {
 	}
 }
 
+func TestFirewallViewPromotesBypassModeInLuCI(t *testing.T) {
+	t.Parallel()
+
+	source := readFirewallViewSource(t)
+
+	for _, want := range []string{
+		"E('option', { 'value': 'bypass'",
+		"_('Bypass')",
+		"_('Keep Direct')",
+		"_('Excluded Devices')",
+		"current firewall config uses advanced split tunnelling created outside LuCI",
+		"'firewall', 'draft', 'bypass'",
+	} {
+		if !strings.Contains(source, want) {
+			t.Fatalf("firewall view must contain %q", want)
+		}
+	}
+
+	for _, forbidden := range []string{
+		"E('option', { 'value': 'split'",
+		"_('Split Tunnelling')",
+	} {
+		if strings.Contains(source, forbidden) {
+			t.Fatalf("firewall view must not keep %q in main LuCI mode selector or copy", forbidden)
+		}
+	}
+}
+
 func readFirewallViewSource(t *testing.T) string {
 	t.Helper()
 

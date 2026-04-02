@@ -852,6 +852,13 @@ func (s *Service) UpdateFirewallSplitDraft(ctx context.Context, proxySelectors, 
 	})
 }
 
+// UpdateFirewallBypassDraft stores bypass selectors without applying them.
+func (s *Service) UpdateFirewallBypassDraft(ctx context.Context, bypassSelectors, excludedSources []string) (domain.FirewallSettings, error) {
+	return runStoreWriteLockedResult(s, func() (domain.FirewallSettings, error) {
+		return s.updateFirewallSplitDraft(ctx, nil, bypassSelectors, excludedSources)
+	})
+}
+
 func (s *Service) updateFirewallSplitDraft(ctx context.Context, proxySelectors, bypassSelectors, excludedSources []string) (domain.FirewallSettings, error) {
 	_ = ctx
 
@@ -907,7 +914,7 @@ func (s *Service) clearFirewallModeDraft(ctx context.Context, mode string) (doma
 		settings.Firewall.ModeDrafts.Hosts = domain.FirewallModeDraft{}
 	case "targets":
 		settings.Firewall.ModeDrafts.Targets = domain.FirewallModeDraft{}
-	case "split":
+	case "split", "bypass":
 		settings.Firewall.ModeDrafts.Split = domain.FirewallSplitDraft{}
 	default:
 		return domain.FirewallSettings{}, fmt.Errorf("unsupported firewall draft mode %q", mode)
@@ -1116,8 +1123,14 @@ func (s *Service) configureFirewall(ctx context.Context, targets []string, enabl
 // ConfigureFirewallAntiTargets routes all other LAN traffic through the transparent proxy
 // while keeping selected targets direct.
 func (s *Service) ConfigureFirewallAntiTargets(ctx context.Context, targets []string, enabled bool, port int) (domain.FirewallSettings, error) {
+	return s.ConfigureFirewallBypass(ctx, targets, nil, enabled, port)
+}
+
+// ConfigureFirewallBypass routes all other LAN traffic through the transparent proxy
+// while keeping selected targets direct and allowing excluded sources.
+func (s *Service) ConfigureFirewallBypass(ctx context.Context, targets, excludedSources []string, enabled bool, port int) (domain.FirewallSettings, error) {
 	return runStoreWriteLockedResult(s, func() (domain.FirewallSettings, error) {
-		return s.configureFirewallSplit(ctx, nil, targets, nil, enabled, port, domain.FirewallDefaultActionProxy)
+		return s.configureFirewallSplit(ctx, nil, targets, excludedSources, enabled, port, domain.FirewallDefaultActionProxy)
 	})
 }
 

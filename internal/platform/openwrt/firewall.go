@@ -4,12 +4,14 @@ import (
 	"context"
 	"encoding/binary"
 	"fmt"
+	"log"
 	"math/bits"
 	"net"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"sort"
+	"strconv"
 	"strings"
 
 	"github.com/Alaxay8/routeflux/internal/domain"
@@ -22,6 +24,9 @@ const (
 	udpTProxyMarkMask = "0x1"
 	udpTProxyTable    = "100"
 	udpTProxyPriority = "1000"
+
+	minConntrackMax = 16384
+	maxConntrackMax = 131072
 )
 
 var allLANSourceCIDRs = []string{
@@ -59,6 +64,9 @@ type FirewallManager struct {
 	DNSMasqServicePath string
 	DNSMasqSnippetPath string
 	ProcRoot           string
+	MemInfoPath        string
+	ConntrackMaxPath   string
+	ConntrackCountPath string
 }
 
 type firewallPolicy struct {
@@ -113,6 +121,9 @@ func (m FirewallManager) Apply(ctx context.Context, settings domain.FirewallSett
 	if err := m.Validate(ctx, settings); err != nil {
 		return err
 	}
+	if err := m.tuneConntrack(ctx); err != nil {
+		return err
+	}
 
 	rules, err := BuildNFTablesRules(settings)
 	if err != nil {
@@ -142,8 +153,19 @@ func (m FirewallManager) Apply(ctx context.Context, settings domain.FirewallSett
 	return nil
 }
 
+type conntrackStats struct {
+	Count      int
+	Max        int
+	Target     int
+	Updated    bool
+	ShouldWarn bool
+}
+
 // Disable removes the transient RouteFlux nftables table.
 func (m FirewallManager) Disable(ctx context.Context) error {
+	if err := m.tuneConntrack(ctx); err != nil {
+		return err
+	}
 	m.cleanupPolicyRouting(ctx)
 	err := m.run(ctx, "delete", "table", "inet", "routeflux")
 	if err != nil && !strings.Contains(strings.ToLower(err.Error()), "no such file or directory") {
@@ -387,6 +409,135 @@ func normalizeFirewallTarget(target string) ([]string, error) {
 	default:
 		return nil, fmt.Errorf("unsupported target %q: only IPv4, IPv4 CIDR, and IPv4 ranges are supported", target)
 	}
+}
+
+func (m FirewallManager) memInfoPath() string {
+	return firstNonEmpty(m.MemInfoPath, filepath.Join(firstNonEmpty(m.ProcRoot, "/proc"), "meminfo"))
+}
+
+func (m FirewallManager) conntrackMaxPath() string {
+	return firstNonEmpty(m.ConntrackMaxPath, filepath.Join(firstNonEmpty(m.ProcRoot, "/proc"), "sys", "net", "netfilter", "nf_conntrack_max"))
+}
+
+func (m FirewallManager) conntrackCountPath() string {
+	return firstNonEmpty(m.ConntrackCountPath, filepath.Join(firstNonEmpty(m.ProcRoot, "/proc"), "sys", "net", "netfilter", "nf_conntrack_count"))
+}
+
+func (m FirewallManager) tuneConntrack(ctx context.Context) error {
+	stats, err := m.autoTuneConntrack()
+	if err != nil {
+		log.Printf("routeflux: conntrack auto-tune skipped: %v", err)
+		return nil
+	}
+	if stats.Updated {
+		log.Printf("routeflux: conntrack limit raised to %d (count=%d)", stats.Max, stats.Count)
+	}
+	if stats.ShouldWarn {
+		log.Printf("routeflux: conntrack usage is high count=%d max=%d", stats.Count, stats.Max)
+	}
+	_ = ctx
+	return nil
+}
+
+func (m FirewallManager) autoTuneConntrack() (conntrackStats, error) {
+	memTotalKiB, err := readMemTotalKiB(m.memInfoPath())
+	if err != nil {
+		return conntrackStats{}, err
+	}
+
+	currentMax, err := readIntFromFile(m.conntrackMaxPath())
+	if err != nil {
+		return conntrackStats{}, err
+	}
+
+	currentCount, err := readIntFromFile(m.conntrackCountPath())
+	if err != nil {
+		return conntrackStats{}, err
+	}
+
+	target := conntrackTargetForMemTotalKiB(memTotalKiB)
+	stats := conntrackStats{
+		Count:  currentCount,
+		Max:    currentMax,
+		Target: target,
+	}
+
+	if currentMax < target {
+		if err := os.WriteFile(m.conntrackMaxPath(), []byte(fmt.Sprintf("%d\n", target)), 0o644); err != nil {
+			return conntrackStats{}, err
+		}
+		stats.Max = target
+		stats.Updated = true
+	}
+
+	if stats.Max > 0 && float64(stats.Count)/float64(stats.Max) >= 0.85 {
+		stats.ShouldWarn = true
+	}
+
+	return stats, nil
+}
+
+func conntrackTargetForMemTotalKiB(memTotalKiB int) int {
+	base := memTotalKiB / 4
+	if base < 1 {
+		base = 1
+	}
+
+	target := nextPowerOfTwo(base)
+	if target < minConntrackMax {
+		target = minConntrackMax
+	}
+	if target > maxConntrackMax {
+		target = maxConntrackMax
+	}
+	return target
+}
+
+func nextPowerOfTwo(value int) int {
+	if value <= 1 {
+		return 1
+	}
+	return 1 << bits.Len(uint(value-1))
+}
+
+func readMemTotalKiB(path string) (int, error) {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return 0, err
+	}
+
+	for _, line := range strings.Split(string(data), "\n") {
+		line = strings.TrimSpace(line)
+		if !strings.HasPrefix(line, "MemTotal:") {
+			continue
+		}
+
+		fields := strings.Fields(line)
+		if len(fields) < 2 {
+			return 0, fmt.Errorf("parse %s: malformed MemTotal line", path)
+		}
+
+		value, err := strconv.Atoi(fields[1])
+		if err != nil {
+			return 0, fmt.Errorf("parse %s: %w", path, err)
+		}
+		return value, nil
+	}
+
+	return 0, fmt.Errorf("parse %s: MemTotal not found", path)
+}
+
+func readIntFromFile(path string) (int, error) {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return 0, err
+	}
+
+	value, err := strconv.Atoi(strings.TrimSpace(string(data)))
+	if err != nil {
+		return 0, fmt.Errorf("parse %s: %w", path, err)
+	}
+	return value, nil
 }
 
 func isAllFirewallSource(value string) bool {
