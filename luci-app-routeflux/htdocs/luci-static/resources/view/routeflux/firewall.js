@@ -549,7 +549,7 @@ return view.extend({
 			textarea.disabled = false;
 			row.style.opacity = '1';
 			help.textContent = _('Route selected LAN clients through RouteFlux. Separate values with spaces, commas, or new lines.');
-			blockHelp.textContent = _('Legacy compatibility flag for older TCP-only setups. Current LAN transparent routing already intercepts QUIC directly.');
+			blockHelp.textContent = _('When enabled, RouteFlux blocks proxied QUIC and UDP traffic so clients retry over TCP. Leave it off when you want QUIC to be proxied normally.');
 			return;
 		}
 
@@ -559,7 +559,7 @@ return view.extend({
 			textarea.disabled = false;
 			row.style.opacity = '1';
 			help.textContent = _('Route only selected services, domains, or destination IPv4 targets through RouteFlux. Built-in presets: discord, facetime, gemini, gemini-mobile, instagram, netflix, notebooklm, notebooklm-mobile, telegram, telegram-web, twitter, whatsapp, youtube. Create any custom alias on the Services tab, then use it here like openai or work-chat. Popular root domains like youtube.com, instagram.com, netflix.com, x.com, gemini.google.com, and notebooklm.google.com still auto-expand to the domain families they need. Use gemini-mobile or notebooklm-mobile for the Android or iOS apps when the web preset is too narrow. The mobile presets are broader and may also catch shared Google infrastructure and direct IPv4 endpoints. Domains match subdomains and work best when clients use the router DNS.');
-			blockHelp.textContent = _('Legacy compatibility flag for older TCP-only setups. Current LAN transparent routing already intercepts QUIC directly.');
+			blockHelp.textContent = _('When enabled, RouteFlux blocks proxied QUIC and UDP traffic so clients retry over TCP. Leave it off when you want QUIC to be proxied normally.');
 			return;
 		}
 
@@ -569,7 +569,7 @@ return view.extend({
 			textarea.disabled = false;
 			row.style.opacity = '1';
 			help.textContent = _('Keep selected services, domains, or destination IPv4 targets direct, and send all other LAN traffic through RouteFlux. This mode works best for LAN clients and does not redirect router-originated traffic. Domains match subdomains and work from Xray sniffing, so dnsmasq nftset support is not required here.');
-			blockHelp.textContent = _('Legacy compatibility flag for older TCP-only setups. Current LAN transparent routing already intercepts QUIC directly.');
+			blockHelp.textContent = _('When enabled, RouteFlux blocks proxied QUIC and UDP traffic so clients retry over TCP. Leave it off when you want QUIC to be proxied normally.');
 			return;
 		}
 

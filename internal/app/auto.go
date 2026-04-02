@@ -87,7 +87,7 @@ func (s *Service) evaluateAutoSelection(ctx context.Context, sub domain.Subscrip
 		currentNodeID = state.ActiveNodeID
 	}
 
-	s.probeSubscription(ctx, sub, health)
+	s.probeSubscription(ctx, sub, health, switchPolicyFromSettings(settings).FailureThreshold)
 
 	candidateNode, candidateScore, err := probe.SelectBestNode(sub.Nodes, health, probe.DefaultScoreConfig())
 	if err != nil {

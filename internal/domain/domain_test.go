@@ -70,3 +70,45 @@ func TestDefaultSettingsAreSane(t *testing.T) {
 		t.Fatalf("unexpected default mode: %s", settings.Mode)
 	}
 }
+
+func TestEffectiveTransparentBlockQUICHonorsExplicitSetting(t *testing.T) {
+	t.Parallel()
+
+	settings := domain.DefaultSettings().Firewall
+	settings.BlockQUIC = true
+
+	if !domain.EffectiveTransparentBlockQUIC(settings, nil) {
+		t.Fatal("expected explicit block-quic setting to win")
+	}
+}
+
+func TestEffectiveTransparentBlockQUICAutoBlocksIncompatibleNode(t *testing.T) {
+	t.Parallel()
+
+	settings := domain.DefaultSettings().Firewall
+	node := domain.Node{
+		Protocol:  domain.ProtocolVLESS,
+		Transport: "tcp",
+		Security:  "reality",
+		Flow:      "xtls-rprx-vision",
+	}
+
+	if !domain.EffectiveTransparentBlockQUIC(settings, &node) {
+		t.Fatal("expected incompatible node to force block-quic")
+	}
+}
+
+func TestEffectiveTransparentBlockQUICKeepsCompatibleNodeProxied(t *testing.T) {
+	t.Parallel()
+
+	settings := domain.DefaultSettings().Firewall
+	node := domain.Node{
+		Protocol:  domain.ProtocolVLESS,
+		Transport: "ws",
+		Security:  "tls",
+	}
+
+	if domain.EffectiveTransparentBlockQUIC(settings, &node) {
+		t.Fatal("expected compatible node to keep proxied quic")
+	}
+}

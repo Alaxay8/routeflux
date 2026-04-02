@@ -106,7 +106,7 @@ Hosts selectors:
 
 Other options:
 - port: port used for transparent redirect
-- block-quic: legacy compatibility flag for older TCP-only setups; current LAN transparent routing already intercepts QUIC directly
+- block-quic: when true, RouteFlux blocks proxied QUIC/UDP traffic so clients fall back to TCP; when false, QUIC is proxied normally
 `, firewallPresetSummary())))
 		},
 	}
@@ -129,10 +129,6 @@ Firewall options:
 - hosts: LAN clients whose traffic should go through RouteFlux
 - port: transparent redirect port
 - block-quic: true or false
-
-Legacy compatibility:
-- routeflux firewall set youtube.com 1.1.1.1 8.8.8.8/32
-  still works and is treated as routeflux firewall set targets ...
 `),
 		Example: strings.TrimSpace(`
 routeflux firewall set hosts 192.168.1.150

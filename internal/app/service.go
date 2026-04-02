@@ -1984,6 +1984,7 @@ func (s *Service) backendConfigRequest(settings domain.Settings, node domain.Nod
 		SOCKSPort:                socksPort,
 		HTTPPort:                 httpPort,
 		TransparentProxy:         transparent,
+		TransparentBlockQUIC:     domain.EffectiveTransparentBlockQUIC(settings.Firewall, &node),
 		TransparentPort:          settings.Firewall.TransparentPort,
 		TransparentTargetMode:    domain.NormalizeFirewallTargetMode(settings.Firewall.TargetMode),
 		TransparentTargetDomains: domain.ExpandFirewallTargetDomains(settings.Firewall.TargetServiceCatalog, settings.Firewall.TargetServices, settings.Firewall.TargetDomains),
@@ -2097,11 +2098,11 @@ func (s *Service) resolveNodeAddress(ctx context.Context, node domain.Node) (dom
 	return node, nil
 }
 
-func (s *Service) probeSubscription(ctx context.Context, sub domain.Subscription, health map[string]domain.NodeHealth) []probe.Result {
+func (s *Service) probeSubscription(ctx context.Context, sub domain.Subscription, health map[string]domain.NodeHealth, failureThreshold int) []probe.Result {
 	results := make([]probe.Result, 0, len(sub.Nodes))
 	for _, node := range sub.Nodes {
 		result := s.checker.Check(ctx, node)
-		updated := probe.UpdateHealth(health[node.ID], result.Healthy, result.Latency, result.Checked, errString(result.Err))
+		updated := probe.UpdateHealth(health[node.ID], result.Healthy, result.Latency, result.Checked, errString(result.Err), failureThreshold)
 		updated.NodeID = node.ID
 		updated.Score = probe.CalculateScore(updated, probe.DefaultScoreConfig()).Score
 		health[node.ID] = updated

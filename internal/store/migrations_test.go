@@ -58,6 +58,9 @@ func TestLoadSettingsMigratesMissingSchemaVersion(t *testing.T) {
 	if settings.Firewall.TransparentPort != domain.DefaultSettings().Firewall.TransparentPort {
 		t.Fatalf("expected default firewall port, got %d", settings.Firewall.TransparentPort)
 	}
+	if settings.Firewall.BlockQUIC {
+		t.Fatal("expected legacy settings to migrate to QUIC proxying by default")
+	}
 }
 
 func TestLoadSettingsPreservesLegacyFirewallTargetsWithoutDomains(t *testing.T) {
@@ -250,6 +253,62 @@ func TestLoadSettingsDecodesFirewallModeDraftsAndCompositeCatalog(t *testing.T) 
 		},
 	}; !reflect.DeepEqual(settings.Firewall.TargetServiceCatalog, want) {
 		t.Fatalf("unexpected target service catalog:\nwant: %+v\n got: %+v", want, settings.Firewall.TargetServiceCatalog)
+	}
+}
+
+func TestLoadSettingsMigratesLegacyBlockQUICToDisabled(t *testing.T) {
+	t.Parallel()
+
+	root := t.TempDir()
+	fileStore := store.NewFileStore(root)
+
+	settingsJSON := `{
+  "schema_version": 6,
+  "firewall": {
+    "enabled": true,
+    "source_cidrs": ["192.168.1.150"],
+    "block_quic": true
+  }
+}`
+	if err := os.WriteFile(filepath.Join(root, "settings.json"), []byte(settingsJSON), 0o644); err != nil {
+		t.Fatalf("write settings file: %v", err)
+	}
+
+	settings, err := fileStore.LoadSettings()
+	if err != nil {
+		t.Fatalf("load settings: %v", err)
+	}
+
+	if settings.Firewall.BlockQUIC {
+		t.Fatal("expected schema 6 settings to migrate to block_quic=false")
+	}
+}
+
+func TestLoadSettingsPreservesBlockQUICForCurrentSchema(t *testing.T) {
+	t.Parallel()
+
+	root := t.TempDir()
+	fileStore := store.NewFileStore(root)
+
+	settingsJSON := `{
+  "schema_version": 7,
+  "firewall": {
+    "enabled": true,
+    "source_cidrs": ["192.168.1.150"],
+    "block_quic": true
+  }
+}`
+	if err := os.WriteFile(filepath.Join(root, "settings.json"), []byte(settingsJSON), 0o644); err != nil {
+		t.Fatalf("write settings file: %v", err)
+	}
+
+	settings, err := fileStore.LoadSettings()
+	if err != nil {
+		t.Fatalf("load settings: %v", err)
+	}
+
+	if !settings.Firewall.BlockQUIC {
+		t.Fatal("expected current schema settings to preserve block_quic=true")
 	}
 }
 

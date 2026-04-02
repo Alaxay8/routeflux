@@ -185,7 +185,10 @@ func decodeSettings(data []byte, path string) (domain.Settings, error) {
 				}
 			}
 		}
-		if raw.Firewall.BlockQUIC != nil {
+		// Schema 7 made block_quic effective in the generated Xray config.
+		// Older persisted values were effectively no-ops, so migrate legacy
+		// installs to the new safe default unless the user re-saves the setting.
+		if raw.Firewall.BlockQUIC != nil && schemaVersion >= 7 {
 			settings.Firewall.BlockQUIC = *raw.Firewall.BlockQUIC
 		}
 	}

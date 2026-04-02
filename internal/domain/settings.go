@@ -155,7 +155,7 @@ type FirewallSettings struct {
 // DefaultSettings returns the baseline configuration used on first start.
 func DefaultSettings() Settings {
 	return Settings{
-		SchemaVersion:       6,
+		SchemaVersion:       7,
 		RefreshInterval:     NewDuration(time.Hour),
 		HealthCheckInterval: NewDuration(30 * time.Second),
 		SwitchCooldown:      NewDuration(5 * time.Minute),
@@ -171,7 +171,7 @@ func DefaultSettings() Settings {
 			TargetDomains:        nil,
 			SourceCIDRs:          nil,
 			ModeDrafts:           FirewallModeDrafts{},
-			BlockQUIC:            true,
+			BlockQUIC:            false,
 		},
 		AutoMode: false,
 		Mode:     SelectionModeManual,
@@ -198,6 +198,36 @@ func NormalizeFirewallTargetMode(mode FirewallTargetMode) FirewallTargetMode {
 	default:
 		return FirewallTargetModeProxy
 	}
+}
+
+// EffectiveTransparentBlockQUIC returns the runtime QUIC policy for transparent mode.
+//
+// Some outbound types, notably VLESS over TCP Reality/XTLS Vision, reject UDP/443 in
+// Xray. For those nodes we block QUIC and rely on TCP fallback even when the user has
+// not explicitly enabled block_quic.
+func EffectiveTransparentBlockQUIC(settings FirewallSettings, node *Node) bool {
+	if settings.BlockQUIC {
+		return true
+	}
+
+	return nodeRequiresTransparentQUICBlock(node)
+}
+
+func nodeRequiresTransparentQUICBlock(node *Node) bool {
+	if node == nil {
+		return false
+	}
+	if !strings.EqualFold(strings.TrimSpace(node.Transport), "tcp") {
+		return false
+	}
+	if node.Protocol != ProtocolVLESS {
+		return false
+	}
+	if strings.EqualFold(strings.TrimSpace(node.Flow), "xtls-rprx-vision") {
+		return true
+	}
+
+	return strings.EqualFold(strings.TrimSpace(node.Security), "reality")
 }
 
 // CloneFirewallModeDraft deep-copies one firewall mode draft.

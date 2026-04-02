@@ -67,8 +67,8 @@ func TestConfigureFirewallHostsClearsDestinationTargets(t *testing.T) {
 	if len(settings.SourceCIDRs) != 1 || settings.SourceCIDRs[0] != "192.168.1.150" {
 		t.Fatalf("unexpected source hosts: %v", settings.SourceCIDRs)
 	}
-	if !settings.BlockQUIC {
-		t.Fatal("expected QUIC blocking to be enabled for host routing")
+	if settings.BlockQUIC {
+		t.Fatal("expected QUIC proxying to stay enabled for host routing by default")
 	}
 }
 
@@ -1804,6 +1804,7 @@ func TestConnectManualAppliesHostFirewallRouting(t *testing.T) {
 	store.settings.Firewall.Enabled = true
 	store.settings.Firewall.SourceCIDRs = []string{"192.168.1.150"}
 	store.settings.Firewall.TransparentPort = 12345
+	store.settings.Firewall.BlockQUIC = true
 
 	runtimeBackend := &recordingBackend{}
 	firewall := &recordingFirewaller{}
@@ -1823,12 +1824,66 @@ func TestConnectManualAppliesHostFirewallRouting(t *testing.T) {
 	if !runtimeBackend.requests[0].TransparentProxy {
 		t.Fatal("expected transparent proxy to be enabled")
 	}
+	if !runtimeBackend.requests[0].TransparentBlockQUIC {
+		t.Fatal("expected transparent QUIC blocking to be forwarded to backend")
+	}
 
 	if len(firewall.applied) != 1 {
 		t.Fatalf("expected firewall rules to be applied once, got %d", len(firewall.applied))
 	}
 	if len(firewall.applied[0].SourceCIDRs) != 1 || firewall.applied[0].SourceCIDRs[0] != "192.168.1.150" {
 		t.Fatalf("unexpected applied source hosts: %v", firewall.applied[0].SourceCIDRs)
+	}
+}
+
+func TestConnectManualAutoBlocksQUICForVLESSRealityTCPNodes(t *testing.T) {
+	t.Parallel()
+
+	store := &memoryStore{
+		settings: domain.DefaultSettings(),
+		state:    domain.DefaultRuntimeState(),
+		subs: []domain.Subscription{
+			{
+				ID: "sub-1",
+				Nodes: []domain.Node{
+					{
+						ID:         "node-1",
+						Name:       "Germany",
+						Protocol:   domain.ProtocolVLESS,
+						Address:    "de.example.com",
+						Port:       443,
+						UUID:       "11111111-1111-1111-1111-111111111111",
+						Security:   "reality",
+						Transport:  "tcp",
+						Flow:       "xtls-rprx-vision",
+						ServerName: "www.google.com",
+					},
+				},
+			},
+		},
+	}
+	store.settings.Firewall.Enabled = true
+	store.settings.Firewall.SourceCIDRs = []string{"192.168.1.150"}
+	store.settings.Firewall.TransparentPort = 12345
+	store.settings.Firewall.BlockQUIC = false
+
+	runtimeBackend := &recordingBackend{}
+	firewall := &recordingFirewaller{}
+	service := NewService(Dependencies{
+		Store:      store,
+		Backend:    runtimeBackend,
+		Firewaller: firewall,
+	})
+
+	if err := service.ConnectManual(context.Background(), "sub-1", "node-1"); err != nil {
+		t.Fatalf("connect manual: %v", err)
+	}
+
+	if len(runtimeBackend.requests) != 1 {
+		t.Fatalf("expected one backend apply, got %d", len(runtimeBackend.requests))
+	}
+	if !runtimeBackend.requests[0].TransparentBlockQUIC {
+		t.Fatal("expected incompatible node to force transparent QUIC blocking")
 	}
 }
 

@@ -16,6 +16,7 @@ type ConfigRequest struct {
 	SOCKSPort                int
 	HTTPPort                 int
 	TransparentProxy         bool
+	TransparentBlockQUIC     bool
 	TransparentPort          int
 	TransparentTargetMode    domain.FirewallTargetMode
 	TransparentTargetDomains []string

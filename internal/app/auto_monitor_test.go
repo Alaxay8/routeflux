@@ -134,7 +134,56 @@ func TestSchedulerRunHealthOnceBuffersRepeatedHealthyStateWrites(t *testing.T) {
 	}
 }
 
-func TestSchedulerRunHealthOnceSwitchesImmediatelyWhenCurrentNodeIsUnhealthy(t *testing.T) {
+func TestSchedulerRunHealthOnceKeepsCurrentNodeOnTransientFailure(t *testing.T) {
+	t.Parallel()
+
+	currentNode, candidateNode, sub := testAutoSubscription()
+	store := &memoryStore{
+		subs:     []domain.Subscription{sub},
+		settings: domain.DefaultSettings(),
+		state: domain.RuntimeState{
+			ActiveSubscriptionID: sub.ID,
+			ActiveNodeID:         currentNode.ID,
+			Mode:                 domain.SelectionModeAuto,
+			Connected:            true,
+			LastSwitchAt:         time.Now().Add(-time.Hour),
+			Health: map[string]domain.NodeHealth{
+				currentNode.ID: {
+					NodeID:               currentNode.ID,
+					Healthy:              true,
+					SuccessCount:         3,
+					ConsecutiveSuccesses: 3,
+					AverageLatency:       domain.NewDuration(90 * time.Millisecond),
+				},
+			},
+		},
+	}
+
+	backend := &recordingBackend{}
+	service := NewService(Dependencies{
+		Store:   store,
+		Backend: backend,
+		Checker: fakeChecker{results: map[string]probe.Result{
+			currentNode.ID:   {Healthy: false, Latency: 5 * time.Second, Err: context.DeadlineExceeded},
+			candidateNode.ID: {Healthy: false, Latency: 5 * time.Second, Err: context.DeadlineExceeded},
+		}},
+	})
+
+	scheduler := NewScheduler(service)
+	scheduler.RunHealthOnce(context.Background())
+
+	if len(backend.requests) != 0 {
+		t.Fatalf("expected no backend reapply on transient failure, got %d requests", len(backend.requests))
+	}
+	if store.state.ActiveNodeID != currentNode.ID {
+		t.Fatalf("expected current node to remain active, got %s", store.state.ActiveNodeID)
+	}
+	if !store.state.Connected {
+		t.Fatal("expected runtime to stay connected on transient failure")
+	}
+}
+
+func TestSchedulerRunHealthOnceSwitchesAfterFailureThresholdBreach(t *testing.T) {
 	t.Parallel()
 
 	currentNode, candidateNode, sub := testAutoSubscription()
@@ -151,7 +200,16 @@ func TestSchedulerRunHealthOnceSwitchesImmediatelyWhenCurrentNodeIsUnhealthy(t *
 			Mode:                 domain.SelectionModeAuto,
 			Connected:            true,
 			LastSwitchAt:         time.Now().Add(-time.Minute),
-			Health:               map[string]domain.NodeHealth{},
+			Health: map[string]domain.NodeHealth{
+				currentNode.ID: {
+					NodeID:              currentNode.ID,
+					Healthy:             true,
+					SuccessCount:        3,
+					FailureCount:        2,
+					ConsecutiveFailures: probe.DefaultSwitchPolicy().FailureThreshold - 1,
+					AverageLatency:      domain.NewDuration(90 * time.Millisecond),
+				},
+			},
 		},
 	}
 
@@ -261,7 +319,7 @@ func TestSchedulerRunHealthOnceRecoversDisconnectedAutoMode(t *testing.T) {
 	}
 }
 
-func TestSchedulerRunHealthOnceMarksFailureWithoutRepeatedReapply(t *testing.T) {
+func TestSchedulerRunHealthOnceMarksFailureAfterThresholdBreach(t *testing.T) {
 	t.Parallel()
 
 	currentNode, candidateNode, sub := testAutoSubscription()
@@ -273,7 +331,16 @@ func TestSchedulerRunHealthOnceMarksFailureWithoutRepeatedReapply(t *testing.T) 
 			ActiveNodeID:         currentNode.ID,
 			Mode:                 domain.SelectionModeAuto,
 			Connected:            true,
-			Health:               map[string]domain.NodeHealth{},
+			Health: map[string]domain.NodeHealth{
+				currentNode.ID: {
+					NodeID:              currentNode.ID,
+					Healthy:             true,
+					SuccessCount:        3,
+					FailureCount:        2,
+					ConsecutiveFailures: probe.DefaultSwitchPolicy().FailureThreshold - 1,
+					AverageLatency:      domain.NewDuration(90 * time.Millisecond),
+				},
+			},
 		},
 	}
 

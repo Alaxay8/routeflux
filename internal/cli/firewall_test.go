@@ -167,7 +167,7 @@ func TestFirewallExplainOutputsFriendlyGuide(t *testing.T) {
 		"Popular root domains like youtube.com, instagram.com, netflix.com, x.com, gemini.google.com, and notebooklm.google.com still auto-expand to the domain families they need.",
 		"Gemini and NotebookLM mobile presets are broader and still best-effort because Google apps can use extra shared infrastructure and direct IPv4 endpoints.",
 		"hosts: Send all traffic from selected LAN devices through RouteFlux.",
-		"block-quic: legacy compatibility flag for older TCP-only setups; current LAN transparent routing already intercepts QUIC directly",
+		"block-quic: when true, RouteFlux blocks proxied QUIC/UDP traffic so clients fall back to TCP; when false, QUIC is proxied normally",
 		"all or *: all common private LAN ranges",
 		"routeflux firewall set hosts 192.168.1.150",
 	}

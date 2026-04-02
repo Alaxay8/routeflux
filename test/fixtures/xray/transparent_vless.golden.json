@@ -124,7 +124,7 @@
       },
       {
         "type": "field",
-        "outboundTag": "block",
+        "outboundTag": "selected",
         "inboundTag": [
           "transparent-udp-in"
         ],

@@ -378,7 +378,7 @@ Notes for anti-target:
 - Anti-target is still best-effort and currently considered unstable. Some browsers, mobile apps, CDNs, and QUIC-heavy services may still require manual testing before you rely on it full time.
 - Domain anti-targets do not require `dnsmasq` nftset support because Xray matches them from transparent traffic sniffing.
 - Anti-target is designed for LAN clients. It does not redirect router-originated traffic.
-- `block-quic` is now a legacy compatibility flag for older TCP-only setups. Current LAN transparent routing intercepts QUIC directly.
+- `block-quic` controls proxied QUIC handling. Enable it only when you intentionally want RouteFlux to block proxied QUIC and force clients to retry over TCP.
 
 - `hosts`: send all traffic from selected LAN devices through RouteFlux
   Example: route one phone, TV, or laptop through the proxy.
@@ -404,7 +404,7 @@ routeflux firewall set hosts all
 
 Other firewall options:
 
-- `block-quic`: legacy compatibility flag for older TCP-only routing setups
+- `block-quic`: block proxied QUIC/UDP traffic and force TCP fallback when needed
 - `port`: changes the transparent redirect port
 
 ## Development

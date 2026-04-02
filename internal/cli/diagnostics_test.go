@@ -5,6 +5,10 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/Alaxay8/routeflux/pkg/api"
+
+	"github.com/Alaxay8/routeflux/internal/domain"
 )
 
 func TestInspectPathDetectsExecutableFile(t *testing.T) {
@@ -51,5 +55,39 @@ func TestInspectPathDetectsBrokenSymlink(t *testing.T) {
 	}
 	if !strings.Contains(strings.ToLower(status.Error), "no such file or directory") {
 		t.Fatalf("expected missing target error, got %q", status.Error)
+	}
+}
+
+func TestRenderDiagnosticsTextIncludesTransparentQUICPolicy(t *testing.T) {
+	t.Parallel()
+
+	text := renderDiagnosticsText(diagnosticsSnapshot{
+		Status: api.StatusResponse{
+			State: domain.DefaultRuntimeState(),
+		},
+		TransparentQUICPolicy: "proxied",
+	})
+
+	if !strings.Contains(text, "transparent-quic-policy=proxied") {
+		t.Fatalf("expected diagnostics text to include transparent quic policy, got %q", text)
+	}
+}
+
+func TestDiagnosticsTransparentQUICPolicyMarksIncompatibleNodeAsBlocked(t *testing.T) {
+	t.Parallel()
+
+	settings := domain.DefaultSettings().Firewall
+	settings.Enabled = true
+	settings.SourceCIDRs = []string{"192.168.1.150"}
+
+	policy := diagnosticsTransparentQUICPolicy(settings, &domain.Node{
+		Protocol:  domain.ProtocolVLESS,
+		Transport: "tcp",
+		Security:  "reality",
+		Flow:      "xtls-rprx-vision",
+	})
+
+	if policy != "blocked-incompatible-node" {
+		t.Fatalf("expected incompatible node policy, got %q", policy)
 	}
 }

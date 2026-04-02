@@ -326,7 +326,7 @@ func TestGenerateTransparentConfigRoutesDNSUpstreamsDirect(t *testing.T) {
 	if !ok {
 		t.Fatalf("expected third routing rule object, got %T", rules[2])
 	}
-	if transparentUDP["outboundTag"] != "block" || transparentUDP["network"] != "udp" {
+	if transparentUDP["outboundTag"] != "selected" || transparentUDP["network"] != "udp" {
 		t.Fatalf("unexpected transparent udp route: %+v", transparentUDP)
 	}
 	if !reflect.DeepEqual(asStringSlice(t, transparentUDP["inboundTag"]), []string{"transparent-udp-in"}) {
@@ -413,6 +413,58 @@ func TestGenerateTransparentConfigAddsSeparateUDPInboundAndQUICSniffing(t *testi
 	}
 }
 
+func TestGenerateTransparentConfigBlocksUDPWhenQUICBlockingEnabled(t *testing.T) {
+	t.Parallel()
+
+	req := backend.ConfigRequest{
+		Mode: domain.SelectionModeManual,
+		Nodes: []domain.Node{
+			{
+				ID:       "node-1",
+				Protocol: domain.ProtocolVLESS,
+				Address:  "node1.example.com",
+				Port:     443,
+				UUID:     "11111111-1111-1111-1111-111111111111",
+			},
+		},
+		SelectedNodeID:       "node-1",
+		TransparentProxy:     true,
+		TransparentPort:      12345,
+		TransparentBlockQUIC: true,
+	}
+
+	got, err := xray.NewGenerator().Generate(req)
+	if err != nil {
+		t.Fatalf("generate config: %v", err)
+	}
+
+	var cfg map[string]any
+	if err := json.Unmarshal(got, &cfg); err != nil {
+		t.Fatalf("unmarshal generated json: %v", err)
+	}
+
+	routing, ok := cfg["routing"].(map[string]any)
+	if !ok {
+		t.Fatalf("routing section missing: %+v", cfg)
+	}
+
+	rules, ok := routing["rules"].([]any)
+	if !ok {
+		t.Fatalf("routing rules missing: %+v", routing)
+	}
+	if len(rules) != 3 {
+		t.Fatalf("expected three routing rules, got %d", len(rules))
+	}
+
+	transparentUDP, ok := rules[1].(map[string]any)
+	if !ok {
+		t.Fatalf("expected second routing rule object, got %T", rules[1])
+	}
+	if transparentUDP["outboundTag"] != "block" || transparentUDP["network"] != "udp" {
+		t.Fatalf("unexpected transparent udp route: %+v", transparentUDP)
+	}
+}
+
 func TestGenerateTransparentTargetRoutingOnlySelectsMatchedServices(t *testing.T) {
 	t.Parallel()
 
@@ -489,7 +541,7 @@ func TestGenerateTransparentTargetRoutingOnlySelectsMatchedServices(t *testing.T
 	if !ok {
 		t.Fatalf("expected second routing rule object, got %T", rules[1])
 	}
-	if domainUDP["outboundTag"] != "block" {
+	if domainUDP["outboundTag"] != "selected" {
 		t.Fatalf("unexpected target udp domain rule: %+v", domainUDP)
 	}
 	if domainUDP["network"] != "udp" {
@@ -523,7 +575,7 @@ func TestGenerateTransparentTargetRoutingOnlySelectsMatchedServices(t *testing.T
 	if !ok {
 		t.Fatalf("expected fourth routing rule object, got %T", rules[3])
 	}
-	if ipUDP["outboundTag"] != "block" {
+	if ipUDP["outboundTag"] != "selected" {
 		t.Fatalf("unexpected target udp ip rule: %+v", ipUDP)
 	}
 	if ipUDP["network"] != "udp" {
@@ -567,6 +619,56 @@ func TestGenerateTransparentTargetRoutingOnlySelectsMatchedServices(t *testing.T
 	}
 	if !reflect.DeepEqual(asStringSlice(t, localRule["inboundTag"]), []string{"socks-in", "http-in"}) {
 		t.Fatalf("unexpected local inbound tags: %+v", localRule["inboundTag"])
+	}
+}
+
+func TestGenerateTransparentTargetRoutingBlocksMatchedUDPWhenConfigured(t *testing.T) {
+	t.Parallel()
+
+	req := backend.ConfigRequest{
+		Mode: domain.SelectionModeManual,
+		Nodes: []domain.Node{
+			{
+				ID:       "node-1",
+				Protocol: domain.ProtocolVLESS,
+				Address:  "node1.example.com",
+				Port:     443,
+				UUID:     "11111111-1111-1111-1111-111111111111",
+			},
+		},
+		SelectedNodeID:           "node-1",
+		TransparentProxy:         true,
+		TransparentPort:          12345,
+		TransparentTargetDomains: []string{"youtube.com"},
+		TransparentBlockQUIC:     true,
+	}
+
+	got, err := xray.NewGenerator().Generate(req)
+	if err != nil {
+		t.Fatalf("generate config: %v", err)
+	}
+
+	var cfg map[string]any
+	if err := json.Unmarshal(got, &cfg); err != nil {
+		t.Fatalf("unmarshal generated json: %v", err)
+	}
+
+	routing, ok := cfg["routing"].(map[string]any)
+	if !ok {
+		t.Fatalf("routing section missing: %+v", cfg)
+	}
+
+	rules, ok := routing["rules"].([]any)
+	if !ok {
+		t.Fatalf("routing rules missing: %+v", routing)
+	}
+
+	domainUDP, ok := rules[1].(map[string]any)
+	if !ok {
+		t.Fatalf("expected second routing rule object, got %T", rules[1])
+	}
+	if domainUDP["outboundTag"] != "block" {
+		t.Fatalf("unexpected target udp domain rule: %+v", domainUDP)
 	}
 }
 
@@ -694,7 +796,7 @@ func TestGenerateTransparentBypassRoutingKeepsMatchedServicesDirect(t *testing.T
 	if !ok {
 		t.Fatalf("expected sixth routing rule object, got %T", rules[5])
 	}
-	if fallbackUDP["outboundTag"] != "block" || fallbackUDP["network"] != "udp" {
+	if fallbackUDP["outboundTag"] != "selected" || fallbackUDP["network"] != "udp" {
 		t.Fatalf("unexpected transparent udp fallback rule: %+v", fallbackUDP)
 	}
 
@@ -704,6 +806,57 @@ func TestGenerateTransparentBypassRoutingKeepsMatchedServicesDirect(t *testing.T
 	}
 	if localRule["outboundTag"] != "selected" {
 		t.Fatalf("unexpected local inbound rule: %+v", localRule)
+	}
+}
+
+func TestGenerateTransparentBypassRoutingBlocksFallbackUDPWhenConfigured(t *testing.T) {
+	t.Parallel()
+
+	req := backend.ConfigRequest{
+		Mode: domain.SelectionModeManual,
+		Nodes: []domain.Node{
+			{
+				ID:       "node-1",
+				Protocol: domain.ProtocolVLESS,
+				Address:  "node1.example.com",
+				Port:     443,
+				UUID:     "11111111-1111-1111-1111-111111111111",
+			},
+		},
+		SelectedNodeID:           "node-1",
+		TransparentProxy:         true,
+		TransparentPort:          12345,
+		TransparentTargetMode:    domain.FirewallTargetModeBypass,
+		TransparentTargetDomains: []string{"youtube.com"},
+		TransparentBlockQUIC:     true,
+	}
+
+	got, err := xray.NewGenerator().Generate(req)
+	if err != nil {
+		t.Fatalf("generate config: %v", err)
+	}
+
+	var cfg map[string]any
+	if err := json.Unmarshal(got, &cfg); err != nil {
+		t.Fatalf("unmarshal generated json: %v", err)
+	}
+
+	routing, ok := cfg["routing"].(map[string]any)
+	if !ok {
+		t.Fatalf("routing section missing: %+v", cfg)
+	}
+
+	rules, ok := routing["rules"].([]any)
+	if !ok {
+		t.Fatalf("routing rules missing: %+v", routing)
+	}
+
+	fallbackUDP, ok := rules[3].(map[string]any)
+	if !ok {
+		t.Fatalf("expected fourth routing rule object, got %T", rules[3])
+	}
+	if fallbackUDP["outboundTag"] != "block" || fallbackUDP["network"] != "udp" {
+		t.Fatalf("unexpected transparent udp fallback rule: %+v", fallbackUDP)
 	}
 }
 

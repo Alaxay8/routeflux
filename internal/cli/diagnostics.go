@@ -11,6 +11,7 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/Alaxay8/routeflux/internal/backend"
+	"github.com/Alaxay8/routeflux/internal/domain"
 	"github.com/Alaxay8/routeflux/internal/platform/openwrt"
 	"github.com/Alaxay8/routeflux/pkg/api"
 )
@@ -18,10 +19,11 @@ import (
 const routefluxBinaryPath = "/usr/bin/routeflux"
 
 type diagnosticsSnapshot struct {
-	Status       api.StatusResponse    `json:"status"`
-	Runtime      backend.RuntimeStatus `json:"runtime"`
-	RuntimeError string                `json:"runtime_error,omitempty"`
-	Files        diagnosticsFiles      `json:"files"`
+	Status                api.StatusResponse    `json:"status"`
+	Runtime               backend.RuntimeStatus `json:"runtime"`
+	RuntimeError          string                `json:"runtime_error,omitempty"`
+	TransparentQUICPolicy string                `json:"transparent_quic_policy"`
+	Files                 diagnosticsFiles      `json:"files"`
 }
 
 type diagnosticsFiles struct {
@@ -81,8 +83,9 @@ func buildDiagnosticsSnapshot(ctx context.Context, opts *rootOptions) (diagnosti
 	}
 
 	snapshot := diagnosticsSnapshot{
-		Status:  api.StatusResponseFromSnapshot(status),
-		Runtime: runtimeStatus,
+		Status:                api.StatusResponseFromSnapshot(status),
+		Runtime:               runtimeStatus,
+		TransparentQUICPolicy: diagnosticsTransparentQUICPolicy(status.Settings.Firewall, status.ActiveNode),
 		Files: diagnosticsFiles{
 			RoutefluxBinary:   inspectPath(routefluxBinaryPath),
 			RoutefluxRoot:     inspectPath(rootDir),
@@ -144,6 +147,7 @@ func renderDiagnosticsText(snapshot diagnosticsSnapshot) string {
 	lines := []string{
 		fmt.Sprintf("connected=%t", snapshot.Status.State.Connected),
 		fmt.Sprintf("mode=%s", snapshot.Status.State.Mode),
+		fmt.Sprintf("transparent-quic-policy=%s", snapshot.TransparentQUICPolicy),
 		fmt.Sprintf("backend-running=%t", snapshot.Runtime.Running),
 		fmt.Sprintf("backend-service-state=%s", snapshot.Runtime.ServiceState),
 		fmt.Sprintf("backend-config=%s", snapshot.Runtime.ConfigPath),
@@ -162,6 +166,19 @@ func renderDiagnosticsText(snapshot diagnosticsSnapshot) string {
 	}
 
 	return strings.Join(lines, "\n")
+}
+
+func diagnosticsTransparentQUICPolicy(settings domain.FirewallSettings, activeNode *domain.Node) string {
+	if !settings.Enabled || (len(settings.TargetServices) == 0 && len(settings.TargetCIDRs) == 0 && len(settings.TargetDomains) == 0 && len(settings.SourceCIDRs) == 0) {
+		return "disabled"
+	}
+	if settings.BlockQUIC {
+		return "blocked"
+	}
+	if domain.EffectiveTransparentBlockQUIC(settings, activeNode) {
+		return "blocked-incompatible-node"
+	}
+	return "proxied"
 }
 
 func describeDiagnosticFile(label string, status diagnosticsPathStatus) string {
