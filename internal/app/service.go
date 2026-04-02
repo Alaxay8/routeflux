@@ -796,7 +796,7 @@ func (s *Service) GetFirewallSettings() (domain.FirewallSettings, error) {
 		return domain.FirewallSettings{}, fmt.Errorf("load settings: %w", err)
 	}
 
-	return settings.Firewall, nil
+	return domain.CanonicalFirewallSettings(settings.Firewall), nil
 }
 
 // UpdateFirewallModeDraft stores selectors for one LuCI firewall mode without applying them.
@@ -817,8 +817,12 @@ func (s *Service) updateFirewallModeDraft(ctx context.Context, mode string, sele
 	mode = strings.TrimSpace(strings.ToLower(mode))
 	switch mode {
 	case "hosts":
+		sources, err := domain.ParseFirewallSources(selectors)
+		if err != nil {
+			return domain.FirewallSettings{}, err
+		}
 		settings.Firewall.ModeDrafts.Hosts = domain.FirewallModeDraft{
-			SourceCIDRs: normalizeFirewallSources(selectors),
+			SourceCIDRs: sources,
 		}
 	case "targets":
 		parsed, err := domain.ParseFirewallTargets(selectors, settings.Firewall.TargetServiceCatalog)
@@ -830,18 +834,49 @@ func (s *Service) updateFirewallModeDraft(ctx context.Context, mode string, sele
 			TargetCIDRs:    slices.Clone(parsed.CIDRs),
 			TargetDomains:  slices.Clone(parsed.Domains),
 		}
-	case "anti-target":
-		parsed, err := domain.ParseFirewallTargets(selectors, settings.Firewall.TargetServiceCatalog)
-		if err != nil {
-			return domain.FirewallSettings{}, err
-		}
-		settings.Firewall.ModeDrafts.AntiTarget = domain.FirewallModeDraft{
-			TargetServices: slices.Clone(parsed.Services),
-			TargetCIDRs:    slices.Clone(parsed.CIDRs),
-			TargetDomains:  slices.Clone(parsed.Domains),
-		}
 	default:
 		return domain.FirewallSettings{}, fmt.Errorf("unsupported firewall draft mode %q", mode)
+	}
+
+	if err := s.store.SaveSettings(settings); err != nil {
+		return domain.FirewallSettings{}, fmt.Errorf("save settings: %w", err)
+	}
+
+	return settings.Firewall, nil
+}
+
+// UpdateFirewallSplitDraft stores split selectors without applying them.
+func (s *Service) UpdateFirewallSplitDraft(ctx context.Context, proxySelectors, bypassSelectors, excludedSources []string) (domain.FirewallSettings, error) {
+	return runStoreWriteLockedResult(s, func() (domain.FirewallSettings, error) {
+		return s.updateFirewallSplitDraft(ctx, proxySelectors, bypassSelectors, excludedSources)
+	})
+}
+
+func (s *Service) updateFirewallSplitDraft(ctx context.Context, proxySelectors, bypassSelectors, excludedSources []string) (domain.FirewallSettings, error) {
+	_ = ctx
+
+	settings, err := s.store.LoadSettings()
+	if err != nil {
+		return domain.FirewallSettings{}, fmt.Errorf("load settings: %w", err)
+	}
+
+	proxyTargets, err := domain.ParseFirewallTargets(proxySelectors, settings.Firewall.TargetServiceCatalog)
+	if err != nil {
+		return domain.FirewallSettings{}, err
+	}
+	bypassTargets, err := domain.ParseFirewallTargets(bypassSelectors, settings.Firewall.TargetServiceCatalog)
+	if err != nil {
+		return domain.FirewallSettings{}, err
+	}
+	sources, err := domain.ParseFirewallSources(excludedSources)
+	if err != nil {
+		return domain.FirewallSettings{}, err
+	}
+
+	settings.Firewall.ModeDrafts.Split = domain.FirewallSplitDraft{
+		Proxy:           domain.FirewallSelectorSetFromTargets(proxyTargets),
+		Bypass:          domain.FirewallSelectorSetFromTargets(bypassTargets),
+		ExcludedSources: sources,
 	}
 
 	if err := s.store.SaveSettings(settings); err != nil {
@@ -872,8 +907,8 @@ func (s *Service) clearFirewallModeDraft(ctx context.Context, mode string) (doma
 		settings.Firewall.ModeDrafts.Hosts = domain.FirewallModeDraft{}
 	case "targets":
 		settings.Firewall.ModeDrafts.Targets = domain.FirewallModeDraft{}
-	case "anti-target":
-		settings.Firewall.ModeDrafts.AntiTarget = domain.FirewallModeDraft{}
+	case "split":
+		settings.Firewall.ModeDrafts.Split = domain.FirewallSplitDraft{}
 	default:
 		return domain.FirewallSettings{}, fmt.Errorf("unsupported firewall draft mode %q", mode)
 	}
@@ -973,14 +1008,19 @@ func (s *Service) deleteFirewallTargetService(ctx context.Context, name string) 
 	if entry.ReadOnly {
 		return fmt.Errorf("target service %q is readonly and cannot be deleted", entry.Name)
 	}
-	if firewallTargetsReferenceService(settings.Firewall.TargetServices, settings.Firewall.TargetServiceCatalog, entry.Name) {
+	if firewallSelectorSetReferencesService(settings.Firewall.Targets, settings.Firewall.TargetServiceCatalog, entry.Name) {
 		return fmt.Errorf("target service %q is still used by firewall targets; remove it from firewall targets first", entry.Name)
+	}
+	if firewallSelectorSetReferencesService(settings.Firewall.Split.Proxy, settings.Firewall.TargetServiceCatalog, entry.Name) ||
+		firewallSelectorSetReferencesService(settings.Firewall.Split.Bypass, settings.Firewall.TargetServiceCatalog, entry.Name) {
+		return fmt.Errorf("target service %q is still used by split tunnelling; remove it from split tunnelling first", entry.Name)
 	}
 	if firewallTargetsReferenceService(settings.Firewall.ModeDrafts.Targets.TargetServices, settings.Firewall.TargetServiceCatalog, entry.Name) {
 		return fmt.Errorf("target service %q is still referenced by the saved targets draft", entry.Name)
 	}
-	if firewallTargetsReferenceService(settings.Firewall.ModeDrafts.AntiTarget.TargetServices, settings.Firewall.TargetServiceCatalog, entry.Name) {
-		return fmt.Errorf("target service %q is still referenced by the saved anti-target draft", entry.Name)
+	if firewallSelectorSetReferencesService(settings.Firewall.ModeDrafts.Split.Proxy, settings.Firewall.TargetServiceCatalog, entry.Name) ||
+		firewallSelectorSetReferencesService(settings.Firewall.ModeDrafts.Split.Bypass, settings.Firewall.TargetServiceCatalog, entry.Name) {
+		return fmt.Errorf("target service %q is still referenced by the saved split draft", entry.Name)
 	}
 	if referrer, ok := findReferencingTargetService(settings.Firewall.TargetServiceCatalog, entry.Name); ok {
 		return fmt.Errorf("target service %q is still referenced by target service %q", entry.Name, referrer)
@@ -1014,6 +1054,10 @@ func firewallTargetsReferenceService(roots []string, catalog map[string]domain.F
 		}
 	}
 	return false
+}
+
+func firewallSelectorSetReferencesService(selectors domain.FirewallSelectorSet, catalog map[string]domain.FirewallTargetDefinition, target string) bool {
+	return firewallTargetsReferenceService(selectors.Services, catalog, target)
 }
 
 func findReferencingTargetService(catalog map[string]domain.FirewallTargetDefinition, target string) (string, bool) {
@@ -1061,23 +1105,23 @@ func targetServiceDependencyMatches(root, target string, catalog map[string]doma
 // ConfigureFirewall updates firewall targets and enabled state.
 func (s *Service) ConfigureFirewall(ctx context.Context, targets []string, enabled bool, port int) (domain.FirewallSettings, error) {
 	return runStoreWriteLockedResult(s, func() (domain.FirewallSettings, error) {
-		return s.configureFirewallTargets(ctx, targets, enabled, port, domain.FirewallTargetModeProxy)
+		return s.configureFirewallTargets(ctx, targets, enabled, port)
 	})
 }
 
 func (s *Service) configureFirewall(ctx context.Context, targets []string, enabled bool, port int) (domain.FirewallSettings, error) {
-	return s.configureFirewallTargets(ctx, targets, enabled, port, domain.FirewallTargetModeProxy)
+	return s.configureFirewallTargets(ctx, targets, enabled, port)
 }
 
 // ConfigureFirewallAntiTargets routes all other LAN traffic through the transparent proxy
 // while keeping selected targets direct.
 func (s *Service) ConfigureFirewallAntiTargets(ctx context.Context, targets []string, enabled bool, port int) (domain.FirewallSettings, error) {
 	return runStoreWriteLockedResult(s, func() (domain.FirewallSettings, error) {
-		return s.configureFirewallTargets(ctx, targets, enabled, port, domain.FirewallTargetModeBypass)
+		return s.configureFirewallSplit(ctx, nil, targets, nil, enabled, port, domain.FirewallDefaultActionProxy)
 	})
 }
 
-func (s *Service) configureFirewallTargets(ctx context.Context, targets []string, enabled bool, port int, targetMode domain.FirewallTargetMode) (domain.FirewallSettings, error) {
+func (s *Service) configureFirewallTargets(ctx context.Context, targets []string, enabled bool, port int) (domain.FirewallSettings, error) {
 	settings, err := s.store.LoadSettings()
 	if err != nil {
 		return domain.FirewallSettings{}, fmt.Errorf("load settings: %w", err)
@@ -1089,23 +1133,74 @@ func (s *Service) configureFirewallTargets(ctx context.Context, targets []string
 	}
 
 	settings.Firewall.Enabled = enabled
-	settings.Firewall.TargetMode = domain.NormalizeFirewallTargetMode(targetMode)
-	settings.Firewall.TargetServices = slices.Clone(parsedTargets.Services)
-	settings.Firewall.TargetCIDRs = slices.Clone(parsedTargets.CIDRs)
-	settings.Firewall.TargetDomains = slices.Clone(parsedTargets.Domains)
-	settings.Firewall.SourceCIDRs = nil
-	if targetMode == domain.FirewallTargetModeBypass {
-		settings.Firewall.ModeDrafts.AntiTarget = domain.FirewallModeDraft{
-			TargetServices: slices.Clone(parsedTargets.Services),
-			TargetCIDRs:    slices.Clone(parsedTargets.CIDRs),
-			TargetDomains:  slices.Clone(parsedTargets.Domains),
-		}
-	} else {
-		settings.Firewall.ModeDrafts.Targets = domain.FirewallModeDraft{
-			TargetServices: slices.Clone(parsedTargets.Services),
-			TargetCIDRs:    slices.Clone(parsedTargets.CIDRs),
-			TargetDomains:  slices.Clone(parsedTargets.Domains),
-		}
+	settings.Firewall.Mode = domain.FirewallModeTargets
+	settings.Firewall.Hosts = nil
+	settings.Firewall.Targets = domain.FirewallSelectorSetFromTargets(parsedTargets)
+	settings.Firewall.Split = domain.DefaultFirewallSplitSettings()
+	settings.Firewall.ModeDrafts.Targets = domain.FirewallModeDraft{
+		TargetServices: slices.Clone(parsedTargets.Services),
+		TargetCIDRs:    slices.Clone(parsedTargets.CIDRs),
+		TargetDomains:  slices.Clone(parsedTargets.Domains),
+	}
+	if port > 0 {
+		settings.Firewall.TransparentPort = port
+	}
+
+	if err := s.validateFirewall(ctx, settings.Firewall); err != nil {
+		return domain.FirewallSettings{}, err
+	}
+
+	if err := s.store.SaveSettings(settings); err != nil {
+		return domain.FirewallSettings{}, fmt.Errorf("save settings: %w", err)
+	}
+
+	if err := s.reapplyCurrentConnection(ctx); err != nil {
+		return domain.FirewallSettings{}, err
+	}
+
+	return settings.Firewall, nil
+}
+
+// ConfigureFirewallSplit applies an explicit split tunnelling policy.
+func (s *Service) ConfigureFirewallSplit(ctx context.Context, proxyTargets, bypassTargets, excludedSources []string, enabled bool, port int) (domain.FirewallSettings, error) {
+	return runStoreWriteLockedResult(s, func() (domain.FirewallSettings, error) {
+		return s.configureFirewallSplit(ctx, proxyTargets, bypassTargets, excludedSources, enabled, port, domain.FirewallDefaultActionDirect)
+	})
+}
+
+func (s *Service) configureFirewallSplit(ctx context.Context, proxyTargets, bypassTargets, excludedSources []string, enabled bool, port int, defaultAction domain.FirewallDefaultAction) (domain.FirewallSettings, error) {
+	settings, err := s.store.LoadSettings()
+	if err != nil {
+		return domain.FirewallSettings{}, fmt.Errorf("load settings: %w", err)
+	}
+
+	proxyParsed, err := domain.ParseFirewallTargets(proxyTargets, settings.Firewall.TargetServiceCatalog)
+	if err != nil {
+		return domain.FirewallSettings{}, err
+	}
+	bypassParsed, err := domain.ParseFirewallTargets(bypassTargets, settings.Firewall.TargetServiceCatalog)
+	if err != nil {
+		return domain.FirewallSettings{}, err
+	}
+	sources, err := domain.ParseFirewallSources(excludedSources)
+	if err != nil {
+		return domain.FirewallSettings{}, err
+	}
+
+	settings.Firewall.Enabled = enabled
+	settings.Firewall.Mode = domain.FirewallModeSplit
+	settings.Firewall.Hosts = nil
+	settings.Firewall.Targets = domain.FirewallSelectorSet{}
+	settings.Firewall.Split = domain.FirewallSplitSettings{
+		Proxy:           domain.FirewallSelectorSetFromTargets(proxyParsed),
+		Bypass:          domain.FirewallSelectorSetFromTargets(bypassParsed),
+		ExcludedSources: sources,
+		DefaultAction:   domain.NormalizeFirewallDefaultAction(defaultAction),
+	}
+	settings.Firewall.ModeDrafts.Split = domain.FirewallSplitDraft{
+		Proxy:           domain.CloneFirewallSelectorSet(settings.Firewall.Split.Proxy),
+		Bypass:          domain.CloneFirewallSelectorSet(settings.Firewall.Split.Bypass),
+		ExcludedSources: slices.Clone(settings.Firewall.Split.ExcludedSources),
 	}
 	if port > 0 {
 		settings.Firewall.TransparentPort = port
@@ -1139,14 +1234,18 @@ func (s *Service) configureFirewallHosts(ctx context.Context, sources []string, 
 		return domain.FirewallSettings{}, fmt.Errorf("load settings: %w", err)
 	}
 
+	parsedSources, err := domain.ParseFirewallSources(sources)
+	if err != nil {
+		return domain.FirewallSettings{}, err
+	}
+
 	settings.Firewall.Enabled = enabled
-	settings.Firewall.TargetMode = domain.FirewallTargetModeProxy
-	settings.Firewall.SourceCIDRs = normalizeFirewallSources(sources)
-	settings.Firewall.TargetServices = nil
-	settings.Firewall.TargetCIDRs = nil
-	settings.Firewall.TargetDomains = nil
+	settings.Firewall.Mode = domain.FirewallModeHosts
+	settings.Firewall.Hosts = parsedSources
+	settings.Firewall.Targets = domain.FirewallSelectorSet{}
+	settings.Firewall.Split = domain.DefaultFirewallSplitSettings()
 	settings.Firewall.ModeDrafts.Hosts = domain.FirewallModeDraft{
-		SourceCIDRs: slices.Clone(settings.Firewall.SourceCIDRs),
+		SourceCIDRs: slices.Clone(settings.Firewall.Hosts),
 	}
 	if port > 0 {
 		settings.Firewall.TransparentPort = port
@@ -1184,6 +1283,7 @@ func (s *Service) updateFirewallPort(ctx context.Context, port int) (domain.Fire
 		return domain.FirewallSettings{}, fmt.Errorf("load settings: %w", err)
 	}
 
+	settings.Firewall = domain.CanonicalFirewallSettings(settings.Firewall)
 	settings.Firewall.TransparentPort = port
 	if err := s.validateFirewall(ctx, settings.Firewall); err != nil {
 		return domain.FirewallSettings{}, err
@@ -1212,6 +1312,7 @@ func (s *Service) updateFirewallBlockQUIC(ctx context.Context, enabled bool) (do
 		return domain.FirewallSettings{}, fmt.Errorf("load settings: %w", err)
 	}
 
+	settings.Firewall = domain.CanonicalFirewallSettings(settings.Firewall)
 	settings.Firewall.BlockQUIC = enabled
 	if err := s.validateFirewall(ctx, settings.Firewall); err != nil {
 		return domain.FirewallSettings{}, err
@@ -1241,11 +1342,10 @@ func (s *Service) disableFirewall(ctx context.Context) (domain.FirewallSettings,
 	}
 
 	settings.Firewall.Enabled = false
-	settings.Firewall.TargetMode = domain.FirewallTargetModeProxy
-	settings.Firewall.TargetServices = nil
-	settings.Firewall.TargetCIDRs = nil
-	settings.Firewall.TargetDomains = nil
-	settings.Firewall.SourceCIDRs = nil
+	settings.Firewall.Mode = domain.FirewallModeDisabled
+	settings.Firewall.Hosts = nil
+	settings.Firewall.Targets = domain.FirewallSelectorSet{}
+	settings.Firewall.Split = domain.DefaultFirewallSplitSettings()
 	if err := s.store.SaveSettings(settings); err != nil {
 		return domain.FirewallSettings{}, fmt.Errorf("save settings: %w", err)
 	}
@@ -1261,7 +1361,7 @@ func (s *Service) validateFirewall(ctx context.Context, settings domain.Firewall
 	if s.firewall == nil {
 		return nil
 	}
-	return s.firewall.Validate(ctx, settings)
+	return s.firewall.Validate(ctx, domain.CanonicalFirewallSettings(settings))
 }
 
 // SetSetting updates a single setting key.
@@ -1975,25 +2075,51 @@ func (s *Service) subscriptionNode(subscriptionID, nodeID string) (domain.Subscr
 }
 
 func (s *Service) backendConfigRequest(settings domain.Settings, node domain.Node, mode domain.SelectionMode, socksPort, httpPort int, transparent bool) backend.ConfigRequest {
-	return backend.ConfigRequest{
-		Mode:                     mode,
-		Nodes:                    []domain.Node{node},
-		SelectedNodeID:           node.ID,
-		LogLevel:                 settings.LogLevel,
-		DNS:                      settings.DNS,
-		SOCKSPort:                socksPort,
-		HTTPPort:                 httpPort,
-		TransparentProxy:         transparent,
-		TransparentBlockQUIC:     domain.EffectiveTransparentBlockQUIC(settings.Firewall, &node),
-		TransparentPort:          settings.Firewall.TransparentPort,
-		TransparentTargetMode:    domain.NormalizeFirewallTargetMode(settings.Firewall.TargetMode),
-		TransparentTargetDomains: domain.ExpandFirewallTargetDomains(settings.Firewall.TargetServiceCatalog, settings.Firewall.TargetServices, settings.Firewall.TargetDomains),
-		TransparentTargetCIDRs:   domain.ExpandFirewallTargetCIDRs(settings.Firewall.TargetServiceCatalog, settings.Firewall.TargetServices, settings.Firewall.TargetCIDRs),
+	req := backend.ConfigRequest{
+		Mode:                        mode,
+		Nodes:                       []domain.Node{node},
+		SelectedNodeID:              node.ID,
+		LogLevel:                    settings.LogLevel,
+		DNS:                         settings.DNS,
+		SOCKSPort:                   socksPort,
+		HTTPPort:                    httpPort,
+		TransparentProxy:            transparent,
+		TransparentSelectiveCapture: transparentSelectiveCapture(settings.Firewall),
+		TransparentBlockQUIC:        domain.EffectiveTransparentBlockQUIC(settings.Firewall, &node),
+		TransparentPort:             settings.Firewall.TransparentPort,
+	}
+
+	switch domain.NormalizeFirewallMode(settings.Firewall.Mode) {
+	case domain.FirewallModeTargets:
+		req.TransparentDefaultAction = domain.FirewallDefaultActionDirect
+		req.TransparentProxyDomains = domain.ExpandFirewallSelectorSetDomains(settings.Firewall.TargetServiceCatalog, settings.Firewall.Targets)
+		req.TransparentProxyCIDRs = domain.ExpandFirewallSelectorSetCIDRs(settings.Firewall.TargetServiceCatalog, settings.Firewall.Targets)
+	case domain.FirewallModeSplit:
+		req.TransparentDefaultAction = domain.NormalizeFirewallDefaultAction(settings.Firewall.Split.DefaultAction)
+		req.TransparentProxyDomains = domain.ExpandFirewallSelectorSetDomains(settings.Firewall.TargetServiceCatalog, settings.Firewall.Split.Proxy)
+		req.TransparentProxyCIDRs = domain.ExpandFirewallSelectorSetCIDRs(settings.Firewall.TargetServiceCatalog, settings.Firewall.Split.Proxy)
+		req.TransparentBypassDomains = domain.ExpandFirewallSelectorSetDomains(settings.Firewall.TargetServiceCatalog, settings.Firewall.Split.Bypass)
+		req.TransparentBypassCIDRs = domain.ExpandFirewallSelectorSetCIDRs(settings.Firewall.TargetServiceCatalog, settings.Firewall.Split.Bypass)
+	default:
+		req.TransparentDefaultAction = domain.FirewallDefaultActionProxy
+	}
+
+	return req
+}
+
+func transparentSelectiveCapture(settings domain.FirewallSettings) bool {
+	switch domain.CanonicalFirewallMode(settings) {
+	case domain.FirewallModeTargets:
+		return true
+	case domain.FirewallModeSplit:
+		return domain.NormalizeFirewallDefaultAction(settings.Split.DefaultAction) == domain.FirewallDefaultActionDirect
+	default:
+		return false
 	}
 }
 
 func firewallEnabled(settings domain.FirewallSettings) bool {
-	return settings.Enabled && (len(settings.TargetServices) > 0 || len(settings.TargetCIDRs) > 0 || len(settings.TargetDomains) > 0 || len(settings.SourceCIDRs) > 0)
+	return domain.FirewallRoutingEnabled(settings)
 }
 
 func pickFreeTCPPort() (int, error) {
@@ -2034,8 +2160,18 @@ func (s *Service) applyNodeSelection(ctx context.Context, sub domain.Subscriptio
 	}
 
 	if s.firewall != nil {
-		if settings.Firewall.Enabled && (len(settings.Firewall.TargetServices) > 0 || len(settings.Firewall.TargetCIDRs) > 0 || len(settings.Firewall.TargetDomains) > 0 || len(settings.Firewall.SourceCIDRs) > 0) {
-			s.logInfo("apply firewall rules", "subscription", sub.ID, "node", node.ID, "target_services", settings.Firewall.TargetServices, "target_cidrs", settings.Firewall.TargetCIDRs, "target_domains", settings.Firewall.TargetDomains, "hosts", settings.Firewall.SourceCIDRs)
+		if domain.FirewallRoutingEnabled(settings.Firewall) {
+			s.logInfo(
+				"apply firewall rules",
+				"subscription", sub.ID,
+				"node", node.ID,
+				"firewall_mode", settings.Firewall.Mode,
+				"targets", settings.Firewall.Targets,
+				"split_proxy", settings.Firewall.Split.Proxy,
+				"split_bypass", settings.Firewall.Split.Bypass,
+				"split_excluded_sources", settings.Firewall.Split.ExcludedSources,
+				"hosts", settings.Firewall.Hosts,
+			)
 			if err := s.firewall.Apply(ctx, settings.Firewall); err != nil {
 				s.logWarn("apply firewall failed", "subscription", sub.ID, "node", node.ID, "error", err.Error())
 				_ = s.markConnectionFailed(ctx, sub.ID, node.ID, mode, fmt.Sprintf("apply firewall: %v", err))

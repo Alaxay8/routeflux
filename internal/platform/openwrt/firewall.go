@@ -61,6 +61,18 @@ type FirewallManager struct {
 	ProcRoot           string
 }
 
+type firewallPolicy struct {
+	Mode             domain.FirewallMode
+	DefaultAction    domain.FirewallDefaultAction
+	SelectiveCapture bool
+	CaptureSources   []string
+	ExcludedSources  []string
+	ProxyCIDRs       []string
+	ProxyDomains     []string
+	BypassCIDRs      []string
+	BypassDomains    []string
+}
+
 // NewFirewallManager creates an OpenWrt nftables-based firewall manager.
 func NewFirewallManager() FirewallManager {
 	return FirewallManager{
@@ -76,11 +88,11 @@ func NewFirewallManager() FirewallManager {
 
 // Validate ensures the current platform supports the requested firewall mode.
 func (m FirewallManager) Validate(ctx context.Context, settings domain.FirewallSettings) error {
-	if domain.NormalizeFirewallTargetMode(settings.TargetMode) == domain.FirewallTargetModeBypass {
-		return nil
+	policy, err := resolveFirewallPolicy(settings)
+	if err != nil {
+		return err
 	}
-	expandedDomains := domain.ExpandFirewallTargetDomains(settings.TargetServiceCatalog, settings.TargetServices, settings.TargetDomains)
-	if len(expandedDomains) == 0 {
+	if !policy.needsDNSMasqNFTSet() {
 		return nil
 	}
 	if err := m.ensureDNSMasqNFTSetSupport(ctx); err != nil {
@@ -94,6 +106,10 @@ func (m FirewallManager) Validate(ctx context.Context, settings domain.FirewallS
 
 // Apply renders and loads nftables rules.
 func (m FirewallManager) Apply(ctx context.Context, settings domain.FirewallSettings) error {
+	policy, err := resolveFirewallPolicy(settings)
+	if err != nil {
+		return err
+	}
 	if err := m.Validate(ctx, settings); err != nil {
 		return err
 	}
@@ -119,17 +135,7 @@ func (m FirewallManager) Apply(ctx context.Context, settings domain.FirewallSett
 		}
 	}
 
-	targetMode := domain.NormalizeFirewallTargetMode(settings.TargetMode)
-	catalog := settings.TargetServiceCatalog
-	services := settings.TargetServices
-	domains := settings.TargetDomains
-	if targetMode == domain.FirewallTargetModeBypass {
-		catalog = nil
-		services = nil
-		domains = nil
-	}
-
-	if err := m.syncDNSMasqTargets(ctx, catalog, services, domains); err != nil {
+	if err := m.syncDNSMasqTargets(ctx, policy.ProxyDomainsForDNSMasq(), policy.BypassDomainsForDNSMasq()); err != nil {
 		return fmt.Errorf("sync dnsmasq targets: %w", err)
 	}
 
@@ -144,7 +150,7 @@ func (m FirewallManager) Disable(ctx context.Context) error {
 		return err
 	}
 	_ = os.Remove(m.RulesPath)
-	if err := m.syncDNSMasqTargets(ctx, nil, nil, nil); err != nil {
+	if err := m.syncDNSMasqTargets(ctx, nil, nil); err != nil {
 		return err
 	}
 	return nil
@@ -152,29 +158,12 @@ func (m FirewallManager) Disable(ctx context.Context) error {
 
 // BuildNFTablesRules returns an nftables ruleset for the provided targets.
 func BuildNFTablesRules(settings domain.FirewallSettings) (string, error) {
-	targetCIDRs := domain.ExpandFirewallTargetCIDRs(settings.TargetServiceCatalog, settings.TargetServices, settings.TargetCIDRs)
-	targetDomains := domain.ExpandFirewallTargetDomains(settings.TargetServiceCatalog, settings.TargetServices, settings.TargetDomains)
-	targets, err := normalizeFirewallTargets(targetCIDRs)
+	policy, err := resolveFirewallPolicy(settings)
 	if err != nil {
 		return "", err
 	}
-	sources, err := normalizeFirewallSources(settings.SourceCIDRs)
-	if err != nil {
-		return "", err
-	}
-	targetMode := len(targets) > 0 || len(targetDomains) > 0
-	targetBypassMode := domain.NormalizeFirewallTargetMode(settings.TargetMode) == domain.FirewallTargetModeBypass
-	if !targetMode && len(sources) == 0 {
-		return "", fmt.Errorf("at least one target service/domain/IP/CIDR or one source host is required")
-	}
-
-	redirectSources := sources
-	if targetMode {
-		redirectSources, err = normalizeFirewallTargets(allLANSourceCIDRs)
-		if err != nil {
-			return "", err
-		}
-	}
+	hasProxyOutput := len(policy.ProxyCIDRs) > 0 || len(policy.ProxyDomains) > 0
+	hasBypassOutput := len(policy.BypassCIDRs) > 0 || len(policy.BypassDomains) > 0
 
 	port := settings.TransparentPort
 	if port <= 0 {
@@ -183,38 +172,171 @@ func BuildNFTablesRules(settings domain.FirewallSettings) (string, error) {
 
 	var builder strings.Builder
 	builder.WriteString("table inet routeflux {\n")
-	if targetMode && !targetBypassMode {
-		builder.WriteString("  set target_v4 {\n    type ipv4_addr\n    flags interval\n")
-		if len(targets) > 0 {
-			fmt.Fprintf(&builder, "    elements = { %s }\n", strings.Join(targets, ", "))
+	if hasProxyOutput {
+		builder.WriteString("  set proxy_target_v4 {\n    type ipv4_addr\n    flags interval\n")
+		if len(policy.ProxyCIDRs) > 0 {
+			fmt.Fprintf(&builder, "    elements = { %s }\n", strings.Join(policy.ProxyCIDRs, ", "))
 		}
 		builder.WriteString("  }\n\n")
 	}
-	if len(redirectSources) > 0 {
-		fmt.Fprintf(&builder, "  set source_v4 {\n    type ipv4_addr\n    flags interval\n    elements = { %s }\n  }\n\n", strings.Join(redirectSources, ", "))
-		fmt.Fprintf(&builder, "  set bypass_v4 {\n    type ipv4_addr\n    flags interval\n    elements = { %s }\n  }\n\n", strings.Join(bypassDestinationCIDRs, ", "))
+	if hasBypassOutput {
+		builder.WriteString("  set direct_target_v4 {\n    type ipv4_addr\n    flags interval\n")
+		if len(policy.BypassCIDRs) > 0 {
+			fmt.Fprintf(&builder, "    elements = { %s }\n", strings.Join(policy.BypassCIDRs, ", "))
+		}
+		builder.WriteString("  }\n\n")
+	}
+	if len(policy.CaptureSources) > 0 {
+		fmt.Fprintf(&builder, "  set source_v4 {\n    type ipv4_addr\n    flags interval\n    elements = { %s }\n  }\n\n", strings.Join(policy.CaptureSources, ", "))
+		fmt.Fprintf(&builder, "  set local_bypass_v4 {\n    type ipv4_addr\n    flags interval\n    elements = { %s }\n  }\n\n", strings.Join(bypassDestinationCIDRs, ", "))
+	}
+	if len(policy.ExcludedSources) > 0 {
+		fmt.Fprintf(&builder, "  set excluded_source_v4 {\n    type ipv4_addr\n    flags interval\n    elements = { %s }\n  }\n\n", strings.Join(policy.ExcludedSources, ", "))
 	}
 
 	builder.WriteString("  chain prerouting {\n    type nat hook prerouting priority dstnat; policy accept;\n")
-	if len(redirectSources) > 0 {
-		builder.WriteString("    ip daddr @bypass_v4 return\n")
-		fmt.Fprintf(&builder, "    ip saddr @source_v4 tcp dport != %d redirect to :%d\n", port, port)
+	if len(policy.CaptureSources) > 0 {
+		if len(policy.ExcludedSources) > 0 {
+			builder.WriteString("    ip saddr @excluded_source_v4 return\n")
+		}
+		builder.WriteString("    ip daddr @local_bypass_v4 return\n")
+		if hasBypassOutput {
+			builder.WriteString("    ip daddr @direct_target_v4 return\n")
+		}
+		if policy.SelectiveCapture {
+			if hasProxyOutput {
+				fmt.Fprintf(&builder, "    ip saddr @source_v4 ip daddr @proxy_target_v4 tcp dport != %d redirect to :%d\n", port, port)
+			}
+		} else {
+			fmt.Fprintf(&builder, "    ip saddr @source_v4 tcp dport != %d redirect to :%d\n", port, port)
+		}
 	}
 	builder.WriteString("  }\n")
 
-	if len(redirectSources) > 0 {
+	if len(policy.CaptureSources) > 0 {
 		builder.WriteString("\n  chain prerouting_mangle {\n    type filter hook prerouting priority mangle; policy accept;\n")
-		builder.WriteString("    ip daddr @bypass_v4 return\n")
-		fmt.Fprintf(&builder, "    ip saddr @source_v4 udp dport 443 meta mark set %s tproxy ip to :%d accept\n", udpTProxyMark, port)
+		if len(policy.ExcludedSources) > 0 {
+			builder.WriteString("    ip saddr @excluded_source_v4 return\n")
+		}
+		builder.WriteString("    ip daddr @local_bypass_v4 return\n")
+		if hasBypassOutput {
+			builder.WriteString("    ip daddr @direct_target_v4 return\n")
+		}
+		if policy.SelectiveCapture {
+			if hasProxyOutput {
+				fmt.Fprintf(&builder, "    ip saddr @source_v4 ip daddr @proxy_target_v4 udp dport 443 meta mark set %s tproxy ip to :%d accept\n", udpTProxyMark, port)
+			}
+		} else {
+			fmt.Fprintf(&builder, "    ip saddr @source_v4 udp dport 443 meta mark set %s tproxy ip to :%d accept\n", udpTProxyMark, port)
+		}
 		builder.WriteString("  }\n")
 	}
 
-	if targetMode && !targetBypassMode {
-		fmt.Fprintf(&builder, "\n  chain output {\n    type nat hook output priority -100; policy accept;\n    ip daddr @target_v4 tcp dport != %d redirect to :%d\n  }\n", port, port)
+	if hasProxyOutput {
+		builder.WriteString("\n  chain output {\n    type nat hook output priority -100; policy accept;\n")
+		if hasBypassOutput {
+			builder.WriteString("    ip daddr @direct_target_v4 return\n")
+		}
+		fmt.Fprintf(&builder, "    ip daddr @proxy_target_v4 tcp dport != %d redirect to :%d\n  }\n", port, port)
 	}
 
 	builder.WriteString("}\n")
 	return builder.String(), nil
+}
+
+func resolveFirewallPolicy(settings domain.FirewallSettings) (firewallPolicy, error) {
+	settings = domain.CanonicalFirewallSettings(settings)
+	policy := firewallPolicy{
+		Mode:             domain.NormalizeFirewallMode(settings.Mode),
+		DefaultAction:    domain.FirewallDefaultActionProxy,
+		SelectiveCapture: false,
+	}
+
+	switch policy.Mode {
+	case domain.FirewallModeHosts:
+		sources, err := normalizeFirewallSources(settings.Hosts)
+		if err != nil {
+			return firewallPolicy{}, err
+		}
+		if len(sources) == 0 {
+			return firewallPolicy{}, fmt.Errorf("at least one source host is required")
+		}
+		policy.CaptureSources = sources
+	case domain.FirewallModeTargets:
+		proxyCIDRs, err := normalizeFirewallTargets(domain.ExpandFirewallSelectorSetCIDRs(settings.TargetServiceCatalog, settings.Targets))
+		if err != nil {
+			return firewallPolicy{}, err
+		}
+		proxyDomains := domain.ExpandFirewallSelectorSetDomains(settings.TargetServiceCatalog, settings.Targets)
+		captureSources, err := normalizeFirewallTargets(allLANSourceCIDRs)
+		if err != nil {
+			return firewallPolicy{}, err
+		}
+		if len(proxyCIDRs) == 0 && len(proxyDomains) == 0 {
+			return firewallPolicy{}, fmt.Errorf("at least one proxy target is required")
+		}
+		policy.CaptureSources = captureSources
+		policy.ProxyCIDRs = proxyCIDRs
+		policy.ProxyDomains = proxyDomains
+		policy.DefaultAction = domain.FirewallDefaultActionDirect
+		policy.SelectiveCapture = true
+	case domain.FirewallModeSplit:
+		proxyCIDRs, err := normalizeFirewallTargets(domain.ExpandFirewallSelectorSetCIDRs(settings.TargetServiceCatalog, settings.Split.Proxy))
+		if err != nil {
+			return firewallPolicy{}, err
+		}
+		proxyDomains := domain.ExpandFirewallSelectorSetDomains(settings.TargetServiceCatalog, settings.Split.Proxy)
+		bypassCIDRs, err := normalizeFirewallTargets(domain.ExpandFirewallSelectorSetCIDRs(settings.TargetServiceCatalog, settings.Split.Bypass))
+		if err != nil {
+			return firewallPolicy{}, err
+		}
+		bypassDomains := domain.ExpandFirewallSelectorSetDomains(settings.TargetServiceCatalog, settings.Split.Bypass)
+		excludedSources, err := normalizeFirewallSources(settings.Split.ExcludedSources)
+		if err != nil {
+			return firewallPolicy{}, err
+		}
+		if len(proxyCIDRs) == 0 && len(proxyDomains) == 0 && len(bypassCIDRs) == 0 && len(bypassDomains) == 0 {
+			return firewallPolicy{}, fmt.Errorf("at least one split proxy or bypass target is required")
+		}
+		captureSources, err := normalizeFirewallTargets(allLANSourceCIDRs)
+		if err != nil {
+			return firewallPolicy{}, err
+		}
+		policy.CaptureSources = captureSources
+		policy.ExcludedSources = excludedSources
+		policy.ProxyCIDRs = proxyCIDRs
+		policy.ProxyDomains = proxyDomains
+		policy.BypassCIDRs = bypassCIDRs
+		policy.BypassDomains = bypassDomains
+		policy.DefaultAction = domain.NormalizeFirewallDefaultAction(settings.Split.DefaultAction)
+		policy.SelectiveCapture = policy.DefaultAction == domain.FirewallDefaultActionDirect
+	default:
+		return firewallPolicy{}, fmt.Errorf("at least one target service/domain/IP/CIDR or one source host is required")
+	}
+
+	return policy, nil
+}
+
+func (p firewallPolicy) needsDNSMasqNFTSet() bool {
+	hasProxyOutput := len(p.ProxyCIDRs) > 0 || len(p.ProxyDomains) > 0
+	if len(p.ProxyDomains) > 0 {
+		return true
+	}
+	return len(p.BypassDomains) > 0 && hasProxyOutput
+}
+
+func (p firewallPolicy) ProxyDomainsForDNSMasq() []string {
+	if !p.needsDNSMasqNFTSet() {
+		return nil
+	}
+	return append([]string(nil), p.ProxyDomains...)
+}
+
+func (p firewallPolicy) BypassDomainsForDNSMasq() []string {
+	if !p.needsDNSMasqNFTSet() {
+		return nil
+	}
+	return append([]string(nil), p.BypassDomains...)
 }
 
 func normalizeFirewallTargets(targets []string) ([]string, error) {
@@ -372,14 +494,8 @@ func needsUDPPolicyRouting(settings domain.FirewallSettings) bool {
 		return false
 	}
 
-	targetCIDRs := domain.ExpandFirewallTargetCIDRs(settings.TargetServiceCatalog, settings.TargetServices, settings.TargetCIDRs)
-	targetDomains := domain.ExpandFirewallTargetDomains(settings.TargetServiceCatalog, settings.TargetServices, settings.TargetDomains)
-	if len(targetCIDRs) > 0 || len(targetDomains) > 0 {
-		return true
-	}
-
-	sources, err := normalizeFirewallSources(settings.SourceCIDRs)
-	return err == nil && len(sources) > 0
+	policy, err := resolveFirewallPolicy(settings)
+	return err == nil && len(policy.CaptureSources) > 0
 }
 
 func atomicWriteText(path, data string, perm os.FileMode) error {

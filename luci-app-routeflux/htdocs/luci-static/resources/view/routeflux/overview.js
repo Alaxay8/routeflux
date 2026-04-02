@@ -429,9 +429,21 @@ return view.extend({
 		var firewall = settings.firewall || {};
 		var dns = settings.dns || {};
 		var firewallMode = 'disabled';
-		var hasTargets = (Array.isArray(firewall.target_services) && firewall.target_services.length > 0) ||
+		var explicitFirewallMode = trim(firewall.mode);
+		var hasTargets = (firewall.targets && Array.isArray(firewall.targets.services) && firewall.targets.services.length > 0) ||
+			(firewall.targets && Array.isArray(firewall.targets.cidrs) && firewall.targets.cidrs.length > 0) ||
+			(firewall.targets && Array.isArray(firewall.targets.domains) && firewall.targets.domains.length > 0) ||
+			(Array.isArray(firewall.target_services) && firewall.target_services.length > 0) ||
 			(Array.isArray(firewall.target_cidrs) && firewall.target_cidrs.length > 0) ||
 			(Array.isArray(firewall.target_domains) && firewall.target_domains.length > 0);
+		var hasSplit = (firewall.split && firewall.split.proxy && Array.isArray(firewall.split.proxy.services) && firewall.split.proxy.services.length > 0) ||
+			(firewall.split && firewall.split.proxy && Array.isArray(firewall.split.proxy.cidrs) && firewall.split.proxy.cidrs.length > 0) ||
+			(firewall.split && firewall.split.proxy && Array.isArray(firewall.split.proxy.domains) && firewall.split.proxy.domains.length > 0) ||
+			(firewall.split && firewall.split.bypass && Array.isArray(firewall.split.bypass.services) && firewall.split.bypass.services.length > 0) ||
+			(firewall.split && firewall.split.bypass && Array.isArray(firewall.split.bypass.cidrs) && firewall.split.bypass.cidrs.length > 0) ||
+			(firewall.split && firewall.split.bypass && Array.isArray(firewall.split.bypass.domains) && firewall.split.bypass.domains.length > 0);
+		var hasHosts = (Array.isArray(firewall.hosts) && firewall.hosts.length > 0) ||
+			(Array.isArray(firewall.source_cidrs) && firewall.source_cidrs.length > 0);
 
 		if (data[0] && data[0].__error__)
 			ui.addNotification(null, notificationParagraph(_('Status error: %s').format(data[0].__error__)));
@@ -440,10 +452,12 @@ return view.extend({
 			ui.addNotification(null, notificationParagraph(_('Subscriptions error: %s').format(data[1].__error__)));
 
 		if (firewall.enabled === true) {
-			if (Array.isArray(firewall.source_cidrs) && firewall.source_cidrs.length > 0)
+			if (explicitFirewallMode === 'hosts' || hasHosts)
 				firewallMode = 'hosts';
-			else if (hasTargets)
-				firewallMode = trim(firewall.target_mode) === 'bypass' ? 'anti-target' : 'targets';
+			else if (explicitFirewallMode === 'split' || hasSplit)
+				firewallMode = 'split';
+			else if (explicitFirewallMode === 'targets' || hasTargets)
+				firewallMode = 'targets';
 			else
 				firewallMode = 'enabled';
 		}

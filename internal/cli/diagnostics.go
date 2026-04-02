@@ -169,7 +169,7 @@ func renderDiagnosticsText(snapshot diagnosticsSnapshot) string {
 }
 
 func diagnosticsTransparentQUICPolicy(settings domain.FirewallSettings, activeNode *domain.Node) string {
-	if !settings.Enabled || (len(settings.TargetServices) == 0 && len(settings.TargetCIDRs) == 0 && len(settings.TargetDomains) == 0 && len(settings.SourceCIDRs) == 0) {
+	if !domain.FirewallRoutingEnabled(settings) {
 		return "disabled"
 	}
 	if settings.BlockQUIC {

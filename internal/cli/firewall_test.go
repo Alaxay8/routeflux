@@ -37,8 +37,8 @@ func TestFirewallHostCommand(t *testing.T) {
 	if err != nil {
 		t.Fatalf("get firewall settings: %v", err)
 	}
-	if len(settings.SourceCIDRs) != 1 || settings.SourceCIDRs[0] != "192.168.1.150" {
-		t.Fatalf("unexpected source hosts: %v", settings.SourceCIDRs)
+	if len(settings.Hosts) != 1 || settings.Hosts[0] != "192.168.1.150" {
+		t.Fatalf("unexpected source hosts: %v", settings.Hosts)
 	}
 }
 
@@ -69,8 +69,8 @@ func TestFirewallHostCommandSupportsAllAlias(t *testing.T) {
 	if err != nil {
 		t.Fatalf("get firewall settings: %v", err)
 	}
-	if len(settings.SourceCIDRs) != 1 || settings.SourceCIDRs[0] != "all" {
-		t.Fatalf("unexpected source hosts: %v", settings.SourceCIDRs)
+	if len(settings.Hosts) != 1 || settings.Hosts[0] != "all" {
+		t.Fatalf("unexpected source hosts: %v", settings.Hosts)
 	}
 }
 
@@ -101,8 +101,8 @@ func TestFirewallSetHostsCommandSupportsAllAlias(t *testing.T) {
 	if err != nil {
 		t.Fatalf("get firewall settings: %v", err)
 	}
-	if len(settings.SourceCIDRs) != 1 || settings.SourceCIDRs[0] != "all" {
-		t.Fatalf("unexpected source hosts: %v", settings.SourceCIDRs)
+	if len(settings.Hosts) != 1 || settings.Hosts[0] != "all" {
+		t.Fatalf("unexpected source hosts: %v", settings.Hosts)
 	}
 }
 
@@ -114,7 +114,8 @@ func TestFirewallGetShowsCurrentValuesAndMeaning(t *testing.T) {
 		state:    domain.DefaultRuntimeState(),
 	}
 	store.settings.Firewall.Enabled = true
-	store.settings.Firewall.SourceCIDRs = []string{"192.168.1.150"}
+	store.settings.Firewall.Mode = domain.FirewallModeHosts
+	store.settings.Firewall.Hosts = []string{"192.168.1.150"}
 	store.settings.Firewall.BlockQUIC = true
 
 	cmd := newFirewallCmd(&rootOptions{service: app.NewService(app.Dependencies{Store: store})})
@@ -132,6 +133,7 @@ func TestFirewallGetShowsCurrentValuesAndMeaning(t *testing.T) {
 		"enabled=true",
 		"mode=hosts",
 		"mode-help=All traffic from selected LAN devices goes through RouteFlux.",
+		"default-action=direct",
 		"hosts=192.168.1.150",
 		"block-quic=true",
 	}
@@ -162,7 +164,8 @@ func TestFirewallExplainOutputsFriendlyGuide(t *testing.T) {
 	wants := []string{
 		"disabled: Do not redirect router traffic through RouteFlux.",
 		"targets: Send traffic through RouteFlux only when the destination matches selected services, domains, or IPv4 targets.",
-		"anti-target: Send all other LAN traffic through RouteFlux, but keep selected services, domains, or destination IPv4 targets direct.",
+		"split: Use separate proxy, bypass, and excluded-device lists.",
+		"anti-target: deprecated alias for split with default-action=proxy and bypass-only selectors.",
 		"Service presets: discord, facetime, gemini, gemini-mobile, instagram, netflix, notebooklm, notebooklm-mobile, telegram, telegram-web, twitter, whatsapp, youtube.",
 		"Popular root domains like youtube.com, instagram.com, netflix.com, x.com, gemini.google.com, and notebooklm.google.com still auto-expand to the domain families they need.",
 		"Gemini and NotebookLM mobile presets are broader and still best-effort because Google apps can use extra shared infrastructure and direct IPv4 endpoints.",
@@ -186,10 +189,13 @@ func TestSettingsGetIncludesFirewallHosts(t *testing.T) {
 		state:    domain.DefaultRuntimeState(),
 	}
 	store.settings.Firewall.Enabled = true
-	store.settings.Firewall.TargetServices = []string{"youtube"}
-	store.settings.Firewall.TargetCIDRs = []string{"1.1.1.1"}
-	store.settings.Firewall.TargetDomains = []string{"youtube.com"}
-	store.settings.Firewall.SourceCIDRs = []string{"192.168.1.150"}
+	store.settings.Firewall.Mode = domain.FirewallModeTargets
+	store.settings.Firewall.Targets = domain.FirewallSelectorSet{
+		Services: []string{"youtube"},
+		CIDRs:    []string{"1.1.1.1"},
+		Domains:  []string{"youtube.com"},
+	}
+	store.settings.Firewall.Hosts = []string{"192.168.1.150"}
 	store.settings.Firewall.BlockQUIC = true
 
 	cmd := newSettingsCmd(&rootOptions{service: app.NewService(app.Dependencies{Store: store})})
@@ -204,10 +210,15 @@ func TestSettingsGetIncludesFirewallHosts(t *testing.T) {
 
 	output := stdout.String()
 	wants := []string{
+		"firewall-mode=targets",
+		"firewall-default-action=direct",
 		"firewall-targets=youtube, youtube.com, 1.1.1.1",
 		"firewall-target-services=youtube",
 		"firewall-target-domains=youtube.com",
 		"firewall-target-cidrs=1.1.1.1",
+		"firewall-split-proxy=",
+		"firewall-split-bypass=",
+		"firewall-split-excluded-sources=",
 		"firewall-hosts=192.168.1.150",
 		"firewall-block-quic=true",
 	}
@@ -241,14 +252,14 @@ func TestFirewallSetTargetsSupportsServicesAndDomains(t *testing.T) {
 	if err != nil {
 		t.Fatalf("get firewall settings: %v", err)
 	}
-	if len(settings.TargetServices) != 1 || settings.TargetServices[0] != "youtube" {
-		t.Fatalf("unexpected target services: %v", settings.TargetServices)
+	if len(settings.Targets.Services) != 1 || settings.Targets.Services[0] != "youtube" {
+		t.Fatalf("unexpected target services: %v", settings.Targets.Services)
 	}
-	if len(settings.TargetDomains) != 1 || settings.TargetDomains[0] != "youtube.com" {
-		t.Fatalf("unexpected target domains: %v", settings.TargetDomains)
+	if len(settings.Targets.Domains) != 1 || settings.Targets.Domains[0] != "youtube.com" {
+		t.Fatalf("unexpected target domains: %v", settings.Targets.Domains)
 	}
-	if len(settings.TargetCIDRs) != 1 || settings.TargetCIDRs[0] != "1.1.1.1" {
-		t.Fatalf("unexpected target cidrs: %v", settings.TargetCIDRs)
+	if len(settings.Targets.CIDRs) != 1 || settings.Targets.CIDRs[0] != "1.1.1.1" {
+		t.Fatalf("unexpected target cidrs: %v", settings.Targets.CIDRs)
 	}
 }
 
@@ -271,7 +282,7 @@ func TestFirewallSetAntiTargetSupportsServicesAndDomains(t *testing.T) {
 		t.Fatalf("execute firewall set anti-target: %v", err)
 	}
 
-	if got := stdout.String(); !strings.Contains(got, "Firewall anti-targets set to youtube, youtube.com, 1.1.1.1") {
+	if got := stdout.String(); !strings.Contains(got, "Firewall anti-targets set to youtube, youtube.com, 1.1.1.1 (deprecated: use routeflux firewall set split --bypass ...)") {
 		t.Fatalf("unexpected output: %q", got)
 	}
 
@@ -279,17 +290,54 @@ func TestFirewallSetAntiTargetSupportsServicesAndDomains(t *testing.T) {
 	if err != nil {
 		t.Fatalf("get firewall settings: %v", err)
 	}
-	if settings.TargetMode != domain.FirewallTargetModeBypass {
-		t.Fatalf("unexpected target mode: %q", settings.TargetMode)
+	if settings.Mode != domain.FirewallModeSplit {
+		t.Fatalf("unexpected firewall mode: %q", settings.Mode)
 	}
-	if len(settings.TargetServices) != 1 || settings.TargetServices[0] != "youtube" {
-		t.Fatalf("unexpected target services: %v", settings.TargetServices)
+	if settings.Split.DefaultAction != domain.FirewallDefaultActionProxy {
+		t.Fatalf("unexpected split default action: %q", settings.Split.DefaultAction)
 	}
-	if len(settings.TargetDomains) != 1 || settings.TargetDomains[0] != "youtube.com" {
-		t.Fatalf("unexpected target domains: %v", settings.TargetDomains)
+	if len(settings.Split.Bypass.Services) != 1 || settings.Split.Bypass.Services[0] != "youtube" {
+		t.Fatalf("unexpected target services: %v", settings.Split.Bypass.Services)
 	}
-	if len(settings.TargetCIDRs) != 1 || settings.TargetCIDRs[0] != "1.1.1.1" {
-		t.Fatalf("unexpected target cidrs: %v", settings.TargetCIDRs)
+	if len(settings.Split.Bypass.Domains) != 1 || settings.Split.Bypass.Domains[0] != "youtube.com" {
+		t.Fatalf("unexpected target domains: %v", settings.Split.Bypass.Domains)
+	}
+	if len(settings.Split.Bypass.CIDRs) != 1 || settings.Split.Bypass.CIDRs[0] != "1.1.1.1" {
+		t.Fatalf("unexpected target cidrs: %v", settings.Split.Bypass.CIDRs)
+	}
+}
+
+func TestFirewallSetSplitSupportsFlagsOnly(t *testing.T) {
+	t.Parallel()
+
+	store := &cliMemoryStore{
+		settings: domain.DefaultSettings(),
+		state:    domain.DefaultRuntimeState(),
+	}
+	service := app.NewService(app.Dependencies{Store: store})
+
+	cmd := newFirewallCmd(&rootOptions{service: service})
+	var stdout bytes.Buffer
+	cmd.SetOut(&stdout)
+	cmd.SetErr(new(bytes.Buffer))
+	cmd.SetArgs([]string{"set", "split", "--proxy", "YouTube", "--exclude-host", "192.168.1.50"})
+
+	if err := cmd.Execute(); err != nil {
+		t.Fatalf("execute firewall set split: %v", err)
+	}
+
+	settings, err := service.GetFirewallSettings()
+	if err != nil {
+		t.Fatalf("get firewall settings: %v", err)
+	}
+	if settings.Mode != domain.FirewallModeSplit {
+		t.Fatalf("unexpected firewall mode: %q", settings.Mode)
+	}
+	if !reflect.DeepEqual(settings.Split.Proxy.Services, []string{"youtube"}) {
+		t.Fatalf("unexpected split proxy services: %+v", settings.Split.Proxy.Services)
+	}
+	if !reflect.DeepEqual(settings.Split.ExcludedSources, []string{"192.168.1.50"}) {
+		t.Fatalf("unexpected split excluded sources: %+v", settings.Split.ExcludedSources)
 	}
 }
 
@@ -335,6 +383,35 @@ func TestFirewallDraftCommandStoresAndClearsDrafts(t *testing.T) {
 	}
 	if !reflect.DeepEqual(settings.ModeDrafts.Targets, domain.FirewallModeDraft{}) {
 		t.Fatalf("expected cleared target draft, got %+v", settings.ModeDrafts.Targets)
+	}
+}
+
+func TestFirewallDraftSplitStoresFlagsOnly(t *testing.T) {
+	t.Parallel()
+
+	store := &cliMemoryStore{
+		settings: domain.DefaultSettings(),
+		state:    domain.DefaultRuntimeState(),
+	}
+	service := app.NewService(app.Dependencies{Store: store})
+
+	cmd := newFirewallCmd(&rootOptions{service: service})
+	cmd.SetOut(new(bytes.Buffer))
+	cmd.SetErr(new(bytes.Buffer))
+	cmd.SetArgs([]string{"draft", "split", "--proxy", "youtube", "--exclude-host", "192.168.1.50"})
+	if err := cmd.Execute(); err != nil {
+		t.Fatalf("execute firewall draft split: %v", err)
+	}
+
+	settings, err := service.GetFirewallSettings()
+	if err != nil {
+		t.Fatalf("get firewall settings: %v", err)
+	}
+	if !reflect.DeepEqual(settings.ModeDrafts.Split.Proxy.Services, []string{"youtube"}) {
+		t.Fatalf("unexpected split draft proxy services: %+v", settings.ModeDrafts.Split.Proxy.Services)
+	}
+	if !reflect.DeepEqual(settings.ModeDrafts.Split.ExcludedSources, []string{"192.168.1.50"}) {
+		t.Fatalf("unexpected split draft excluded sources: %+v", settings.ModeDrafts.Split.ExcludedSources)
 	}
 }
 

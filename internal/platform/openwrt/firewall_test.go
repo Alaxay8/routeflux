@@ -16,7 +16,10 @@ func TestBuildNFTablesRules(t *testing.T) {
 	rules, err := BuildNFTablesRules(domain.FirewallSettings{
 		Enabled:         true,
 		TransparentPort: 12345,
-		TargetCIDRs:     []string{"1.1.1.1", "8.8.8.0/24"},
+		Mode:            domain.FirewallModeTargets,
+		Targets: domain.FirewallSelectorSet{
+			CIDRs: []string{"1.1.1.1", "8.8.8.0/24"},
+		},
 	})
 	if err != nil {
 		t.Fatalf("build rules: %v", err)
@@ -24,15 +27,15 @@ func TestBuildNFTablesRules(t *testing.T) {
 
 	wants := []string{
 		"table inet routeflux",
-		"set target_v4",
+		"set proxy_target_v4",
 		"set source_v4",
-		"set bypass_v4",
+		"set local_bypass_v4",
 		"1.1.1.1",
 		"8.8.8.0/24",
-		"ip daddr @bypass_v4 return",
-		"ip saddr @source_v4 tcp dport != 12345 redirect to :12345",
+		"ip daddr @local_bypass_v4 return",
+		"ip saddr @source_v4 ip daddr @proxy_target_v4 tcp dport != 12345 redirect to :12345",
 		"chain prerouting_mangle",
-		"ip saddr @source_v4 udp dport 443",
+		"ip saddr @source_v4 ip daddr @proxy_target_v4 udp dport 443",
 		"meta mark set 0x1",
 		"tproxy ip to :12345",
 		"chain prerouting",
@@ -52,23 +55,26 @@ func TestBuildNFTablesRulesSupportsTargetDomainsWithoutStaticCIDRs(t *testing.T)
 	rules, err := BuildNFTablesRules(domain.FirewallSettings{
 		Enabled:         true,
 		TransparentPort: 12345,
-		TargetDomains:   []string{"youtube.com"},
+		Mode:            domain.FirewallModeTargets,
+		Targets: domain.FirewallSelectorSet{
+			Domains: []string{"youtube.com"},
+		},
 	})
 	if err != nil {
 		t.Fatalf("build rules: %v", err)
 	}
 
 	wants := []string{
-		"set target_v4",
+		"set proxy_target_v4",
 		"set source_v4",
-		"set bypass_v4",
+		"set local_bypass_v4",
 		"type ipv4_addr",
 		"10.0.0.0/8",
 		"172.16.0.0/12",
 		"192.168.0.0/16",
-		"ip daddr @bypass_v4 return",
-		"ip saddr @source_v4 tcp dport != 12345 redirect to :12345",
-		"ip saddr @source_v4 udp dport 443",
+		"ip daddr @local_bypass_v4 return",
+		"ip saddr @source_v4 ip daddr @proxy_target_v4 tcp dport != 12345 redirect to :12345",
+		"ip saddr @source_v4 ip daddr @proxy_target_v4 udp dport 443",
 		"chain output",
 	}
 	for _, want := range wants {
@@ -84,7 +90,10 @@ func TestBuildNFTablesRulesSupportsTargetServicesWithPresetCIDRs(t *testing.T) {
 	rules, err := BuildNFTablesRules(domain.FirewallSettings{
 		Enabled:         true,
 		TransparentPort: 12345,
-		TargetServices:  []string{"telegram"},
+		Mode:            domain.FirewallModeTargets,
+		Targets: domain.FirewallSelectorSet{
+			Services: []string{"telegram"},
+		},
 	})
 	if err != nil {
 		t.Fatalf("build rules: %v", err)
@@ -93,8 +102,8 @@ func TestBuildNFTablesRulesSupportsTargetServicesWithPresetCIDRs(t *testing.T) {
 	for _, want := range []string{
 		"91.108.0.0/16",
 		"149.154.0.0/16",
-		"ip saddr @source_v4 tcp dport != 12345 redirect to :12345",
-		"ip saddr @source_v4 udp dport 443",
+		"ip saddr @source_v4 ip daddr @proxy_target_v4 tcp dport != 12345 redirect to :12345",
+		"ip saddr @source_v4 ip daddr @proxy_target_v4 udp dport 443",
 	} {
 		if !strings.Contains(rules, want) {
 			t.Fatalf("rules missing %q\n%s", want, rules)
@@ -108,7 +117,10 @@ func TestBuildNFTablesRulesSupportsCustomTargetServices(t *testing.T) {
 	rules, err := BuildNFTablesRules(domain.FirewallSettings{
 		Enabled:         true,
 		TransparentPort: 12345,
-		TargetServices:  []string{"openai"},
+		Mode:            domain.FirewallModeTargets,
+		Targets: domain.FirewallSelectorSet{
+			Services: []string{"openai"},
+		},
 		TargetServiceCatalog: map[string]domain.FirewallTargetDefinition{
 			"openai": {
 				CIDRs: []string{"104.18.0.0/15"},
@@ -121,8 +133,8 @@ func TestBuildNFTablesRulesSupportsCustomTargetServices(t *testing.T) {
 
 	for _, want := range []string{
 		"104.18.0.0/15",
-		"ip saddr @source_v4 tcp dport != 12345 redirect to :12345",
-		"ip saddr @source_v4 udp dport 443",
+		"ip saddr @source_v4 ip daddr @proxy_target_v4 tcp dport != 12345 redirect to :12345",
+		"ip saddr @source_v4 ip daddr @proxy_target_v4 udp dport 443",
 	} {
 		if !strings.Contains(rules, want) {
 			t.Fatalf("rules missing %q\n%s", want, rules)
@@ -136,7 +148,10 @@ func TestBuildNFTablesRulesRejectsInvalidTargets(t *testing.T) {
 	_, err := BuildNFTablesRules(domain.FirewallSettings{
 		Enabled:         true,
 		TransparentPort: 12345,
-		TargetCIDRs:     []string{"not-an-ip"},
+		Mode:            domain.FirewallModeTargets,
+		Targets: domain.FirewallSelectorSet{
+			CIDRs: []string{"not-an-ip"},
+		},
 	})
 	if err == nil {
 		t.Fatal("expected invalid target to fail")
@@ -149,8 +164,11 @@ func TestBuildNFTablesRulesInterceptsUDPForTargetDomainsWithoutDroppingQUIC(t *t
 	rules, err := BuildNFTablesRules(domain.FirewallSettings{
 		Enabled:         true,
 		TransparentPort: 12345,
-		TargetDomains:   []string{"youtube.com"},
-		BlockQUIC:       true,
+		Mode:            domain.FirewallModeTargets,
+		Targets: domain.FirewallSelectorSet{
+			Domains: []string{"youtube.com"},
+		},
+		BlockQUIC: true,
 	})
 	if err != nil {
 		t.Fatalf("build rules: %v", err)
@@ -158,7 +176,7 @@ func TestBuildNFTablesRulesInterceptsUDPForTargetDomainsWithoutDroppingQUIC(t *t
 
 	for _, want := range []string{
 		"chain prerouting_mangle",
-		"ip saddr @source_v4 udp dport 443",
+		"ip saddr @source_v4 ip daddr @proxy_target_v4 udp dport 443",
 		"meta mark set 0x1",
 		"tproxy ip to :12345",
 	} {
@@ -177,9 +195,14 @@ func TestBuildNFTablesRulesForBypassTargetsSkipsTargetSetAndOutputChain(t *testi
 	rules, err := BuildNFTablesRules(domain.FirewallSettings{
 		Enabled:         true,
 		TransparentPort: 12345,
-		TargetMode:      domain.FirewallTargetModeBypass,
-		TargetDomains:   []string{"youtube.com"},
-		BlockQUIC:       true,
+		Mode:            domain.FirewallModeSplit,
+		Split: domain.FirewallSplitSettings{
+			Bypass: domain.FirewallSelectorSet{
+				Domains: []string{"youtube.com"},
+			},
+			DefaultAction: domain.FirewallDefaultActionProxy,
+		},
+		BlockQUIC: true,
 	})
 	if err != nil {
 		t.Fatalf("build rules: %v", err)
@@ -187,9 +210,11 @@ func TestBuildNFTablesRulesForBypassTargetsSkipsTargetSetAndOutputChain(t *testi
 
 	for _, want := range []string{
 		"set source_v4",
-		"set bypass_v4",
+		"set local_bypass_v4",
+		"ip daddr @direct_target_v4 return",
 		"ip saddr @source_v4 tcp dport != 12345 redirect to :12345",
 		"chain prerouting_mangle",
+		"ip daddr @direct_target_v4 return",
 		"ip saddr @source_v4 udp dport 443",
 		"meta mark set 0x1",
 		"tproxy ip to :12345",
@@ -200,12 +225,58 @@ func TestBuildNFTablesRulesForBypassTargetsSkipsTargetSetAndOutputChain(t *testi
 	}
 
 	for _, unwanted := range []string{
-		"set target_v4",
-		"chain output",
+		"set proxy_target_v4",
 	} {
 		if strings.Contains(rules, unwanted) {
 			t.Fatalf("rules unexpectedly contain %q\n%s", unwanted, rules)
 		}
+	}
+	if !strings.Contains(rules, "set direct_target_v4") {
+		t.Fatalf("rules missing %q\n%s", "set direct_target_v4", rules)
+	}
+	if strings.Contains(rules, "chain output") {
+		t.Fatalf("rules unexpectedly contain %q\n%s", "chain output", rules)
+	}
+}
+
+func TestBuildNFTablesRulesForSplitDirectOnlyInterceptsProxyTargets(t *testing.T) {
+	t.Parallel()
+
+	rules, err := BuildNFTablesRules(domain.FirewallSettings{
+		Enabled:         true,
+		TransparentPort: 12345,
+		Mode:            domain.FirewallModeSplit,
+		Split: domain.FirewallSplitSettings{
+			Proxy: domain.FirewallSelectorSet{
+				Domains: []string{"youtube.com"},
+			},
+			Bypass: domain.FirewallSelectorSet{
+				Domains: []string{"gosuslugi.ru"},
+			},
+			DefaultAction: domain.FirewallDefaultActionDirect,
+		},
+		BlockQUIC: true,
+	})
+	if err != nil {
+		t.Fatalf("build rules: %v", err)
+	}
+
+	wants := []string{
+		"set proxy_target_v4",
+		"set direct_target_v4",
+		"ip daddr @direct_target_v4 return",
+		"ip saddr @source_v4 ip daddr @proxy_target_v4 tcp dport != 12345 redirect to :12345",
+		"ip saddr @source_v4 ip daddr @proxy_target_v4 udp dport 443",
+		"chain output",
+	}
+	for _, want := range wants {
+		if !strings.Contains(rules, want) {
+			t.Fatalf("rules missing %q\n%s", want, rules)
+		}
+	}
+
+	if strings.Contains(rules, "ip saddr @source_v4 tcp dport != 12345 redirect to :12345") {
+		t.Fatalf("split direct must not capture all tcp traffic\n%s", rules)
 	}
 }
 
@@ -215,7 +286,8 @@ func TestBuildNFTablesRulesForSourceHosts(t *testing.T) {
 	rules, err := BuildNFTablesRules(domain.FirewallSettings{
 		Enabled:         true,
 		TransparentPort: 12345,
-		SourceCIDRs:     []string{"192.168.1.150"},
+		Mode:            domain.FirewallModeHosts,
+		Hosts:           []string{"192.168.1.150"},
 		BlockQUIC:       true,
 	})
 	if err != nil {
@@ -223,10 +295,10 @@ func TestBuildNFTablesRulesForSourceHosts(t *testing.T) {
 	}
 
 	wants := []string{
-		"set bypass_v4",
+		"set local_bypass_v4",
 		"127.0.0.0/8",
 		"192.168.0.0/16",
-		"ip daddr @bypass_v4 return",
+		"ip daddr @local_bypass_v4 return",
 		"set source_v4",
 		"192.168.1.150",
 		"ip saddr @source_v4 tcp dport != 12345 redirect to :12345",
@@ -248,13 +320,14 @@ func TestBuildNFTablesRulesForSourceHostsBypassesLocalDestinationsFirst(t *testi
 	rules, err := BuildNFTablesRules(domain.FirewallSettings{
 		Enabled:         true,
 		TransparentPort: 12345,
-		SourceCIDRs:     []string{"192.168.1.150"},
+		Mode:            domain.FirewallModeHosts,
+		Hosts:           []string{"192.168.1.150"},
 	})
 	if err != nil {
 		t.Fatalf("build rules: %v", err)
 	}
 
-	bypassIndex := strings.Index(rules, "ip daddr @bypass_v4 return")
+	bypassIndex := strings.Index(rules, "ip daddr @local_bypass_v4 return")
 	redirectIndex := strings.Index(rules, "ip saddr @source_v4 tcp dport != 12345 redirect to :12345")
 	if bypassIndex < 0 {
 		t.Fatalf("rules missing bypass rule\n%s", rules)
@@ -273,7 +346,8 @@ func TestBuildNFTablesRulesForSourceHostRange(t *testing.T) {
 	rules, err := BuildNFTablesRules(domain.FirewallSettings{
 		Enabled:         true,
 		TransparentPort: 12345,
-		SourceCIDRs:     []string{"192.168.1.150-192.168.1.159"},
+		Mode:            domain.FirewallModeHosts,
+		Hosts:           []string{"192.168.1.150-192.168.1.159"},
 		BlockQUIC:       true,
 	})
 	if err != nil {
@@ -300,7 +374,8 @@ func TestBuildNFTablesRulesForAllSourceHosts(t *testing.T) {
 	rules, err := BuildNFTablesRules(domain.FirewallSettings{
 		Enabled:         true,
 		TransparentPort: 12345,
-		SourceCIDRs:     []string{"all"},
+		Mode:            domain.FirewallModeHosts,
+		Hosts:           []string{"all"},
 		BlockQUIC:       true,
 	})
 	if err != nil {
@@ -363,9 +438,14 @@ func TestFirewallManagerApplyConfiguresUDPPolicyRouting(t *testing.T) {
 	settings := domain.FirewallSettings{
 		Enabled:         true,
 		TransparentPort: 12345,
-		TargetMode:      domain.FirewallTargetModeBypass,
-		TargetDomains:   []string{"youtube.com"},
-		BlockQUIC:       true,
+		Mode:            domain.FirewallModeSplit,
+		Split: domain.FirewallSplitSettings{
+			Bypass: domain.FirewallSelectorSet{
+				Domains: []string{"youtube.com"},
+			},
+			DefaultAction: domain.FirewallDefaultActionProxy,
+		},
+		BlockQUIC: true,
 	}
 
 	if err := manager.Apply(context.Background(), settings); err != nil {

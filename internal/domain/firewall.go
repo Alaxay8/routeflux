@@ -210,6 +210,37 @@ type FirewallTargets struct {
 	Domains  []string
 }
 
+// ParseFirewallSources validates LAN source selectors.
+func ParseFirewallSources(selectors []string) ([]string, error) {
+	out := make([]string, 0, len(selectors))
+	seen := make(map[string]struct{}, len(selectors))
+
+	for _, selector := range selectors {
+		selector = strings.TrimSpace(selector)
+		if selector == "" {
+			continue
+		}
+		if strings.EqualFold(selector, "all") || selector == "*" {
+			return []string{"all"}, nil
+		}
+
+		normalized, ok, err := normalizeFirewallIPv4Selector(selector)
+		if err != nil {
+			return nil, err
+		}
+		if !ok {
+			return nil, fmt.Errorf("unsupported source %q: only IPv4, IPv4 CIDR, IPv4 ranges, or all are supported", selector)
+		}
+		if _, exists := seen[normalized]; exists {
+			continue
+		}
+		seen[normalized] = struct{}{}
+		out = append(out, normalized)
+	}
+
+	return out, nil
+}
+
 // CloneFirewallTargetCatalog deep-copies the provided service catalog.
 func CloneFirewallTargetCatalog(catalog map[string]FirewallTargetDefinition) map[string]FirewallTargetDefinition {
 	if len(catalog) == 0 {
@@ -499,6 +530,16 @@ func ExpandFirewallTargetCIDRs(customCatalog map[string]FirewallTargetDefinition
 	}
 
 	return out
+}
+
+// ExpandFirewallSelectorSetDomains expands one selector set to domain matchers.
+func ExpandFirewallSelectorSetDomains(customCatalog map[string]FirewallTargetDefinition, selectors FirewallSelectorSet) []string {
+	return ExpandFirewallTargetDomains(customCatalog, selectors.Services, selectors.Domains)
+}
+
+// ExpandFirewallSelectorSetCIDRs expands one selector set to IPv4 selectors.
+func ExpandFirewallSelectorSetCIDRs(customCatalog map[string]FirewallTargetDefinition, selectors FirewallSelectorSet) []string {
+	return ExpandFirewallTargetCIDRs(customCatalog, selectors.Services, selectors.CIDRs)
 }
 
 func mergeFirewallTargetRegistry(customCatalog map[string]FirewallTargetDefinition) map[string]FirewallTargetDefinition {

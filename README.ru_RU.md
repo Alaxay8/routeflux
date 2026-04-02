@@ -348,14 +348,14 @@ routeflux firewall set targets youtube instagram 1.1.1.1
 - Доменные targets зависят от DNS-ответов, которые видит роутер. Если клиенты используют собственный DoH или DoT напрямую, набор IP может остаться пустым.
 - На shared CDN RouteFlux теперь откатывает несоответствующий прозрачный трафик на `direct`, а не отправляет весь совпавший IP через выбранную ноду.
 
-- `anti-target`: держать выбранные сервисы, домены или IPv4-цели напрямую, а весь остальной LAN-трафик отправлять через RouteFlux
-Пример: банковские или государственные сайты остаются direct, а остальная LAN использует прокси.
+- `split`: использовать отдельные таблицы для трафика через RouteFlux, direct-исключений и полностью исключённых устройств
+Пример: YouTube и рабочие сервисы идут через RouteFlux, банковские сайты остаются direct, а один ноутбук или ТВ вообще не перехватывается.
 
 ```bash
-routeflux firewall set anti-target gosuslugi.ru sberbank.ru
+routeflux firewall set split --proxy youtube openai --bypass gosuslugi.ru sberbank.ru --exclude-host 192.168.1.50
 ```
 
-Селекторы anti-target:
+Селекторы split:
 
 - service preset: `discord`, `facetime`, `gemini`, `gemini-mobile`, `instagram`, `netflix`, `notebooklm`, `notebooklm-mobile`, `telegram`, `telegram-web`, `twitter`, `whatsapp`, `youtube`
 - пользовательский alias сервиса: `openai`
@@ -363,13 +363,15 @@ routeflux firewall set anti-target gosuslugi.ru sberbank.ru
 - IPv4-адрес: `1.1.1.1`
 - подсеть: `8.8.8.0/24`
 - диапазон: `203.0.113.10-203.0.113.20`
+- исключённое устройство: `192.168.1.50`, `192.168.1.0/24`, `192.168.1.10-192.168.1.20` или `all`
 
-Замечания для anti-target:
+Замечания для split:
 
-- Anti-target использует тот же парсинг селекторов и то же разворачивание alias, что и `targets`.
-- Anti-target пока остаётся best-effort и считается нестабильным режимом. Браузеры, мобильные приложения, shared CDN и QUIC-heavy сервисы всё ещё требуют ручной проверки перед постоянным использованием.
-- Доменные anti-target не требуют `dnsmasq` с поддержкой `nftset`, потому что Xray сопоставляет их по sniffing прозрачного трафика.
-- Anti-target рассчитан на LAN-клиентов. Трафик самого роутера он не перенаправляет.
+- Split использует тот же парсинг селекторов и то же разворачивание alias, что и `targets`.
+- `Keep Direct` имеет приоритет над `Route Through RouteFlux`, если совпадают одни и те же назначения.
+- В LuCI и основном CLI unmatched split-трафик по умолчанию остаётся `direct`.
+- Для доменных split-правил на OpenWrt нужен `dnsmasq` с поддержкой `nftset`, если домены должны попадать в nftables destination sets.
+- `routeflux firewall set anti-target ...` остаётся как legacy alias для `split` с bypass-only селекторами и proxy fallback.
 - `block-quic` управляет обработкой проксируемого QUIC. Включайте его только если хотите намеренно блокировать проксируемый QUIC и заставить клиентов перейти на TCP.
 
 - `hosts`: отправлять весь трафик выбранных LAN-устройств через RouteFlux

@@ -8,19 +8,22 @@ import (
 
 // ConfigRequest defines the inputs required to build a backend config.
 type ConfigRequest struct {
-	Mode                     domain.SelectionMode
-	Nodes                    []domain.Node
-	SelectedNodeID           string
-	LogLevel                 string
-	DNS                      domain.DNSSettings
-	SOCKSPort                int
-	HTTPPort                 int
-	TransparentProxy         bool
-	TransparentBlockQUIC     bool
-	TransparentPort          int
-	TransparentTargetMode    domain.FirewallTargetMode
-	TransparentTargetDomains []string
-	TransparentTargetCIDRs   []string
+	Mode                        domain.SelectionMode
+	Nodes                       []domain.Node
+	SelectedNodeID              string
+	LogLevel                    string
+	DNS                         domain.DNSSettings
+	SOCKSPort                   int
+	HTTPPort                    int
+	TransparentProxy            bool
+	TransparentSelectiveCapture bool
+	TransparentBlockQUIC        bool
+	TransparentPort             int
+	TransparentDefaultAction    domain.FirewallDefaultAction
+	TransparentProxyDomains     []string
+	TransparentProxyCIDRs       []string
+	TransparentBypassDomains    []string
+	TransparentBypassCIDRs      []string
 }
 
 // RuntimeStatus describes backend runtime state.

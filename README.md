@@ -23,7 +23,7 @@ The current runtime target is OpenWrt and compatible forks such as ImmortalWrt. 
 - Support for VLESS, VMess, and Trojan nodes.
 - Safe runtime updates with `xray -test`, last-known-good backup, and controlled service reloads.
 - Auto mode with health checks, live failover, anti-flap logic, and reboot-time runtime restore.
-- Simple transparent routing rules for LAN hosts, CIDRs, ranges, or destination targets.
+- Simple transparent routing rules for LAN hosts, destination targets, and split tunnelling policies.
 - Dedicated DNS commands with a sensible default profile for everyday router use.
 - Shared state across CLI, LuCI, and TUI, so you can switch interfaces without losing context.
 
@@ -163,7 +163,7 @@ routeflux dns explain
 routeflux firewall get
 routeflux firewall set hosts 192.168.1.150
 routeflux firewall set targets youtube instagram 1.1.1.1
-routeflux firewall set anti-target gosuslugi.ru sberbank.ru
+routeflux firewall set split --proxy youtube --bypass gosuslugi.ru --exclude-host 192.168.1.50
 routeflux services set openai openai.com chatgpt.com oaistatic.com
 routeflux services list
 routeflux firewall explain
@@ -222,10 +222,10 @@ routeflux services set openai openai.com chatgpt.com oaistatic.com
 routeflux firewall set targets openai youtube
 ```
 
-Keep selected banking or government sites direct and proxy the rest of the LAN traffic:
+Use split tunnelling to keep selected banking or government sites direct while proxying specific services and excluding one LAN device:
 
 ```bash
-routeflux firewall set anti-target gosuslugi.ru sberbank.ru
+routeflux firewall set split --proxy youtube openai --bypass gosuslugi.ru sberbank.ru --exclude-host 192.168.1.50
 routeflux connect --subscription sub-1234567890 --node 90c42d5dd302
 ```
 
@@ -319,7 +319,7 @@ What does not happen when firewall is disabled:
 
 - RouteFlux does not add nftables redirect rules
 - router traffic is not sent through the proxy automatically
-- LAN devices do not use the selected node until you enable `hosts`, `targets`, or `anti-target`
+- LAN devices do not use the selected node until you enable `hosts`, `targets`, or `split`
 - transparent proxy mode is not enabled for intercepted traffic
 
 In simple words: RouteFlux still manages subscriptions and the active Xray runtime, but it does not capture traffic from the router or your LAN by itself.
@@ -356,14 +356,14 @@ Notes for domain targets:
 - Domain targets depend on router-visible DNS answers. If clients use their own DoH or DoT directly, target IP sets may stay empty.
 - On shared CDNs, RouteFlux now falls back to direct routing for non-matching transparent traffic instead of sending every matched IP through the selected node.
 
-- `anti-target`: keep selected services, domains, or IPv4 targets direct and send all other LAN traffic through RouteFlux
-  Example: keep banking or government sites direct while the rest of the LAN uses the proxy.
+- `split`: use separate proxy, direct, and excluded-device tables
+  Example: proxy streaming or work services, keep banking sites direct, and leave one TV or laptop untouched.
 
 ```bash
-routeflux firewall set anti-target gosuslugi.ru sberbank.ru
+routeflux firewall set split --proxy youtube openai --bypass gosuslugi.ru sberbank.ru --exclude-host 192.168.1.50
 ```
 
-Anti-target selectors:
+Split selectors:
 
 - service preset: `discord`, `facetime`, `gemini`, `gemini-mobile`, `instagram`, `netflix`, `notebooklm`, `notebooklm-mobile`, `telegram`, `telegram-web`, `twitter`, `whatsapp`, `youtube`
 - custom service alias: `openai`
@@ -371,13 +371,15 @@ Anti-target selectors:
 - IPv4 address: `1.1.1.1`
 - subnet: `8.8.8.0/24`
 - range: `203.0.113.10-203.0.113.20`
+- excluded device selector: `192.168.1.50`, `192.168.1.0/24`, `192.168.1.10-192.168.1.20`, or `all`
 
-Notes for anti-target:
+Notes for split tunnelling:
 
-- Anti-target uses the same selector parsing and alias expansion as `targets`.
-- Anti-target is still best-effort and currently considered unstable. Some browsers, mobile apps, CDNs, and QUIC-heavy services may still require manual testing before you rely on it full time.
-- Domain anti-targets do not require `dnsmasq` nftset support because Xray matches them from transparent traffic sniffing.
-- Anti-target is designed for LAN clients. It does not redirect router-originated traffic.
+- Split uses the same selector parsing and alias expansion as `targets`.
+- `Keep Direct` wins over `Route Through RouteFlux` when both match the same destination.
+- Unmatched split traffic stays direct by default in LuCI and the main CLI workflow.
+- Domain-based split rules require `dnsmasq` with `nftset` support when they must populate nftables destination sets on OpenWrt.
+- `routeflux firewall set anti-target ...` remains available as a legacy alias for `split` with bypass-only selectors and proxy fallback.
 - `block-quic` controls proxied QUIC handling. Enable it only when you intentionally want RouteFlux to block proxied QUIC and force clients to retry over TCP.
 
 - `hosts`: send all traffic from selected LAN devices through RouteFlux

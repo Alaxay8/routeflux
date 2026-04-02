@@ -40,7 +40,8 @@ func TestConfigureFirewallHostsClearsDestinationTargets(t *testing.T) {
 		settings: domain.DefaultSettings(),
 		state:    domain.DefaultRuntimeState(),
 	}
-	store.settings.Firewall.TargetCIDRs = []string{"1.1.1.1"}
+	store.settings.Firewall.Mode = domain.FirewallModeTargets
+	store.settings.Firewall.Targets = domain.FirewallSelectorSet{CIDRs: []string{"1.1.1.1"}}
 
 	service := NewService(Dependencies{Store: store})
 
@@ -55,17 +56,17 @@ func TestConfigureFirewallHostsClearsDestinationTargets(t *testing.T) {
 	if settings.TransparentPort != 23456 {
 		t.Fatalf("unexpected transparent port: %d", settings.TransparentPort)
 	}
-	if len(settings.TargetCIDRs) != 0 {
-		t.Fatalf("expected destination targets to be cleared, got %v", settings.TargetCIDRs)
+	if len(settings.Targets.CIDRs) != 0 {
+		t.Fatalf("expected destination targets to be cleared, got %v", settings.Targets.CIDRs)
 	}
-	if len(settings.TargetDomains) != 0 {
-		t.Fatalf("expected destination target domains to be cleared, got %v", settings.TargetDomains)
+	if len(settings.Targets.Domains) != 0 {
+		t.Fatalf("expected destination target domains to be cleared, got %v", settings.Targets.Domains)
 	}
-	if len(settings.TargetServices) != 0 {
-		t.Fatalf("expected destination target services to be cleared, got %v", settings.TargetServices)
+	if len(settings.Targets.Services) != 0 {
+		t.Fatalf("expected destination target services to be cleared, got %v", settings.Targets.Services)
 	}
-	if len(settings.SourceCIDRs) != 1 || settings.SourceCIDRs[0] != "192.168.1.150" {
-		t.Fatalf("unexpected source hosts: %v", settings.SourceCIDRs)
+	if len(settings.Hosts) != 1 || settings.Hosts[0] != "192.168.1.150" {
+		t.Fatalf("unexpected source hosts: %v", settings.Hosts)
 	}
 	if settings.BlockQUIC {
 		t.Fatal("expected QUIC proxying to stay enabled for host routing by default")
@@ -95,16 +96,16 @@ func TestConfigureFirewallParsesMixedTargetsAndValidatesBeforeSave(t *testing.T)
 	if len(firewall.validated) != 1 {
 		t.Fatalf("expected validate to be called once, got %d", len(firewall.validated))
 	}
-	if !reflect.DeepEqual(firewall.validated[0].TargetServices, []string{"youtube"}) {
-		t.Fatalf("unexpected validated target services: %+v", firewall.validated[0].TargetServices)
+	if !reflect.DeepEqual(firewall.validated[0].Targets.Services, []string{"youtube"}) {
+		t.Fatalf("unexpected validated target services: %+v", firewall.validated[0].Targets.Services)
 	}
-	if !reflect.DeepEqual(firewall.validated[0].TargetCIDRs, []string{"1.1.1.1"}) {
-		t.Fatalf("unexpected validated target cidrs: %+v", firewall.validated[0].TargetCIDRs)
+	if !reflect.DeepEqual(firewall.validated[0].Targets.CIDRs, []string{"1.1.1.1"}) {
+		t.Fatalf("unexpected validated target cidrs: %+v", firewall.validated[0].Targets.CIDRs)
 	}
-	if !reflect.DeepEqual(firewall.validated[0].TargetDomains, []string{"youtube.com"}) {
-		t.Fatalf("unexpected validated target domains: %+v", firewall.validated[0].TargetDomains)
+	if !reflect.DeepEqual(firewall.validated[0].Targets.Domains, []string{"youtube.com"}) {
+		t.Fatalf("unexpected validated target domains: %+v", firewall.validated[0].Targets.Domains)
 	}
-	if len(store.settings.Firewall.TargetServices) != 0 || len(store.settings.Firewall.TargetCIDRs) != 0 || len(store.settings.Firewall.TargetDomains) != 0 {
+	if len(store.settings.Firewall.Targets.Services) != 0 || len(store.settings.Firewall.Targets.CIDRs) != 0 || len(store.settings.Firewall.Targets.Domains) != 0 {
 		t.Fatalf("expected settings to stay unchanged on validate failure, got %+v", store.settings.Firewall)
 	}
 }
@@ -116,7 +117,8 @@ func TestConfigureFirewallClearsHostsAndStoresTargetSelectors(t *testing.T) {
 		settings: domain.DefaultSettings(),
 		state:    domain.DefaultRuntimeState(),
 	}
-	store.settings.Firewall.SourceCIDRs = []string{"192.168.1.150"}
+	store.settings.Firewall.Mode = domain.FirewallModeHosts
+	store.settings.Firewall.Hosts = []string{"192.168.1.150"}
 
 	service := NewService(Dependencies{Store: store, Firewaller: &recordingFirewaller{}})
 
@@ -125,17 +127,17 @@ func TestConfigureFirewallClearsHostsAndStoresTargetSelectors(t *testing.T) {
 		t.Fatalf("configure firewall: %v", err)
 	}
 
-	if len(settings.SourceCIDRs) != 0 {
-		t.Fatalf("expected hosts to be cleared, got %v", settings.SourceCIDRs)
+	if len(settings.Hosts) != 0 {
+		t.Fatalf("expected hosts to be cleared, got %v", settings.Hosts)
 	}
-	if !reflect.DeepEqual(settings.TargetServices, []string{"youtube"}) {
-		t.Fatalf("unexpected target services: %+v", settings.TargetServices)
+	if !reflect.DeepEqual(settings.Targets.Services, []string{"youtube"}) {
+		t.Fatalf("unexpected target services: %+v", settings.Targets.Services)
 	}
-	if !reflect.DeepEqual(settings.TargetCIDRs, []string{"1.1.1.1"}) {
-		t.Fatalf("unexpected target cidrs: %+v", settings.TargetCIDRs)
+	if !reflect.DeepEqual(settings.Targets.CIDRs, []string{"1.1.1.1"}) {
+		t.Fatalf("unexpected target cidrs: %+v", settings.Targets.CIDRs)
 	}
-	if !reflect.DeepEqual(settings.TargetDomains, []string{"youtube.com"}) {
-		t.Fatalf("unexpected target domains: %+v", settings.TargetDomains)
+	if !reflect.DeepEqual(settings.Targets.Domains, []string{"youtube.com"}) {
+		t.Fatalf("unexpected target domains: %+v", settings.Targets.Domains)
 	}
 }
 
@@ -146,7 +148,8 @@ func TestConfigureFirewallAntiTargetsClearsHostsAndStoresTargetSelectors(t *test
 		settings: domain.DefaultSettings(),
 		state:    domain.DefaultRuntimeState(),
 	}
-	store.settings.Firewall.SourceCIDRs = []string{"192.168.1.150"}
+	store.settings.Firewall.Mode = domain.FirewallModeHosts
+	store.settings.Firewall.Hosts = []string{"192.168.1.150"}
 
 	service := NewService(Dependencies{Store: store, Firewaller: &recordingFirewaller{}})
 
@@ -155,20 +158,58 @@ func TestConfigureFirewallAntiTargetsClearsHostsAndStoresTargetSelectors(t *test
 		t.Fatalf("configure firewall anti-targets: %v", err)
 	}
 
-	if len(settings.SourceCIDRs) != 0 {
-		t.Fatalf("expected hosts to be cleared, got %v", settings.SourceCIDRs)
+	if len(settings.Hosts) != 0 {
+		t.Fatalf("expected hosts to be cleared, got %v", settings.Hosts)
 	}
-	if settings.TargetMode != domain.FirewallTargetModeBypass {
-		t.Fatalf("expected target mode bypass, got %q", settings.TargetMode)
+	if settings.Mode != domain.FirewallModeSplit {
+		t.Fatalf("expected split mode, got %q", settings.Mode)
 	}
-	if !reflect.DeepEqual(settings.TargetServices, []string{"youtube"}) {
-		t.Fatalf("unexpected target services: %+v", settings.TargetServices)
+	if settings.Split.DefaultAction != domain.FirewallDefaultActionProxy {
+		t.Fatalf("expected split default action proxy, got %q", settings.Split.DefaultAction)
 	}
-	if !reflect.DeepEqual(settings.TargetCIDRs, []string{"1.1.1.1"}) {
-		t.Fatalf("unexpected target cidrs: %+v", settings.TargetCIDRs)
+	if !reflect.DeepEqual(settings.Split.Bypass.Services, []string{"youtube"}) {
+		t.Fatalf("unexpected target services: %+v", settings.Split.Bypass.Services)
 	}
-	if !reflect.DeepEqual(settings.TargetDomains, []string{"youtube.com"}) {
-		t.Fatalf("unexpected target domains: %+v", settings.TargetDomains)
+	if !reflect.DeepEqual(settings.Split.Bypass.CIDRs, []string{"1.1.1.1"}) {
+		t.Fatalf("unexpected target cidrs: %+v", settings.Split.Bypass.CIDRs)
+	}
+	if !reflect.DeepEqual(settings.Split.Bypass.Domains, []string{"youtube.com"}) {
+		t.Fatalf("unexpected target domains: %+v", settings.Split.Bypass.Domains)
+	}
+}
+
+func TestUpdateFirewallBlockQUICCanonicalizesLegacyTargetsMode(t *testing.T) {
+	t.Parallel()
+
+	store := &memoryStore{
+		settings: domain.DefaultSettings(),
+		state:    domain.DefaultRuntimeState(),
+	}
+	store.settings.Firewall.Enabled = true
+	store.settings.Firewall.Mode = ""
+	store.settings.Firewall.Targets = domain.FirewallSelectorSet{
+		Services: []string{"youtube"},
+	}
+	firewall := &recordingFirewaller{}
+
+	service := NewService(Dependencies{Store: store, Firewaller: firewall})
+
+	settings, err := service.UpdateFirewallBlockQUIC(context.Background(), true)
+	if err != nil {
+		t.Fatalf("update firewall block-quic: %v", err)
+	}
+
+	if settings.Mode != domain.FirewallModeTargets {
+		t.Fatalf("expected canonical targets mode, got %q", settings.Mode)
+	}
+	if !settings.BlockQUIC {
+		t.Fatal("expected block-quic to be enabled")
+	}
+	if len(firewall.validated) != 1 {
+		t.Fatalf("expected one validation call, got %d", len(firewall.validated))
+	}
+	if firewall.validated[0].Mode != domain.FirewallModeTargets {
+		t.Fatalf("expected validated canonical targets mode, got %q", firewall.validated[0].Mode)
 	}
 }
 
@@ -192,8 +233,8 @@ func TestConfigureFirewallSupportsCustomServiceAliases(t *testing.T) {
 		t.Fatalf("configure firewall: %v", err)
 	}
 
-	if !reflect.DeepEqual(settings.TargetServices, []string{"openai"}) {
-		t.Fatalf("unexpected target services: %+v", settings.TargetServices)
+	if !reflect.DeepEqual(settings.Targets.Services, []string{"openai"}) {
+		t.Fatalf("unexpected target services: %+v", settings.Targets.Services)
 	}
 }
 
@@ -230,7 +271,8 @@ func TestUpdateFirewallModeDraftDoesNotAffectActiveSettings(t *testing.T) {
 		state:    domain.DefaultRuntimeState(),
 	}
 	store.settings.Firewall.Enabled = true
-	store.settings.Firewall.TargetServices = []string{"youtube"}
+	store.settings.Firewall.Mode = domain.FirewallModeTargets
+	store.settings.Firewall.Targets = domain.FirewallSelectorSet{Services: []string{"youtube"}}
 
 	service := NewService(Dependencies{Store: store, Firewaller: &recordingFirewaller{}})
 
@@ -242,8 +284,8 @@ func TestUpdateFirewallModeDraftDoesNotAffectActiveSettings(t *testing.T) {
 	if want := []string{"all"}; !reflect.DeepEqual(settings.ModeDrafts.Hosts.SourceCIDRs, want) {
 		t.Fatalf("unexpected hosts draft: %+v", settings.ModeDrafts.Hosts.SourceCIDRs)
 	}
-	if want := []string{"youtube"}; !reflect.DeepEqual(settings.TargetServices, want) {
-		t.Fatalf("unexpected active target services: %+v", settings.TargetServices)
+	if want := []string{"youtube"}; !reflect.DeepEqual(settings.Targets.Services, want) {
+		t.Fatalf("unexpected active target services: %+v", settings.Targets.Services)
 	}
 
 	settings, err = service.ClearFirewallModeDraft(context.Background(), "hosts")
@@ -281,10 +323,10 @@ func TestConfigureFirewallPreservesModeDraftsAcrossModeSwitches(t *testing.T) {
 		t.Fatalf("configure firewall hosts: %v", err)
 	}
 
-	if want := []string{"192.168.1.150"}; !reflect.DeepEqual(settings.SourceCIDRs, want) {
-		t.Fatalf("unexpected active source hosts: %+v", settings.SourceCIDRs)
+	if want := []string{"192.168.1.150"}; !reflect.DeepEqual(settings.Hosts, want) {
+		t.Fatalf("unexpected active source hosts: %+v", settings.Hosts)
 	}
-	if len(settings.TargetServices) != 0 || len(settings.TargetCIDRs) != 0 || len(settings.TargetDomains) != 0 {
+	if len(settings.Targets.Services) != 0 || len(settings.Targets.CIDRs) != 0 || len(settings.Targets.Domains) != 0 {
 		t.Fatalf("expected active targets to be cleared, got %+v", settings)
 	}
 	if want := []string{"192.168.1.150"}; !reflect.DeepEqual(settings.ModeDrafts.Hosts.SourceCIDRs, want) {
@@ -306,7 +348,8 @@ func TestDisableFirewallPreservesModeDrafts(t *testing.T) {
 		state:    domain.DefaultRuntimeState(),
 	}
 	store.settings.Firewall.Enabled = true
-	store.settings.Firewall.TargetServices = []string{"daily"}
+	store.settings.Firewall.Mode = domain.FirewallModeTargets
+	store.settings.Firewall.Targets = domain.FirewallSelectorSet{Services: []string{"daily"}}
 	store.settings.Firewall.ModeDrafts.Targets = domain.FirewallModeDraft{
 		TargetServices: []string{"daily"},
 		TargetDomains:  []string{"example.com"},
@@ -322,7 +365,7 @@ func TestDisableFirewallPreservesModeDrafts(t *testing.T) {
 	if settings.Enabled {
 		t.Fatal("expected firewall to be disabled")
 	}
-	if len(settings.TargetServices) != 0 || len(settings.TargetCIDRs) != 0 || len(settings.TargetDomains) != 0 || len(settings.SourceCIDRs) != 0 {
+	if len(settings.Targets.Services) != 0 || len(settings.Targets.CIDRs) != 0 || len(settings.Targets.Domains) != 0 || len(settings.Hosts) != 0 {
 		t.Fatalf("expected active selectors to be cleared, got %+v", settings)
 	}
 	if want := []string{"daily"}; !reflect.DeepEqual(settings.ModeDrafts.Targets.TargetServices, want) {
@@ -356,7 +399,8 @@ func TestSetFirewallTargetServiceReappliesConnectedRuntime(t *testing.T) {
 		},
 	}
 	store.settings.Firewall.Enabled = true
-	store.settings.Firewall.TargetServices = []string{"openai"}
+	store.settings.Firewall.Mode = domain.FirewallModeTargets
+	store.settings.Firewall.Targets = domain.FirewallSelectorSet{Services: []string{"openai"}}
 	store.state.Connected = true
 	store.state.ActiveSubscriptionID = "sub-1"
 	store.state.ActiveNodeID = "node-1"
@@ -381,8 +425,8 @@ func TestSetFirewallTargetServiceReappliesConnectedRuntime(t *testing.T) {
 	if len(runtimeBackend.requests) != 1 {
 		t.Fatalf("expected one backend reapply, got %d", len(runtimeBackend.requests))
 	}
-	if want := []string{"openai.com", "chatgpt.com"}; !reflect.DeepEqual(runtimeBackend.requests[0].TransparentTargetDomains, want) {
-		t.Fatalf("unexpected transparent target domains:\nwant: %+v\n got: %+v", want, runtimeBackend.requests[0].TransparentTargetDomains)
+	if want := []string{"openai.com", "chatgpt.com"}; !reflect.DeepEqual(runtimeBackend.requests[0].TransparentProxyDomains, want) {
+		t.Fatalf("unexpected transparent target domains:\nwant: %+v\n got: %+v", want, runtimeBackend.requests[0].TransparentProxyDomains)
 	}
 	if len(firewall.applied) != 1 {
 		t.Fatalf("expected firewall apply once, got %d", len(firewall.applied))
@@ -396,7 +440,8 @@ func TestDeleteFirewallTargetServiceRejectsUsedAlias(t *testing.T) {
 		settings: domain.DefaultSettings(),
 		state:    domain.DefaultRuntimeState(),
 	}
-	store.settings.Firewall.TargetServices = []string{"openai"}
+	store.settings.Firewall.Mode = domain.FirewallModeTargets
+	store.settings.Firewall.Targets = domain.FirewallSelectorSet{Services: []string{"openai"}}
 	store.settings.Firewall.TargetServiceCatalog = map[string]domain.FirewallTargetDefinition{
 		"openai": {Domains: []string{"openai.com"}},
 	}
@@ -1750,11 +1795,11 @@ func TestConfigureFirewallHostsCanonicalizesAllAlias(t *testing.T) {
 		t.Fatalf("configure firewall hosts: %v", err)
 	}
 
-	if len(settings.SourceCIDRs) != 1 || settings.SourceCIDRs[0] != "all" {
-		t.Fatalf("unexpected source hosts: %v", settings.SourceCIDRs)
+	if len(settings.Hosts) != 1 || settings.Hosts[0] != "all" {
+		t.Fatalf("unexpected source hosts: %v", settings.Hosts)
 	}
-	if len(store.settings.Firewall.SourceCIDRs) != 1 || store.settings.Firewall.SourceCIDRs[0] != "all" {
-		t.Fatalf("unexpected persisted source hosts: %v", store.settings.Firewall.SourceCIDRs)
+	if len(store.settings.Firewall.Hosts) != 1 || store.settings.Firewall.Hosts[0] != "all" {
+		t.Fatalf("unexpected persisted source hosts: %v", store.settings.Firewall.Hosts)
 	}
 }
 
@@ -1802,7 +1847,8 @@ func TestConnectManualAppliesHostFirewallRouting(t *testing.T) {
 		},
 	}
 	store.settings.Firewall.Enabled = true
-	store.settings.Firewall.SourceCIDRs = []string{"192.168.1.150"}
+	store.settings.Firewall.Mode = domain.FirewallModeHosts
+	store.settings.Firewall.Hosts = []string{"192.168.1.150"}
 	store.settings.Firewall.TransparentPort = 12345
 	store.settings.Firewall.BlockQUIC = true
 
@@ -1831,8 +1877,8 @@ func TestConnectManualAppliesHostFirewallRouting(t *testing.T) {
 	if len(firewall.applied) != 1 {
 		t.Fatalf("expected firewall rules to be applied once, got %d", len(firewall.applied))
 	}
-	if len(firewall.applied[0].SourceCIDRs) != 1 || firewall.applied[0].SourceCIDRs[0] != "192.168.1.150" {
-		t.Fatalf("unexpected applied source hosts: %v", firewall.applied[0].SourceCIDRs)
+	if len(firewall.applied[0].Hosts) != 1 || firewall.applied[0].Hosts[0] != "192.168.1.150" {
+		t.Fatalf("unexpected applied source hosts: %v", firewall.applied[0].Hosts)
 	}
 }
 
@@ -1863,7 +1909,8 @@ func TestConnectManualAutoBlocksQUICForVLESSRealityTCPNodes(t *testing.T) {
 		},
 	}
 	store.settings.Firewall.Enabled = true
-	store.settings.Firewall.SourceCIDRs = []string{"192.168.1.150"}
+	store.settings.Firewall.Mode = domain.FirewallModeHosts
+	store.settings.Firewall.Hosts = []string{"192.168.1.150"}
 	store.settings.Firewall.TransparentPort = 12345
 	store.settings.Firewall.BlockQUIC = false
 
@@ -1910,7 +1957,8 @@ func TestConnectManualPassesExpandedTargetSelectorsToBackend(t *testing.T) {
 		},
 	}
 	store.settings.Firewall.Enabled = true
-	store.settings.Firewall.TargetServices = []string{"youtube", "telegram"}
+	store.settings.Firewall.Mode = domain.FirewallModeTargets
+	store.settings.Firewall.Targets = domain.FirewallSelectorSet{Services: []string{"youtube", "telegram"}}
 	store.settings.Firewall.TransparentPort = 12345
 
 	runtimeBackend := &recordingBackend{}
@@ -1945,16 +1993,19 @@ func TestConnectManualPassesExpandedTargetSelectorsToBackend(t *testing.T) {
 		"desktop.telegram.org",
 		"core.telegram.org",
 	}
-	if !reflect.DeepEqual(runtimeBackend.requests[0].TransparentTargetDomains, wantDomains) {
-		t.Fatalf("unexpected transparent target domains:\nwant: %+v\n got: %+v", wantDomains, runtimeBackend.requests[0].TransparentTargetDomains)
+	if !reflect.DeepEqual(runtimeBackend.requests[0].TransparentProxyDomains, wantDomains) {
+		t.Fatalf("unexpected transparent target domains:\nwant: %+v\n got: %+v", wantDomains, runtimeBackend.requests[0].TransparentProxyDomains)
 	}
 
 	wantCIDRs := []string{
 		"91.108.0.0/16",
 		"149.154.0.0/16",
 	}
-	if !reflect.DeepEqual(runtimeBackend.requests[0].TransparentTargetCIDRs, wantCIDRs) {
-		t.Fatalf("unexpected transparent target cidrs:\nwant: %+v\n got: %+v", wantCIDRs, runtimeBackend.requests[0].TransparentTargetCIDRs)
+	if !reflect.DeepEqual(runtimeBackend.requests[0].TransparentProxyCIDRs, wantCIDRs) {
+		t.Fatalf("unexpected transparent target cidrs:\nwant: %+v\n got: %+v", wantCIDRs, runtimeBackend.requests[0].TransparentProxyCIDRs)
+	}
+	if !runtimeBackend.requests[0].TransparentSelectiveCapture {
+		t.Fatal("expected targets mode to use selective transparent capture")
 	}
 }
 
@@ -1981,8 +2032,11 @@ func TestConnectManualPassesExpandedAntiTargetSelectorsToBackend(t *testing.T) {
 		},
 	}
 	store.settings.Firewall.Enabled = true
-	store.settings.Firewall.TargetMode = domain.FirewallTargetModeBypass
-	store.settings.Firewall.TargetServices = []string{"youtube", "telegram"}
+	store.settings.Firewall.Mode = domain.FirewallModeSplit
+	store.settings.Firewall.Split = domain.FirewallSplitSettings{
+		Bypass:        domain.FirewallSelectorSet{Services: []string{"youtube", "telegram"}},
+		DefaultAction: domain.FirewallDefaultActionProxy,
+	}
 	store.settings.Firewall.TransparentPort = 12345
 
 	runtimeBackend := &recordingBackend{}
@@ -2000,8 +2054,8 @@ func TestConnectManualPassesExpandedAntiTargetSelectorsToBackend(t *testing.T) {
 	if len(runtimeBackend.requests) != 1 {
 		t.Fatalf("expected one backend apply, got %d", len(runtimeBackend.requests))
 	}
-	if runtimeBackend.requests[0].TransparentTargetMode != domain.FirewallTargetModeBypass {
-		t.Fatalf("unexpected transparent target mode: %q", runtimeBackend.requests[0].TransparentTargetMode)
+	if runtimeBackend.requests[0].TransparentDefaultAction != domain.FirewallDefaultActionProxy {
+		t.Fatalf("unexpected transparent default action: %q", runtimeBackend.requests[0].TransparentDefaultAction)
 	}
 
 	wantDomains := []string{
@@ -2020,16 +2074,70 @@ func TestConnectManualPassesExpandedAntiTargetSelectorsToBackend(t *testing.T) {
 		"desktop.telegram.org",
 		"core.telegram.org",
 	}
-	if !reflect.DeepEqual(runtimeBackend.requests[0].TransparentTargetDomains, wantDomains) {
-		t.Fatalf("unexpected transparent target domains:\nwant: %+v\n got: %+v", wantDomains, runtimeBackend.requests[0].TransparentTargetDomains)
+	if !reflect.DeepEqual(runtimeBackend.requests[0].TransparentBypassDomains, wantDomains) {
+		t.Fatalf("unexpected transparent target domains:\nwant: %+v\n got: %+v", wantDomains, runtimeBackend.requests[0].TransparentBypassDomains)
 	}
 
 	wantCIDRs := []string{
 		"91.108.0.0/16",
 		"149.154.0.0/16",
 	}
-	if !reflect.DeepEqual(runtimeBackend.requests[0].TransparentTargetCIDRs, wantCIDRs) {
-		t.Fatalf("unexpected transparent target cidrs:\nwant: %+v\n got: %+v", wantCIDRs, runtimeBackend.requests[0].TransparentTargetCIDRs)
+	if !reflect.DeepEqual(runtimeBackend.requests[0].TransparentBypassCIDRs, wantCIDRs) {
+		t.Fatalf("unexpected transparent target cidrs:\nwant: %+v\n got: %+v", wantCIDRs, runtimeBackend.requests[0].TransparentBypassCIDRs)
+	}
+	if runtimeBackend.requests[0].TransparentSelectiveCapture {
+		t.Fatal("expected anti-target compatibility mode to keep capture-all semantics")
+	}
+}
+
+func TestConnectManualPassesSelectiveCaptureForSplitDirect(t *testing.T) {
+	t.Parallel()
+
+	store := &memoryStore{
+		settings: domain.DefaultSettings(),
+		state:    domain.DefaultRuntimeState(),
+		subs: []domain.Subscription{
+			{
+				ID: "sub-1",
+				Nodes: []domain.Node{
+					{
+						ID:       "node-1",
+						Name:     "Germany",
+						Protocol: domain.ProtocolVLESS,
+						Address:  "de.example.com",
+						Port:     443,
+						UUID:     "11111111-1111-1111-1111-111111111111",
+					},
+				},
+			},
+		},
+	}
+	store.settings.Firewall.Enabled = true
+	store.settings.Firewall.Mode = domain.FirewallModeSplit
+	store.settings.Firewall.Split = domain.FirewallSplitSettings{
+		Proxy:         domain.FirewallSelectorSet{Services: []string{"youtube"}},
+		Bypass:        domain.FirewallSelectorSet{Domains: []string{"gosuslugi.ru"}},
+		DefaultAction: domain.FirewallDefaultActionDirect,
+	}
+	store.settings.Firewall.TransparentPort = 12345
+
+	runtimeBackend := &recordingBackend{}
+	firewall := &recordingFirewaller{}
+	service := NewService(Dependencies{
+		Store:      store,
+		Backend:    runtimeBackend,
+		Firewaller: firewall,
+	})
+
+	if err := service.ConnectManual(context.Background(), "sub-1", "node-1"); err != nil {
+		t.Fatalf("connect manual: %v", err)
+	}
+
+	if len(runtimeBackend.requests) != 1 {
+		t.Fatalf("expected one backend apply, got %d", len(runtimeBackend.requests))
+	}
+	if !runtimeBackend.requests[0].TransparentSelectiveCapture {
+		t.Fatal("expected split direct mode to use selective transparent capture")
 	}
 }
 

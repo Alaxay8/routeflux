@@ -22,8 +22,11 @@ func TestFirewallManagerValidateRejectsDNSMasqWithoutNFTSet(t *testing.T) {
 	}
 
 	err := manager.Validate(context.Background(), domain.FirewallSettings{
-		Enabled:        true,
-		TargetServices: []string{"youtube"},
+		Enabled: true,
+		Mode:    domain.FirewallModeTargets,
+		Targets: domain.FirewallSelectorSet{
+			Services: []string{"youtube"},
+		},
 	})
 	if err == nil {
 		t.Fatal("expected dnsmasq validation to fail")
@@ -45,9 +48,14 @@ func TestFirewallManagerValidateAllowsBypassTargetsWithoutDNSMasqNFTSet(t *testi
 	}
 
 	if err := manager.Validate(context.Background(), domain.FirewallSettings{
-		Enabled:        true,
-		TargetMode:     domain.FirewallTargetModeBypass,
-		TargetServices: []string{"youtube"},
+		Enabled: true,
+		Mode:    domain.FirewallModeSplit,
+		Split: domain.FirewallSplitSettings{
+			Bypass: domain.FirewallSelectorSet{
+				Services: []string{"youtube"},
+			},
+			DefaultAction: domain.FirewallDefaultActionProxy,
+		},
 	}); err != nil {
 		t.Fatalf("expected bypass target validation to skip dnsmasq check, got %v", err)
 	}
@@ -76,9 +84,12 @@ func TestFirewallManagerApplyWritesDNSMasqSnippetAndReloads(t *testing.T) {
 	settings := domain.FirewallSettings{
 		Enabled:         true,
 		TransparentPort: 12345,
-		TargetServices:  []string{"youtube", "telegram"},
-		TargetCIDRs:     []string{"1.1.1.1"},
-		TargetDomains:   []string{"youtube.com"},
+		Mode:            domain.FirewallModeTargets,
+		Targets: domain.FirewallSelectorSet{
+			Services: []string{"youtube", "telegram"},
+			CIDRs:    []string{"1.1.1.1"},
+			Domains:  []string{"youtube.com"},
+		},
 		TargetServiceCatalog: map[string]domain.FirewallTargetDefinition{
 			"openai": {
 				Domains: []string{"openai.com", "chatgpt.com"},
@@ -97,16 +108,16 @@ func TestFirewallManagerApplyWritesDNSMasqSnippetAndReloads(t *testing.T) {
 	}
 
 	for _, want := range []string{
-		"nftset=/youtube.com/4#inet#routeflux#target_v4",
-		"nftset=/youtu.be/4#inet#routeflux#target_v4",
-		"nftset=/youtube-nocookie.com/4#inet#routeflux#target_v4",
-		"nftset=/youtubei.googleapis.com/4#inet#routeflux#target_v4",
-		"nftset=/youtube.googleapis.com/4#inet#routeflux#target_v4",
-		"nftset=/googlevideo.com/4#inet#routeflux#target_v4",
-		"nftset=/telegram.org/4#inet#routeflux#target_v4",
-		"nftset=/t.me/4#inet#routeflux#target_v4",
-		"nftset=/ytimg.com/4#inet#routeflux#target_v4",
-		"nftset=/ggpht.com/4#inet#routeflux#target_v4",
+		"nftset=/youtube.com/4#inet#routeflux#proxy_target_v4",
+		"nftset=/youtu.be/4#inet#routeflux#proxy_target_v4",
+		"nftset=/youtube-nocookie.com/4#inet#routeflux#proxy_target_v4",
+		"nftset=/youtubei.googleapis.com/4#inet#routeflux#proxy_target_v4",
+		"nftset=/youtube.googleapis.com/4#inet#routeflux#proxy_target_v4",
+		"nftset=/googlevideo.com/4#inet#routeflux#proxy_target_v4",
+		"nftset=/telegram.org/4#inet#routeflux#proxy_target_v4",
+		"nftset=/t.me/4#inet#routeflux#proxy_target_v4",
+		"nftset=/ytimg.com/4#inet#routeflux#proxy_target_v4",
+		"nftset=/ggpht.com/4#inet#routeflux#proxy_target_v4",
 	} {
 		if !strings.Contains(string(snippet), want) {
 			t.Fatalf("snippet missing %q\n%s", want, snippet)
@@ -146,7 +157,10 @@ func TestFirewallManagerApplyWritesDNSMasqSnippetForCustomServices(t *testing.T)
 	settings := domain.FirewallSettings{
 		Enabled:         true,
 		TransparentPort: 12345,
-		TargetServices:  []string{"openai"},
+		Mode:            domain.FirewallModeTargets,
+		Targets: domain.FirewallSelectorSet{
+			Services: []string{"openai"},
+		},
 		TargetServiceCatalog: map[string]domain.FirewallTargetDefinition{
 			"openai": {
 				Domains: []string{"openai.com", "chatgpt.com"},
@@ -164,8 +178,8 @@ func TestFirewallManagerApplyWritesDNSMasqSnippetForCustomServices(t *testing.T)
 	}
 
 	for _, want := range []string{
-		"nftset=/openai.com/4#inet#routeflux#target_v4",
-		"nftset=/chatgpt.com/4#inet#routeflux#target_v4",
+		"nftset=/openai.com/4#inet#routeflux#proxy_target_v4",
+		"nftset=/chatgpt.com/4#inet#routeflux#proxy_target_v4",
 	} {
 		if !strings.Contains(string(snippet), want) {
 			t.Fatalf("snippet missing %q\n%s", want, snippet)
@@ -181,7 +195,7 @@ func TestFirewallManagerDisableRemovesDNSMasqSnippet(t *testing.T) {
 	ipPath := writeExecutable(t, filepath.Join(dir, "ip"), "#!/bin/sh\nexit 0\n")
 	servicePath := writeExecutable(t, filepath.Join(dir, "dnsmasq-service"), "#!/bin/sh\nexit 0\n")
 	snippetPath := filepath.Join(dir, "routeflux.conf")
-	if err := os.WriteFile(snippetPath, []byte("nftset=/youtube.com/4#inet#routeflux#target_v4\n"), 0o644); err != nil {
+	if err := os.WriteFile(snippetPath, []byte("nftset=/youtube.com/4#inet#routeflux#proxy_target_v4\n"), 0o644); err != nil {
 		t.Fatalf("write snippet: %v", err)
 	}
 

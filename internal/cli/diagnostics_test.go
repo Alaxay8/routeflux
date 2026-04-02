@@ -78,7 +78,8 @@ func TestDiagnosticsTransparentQUICPolicyMarksIncompatibleNodeAsBlocked(t *testi
 
 	settings := domain.DefaultSettings().Firewall
 	settings.Enabled = true
-	settings.SourceCIDRs = []string{"192.168.1.150"}
+	settings.Mode = domain.FirewallModeHosts
+	settings.Hosts = []string{"192.168.1.150"}
 
 	policy := diagnosticsTransparentQUICPolicy(settings, &domain.Node{
 		Protocol:  domain.ProtocolVLESS,

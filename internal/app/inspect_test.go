@@ -56,7 +56,8 @@ func TestInspectXrayConfigUsesOriginalAddressAndCurrentSettings(t *testing.T) {
 	}
 	store.settings.LogLevel = "debug"
 	store.settings.Firewall.Enabled = true
-	store.settings.Firewall.TargetCIDRs = []string{"1.1.1.1/32"}
+	store.settings.Firewall.Mode = domain.FirewallModeTargets
+	store.settings.Firewall.Targets = domain.FirewallSelectorSet{CIDRs: []string{"1.1.1.1/32"}}
 	store.settings.Firewall.TransparentPort = 23456
 
 	service := NewService(Dependencies{
@@ -175,7 +176,8 @@ func TestInspectSpeedUsesIsolatedConfigAndDoesNotMutateRuntime(t *testing.T) {
 	}
 	store.settings.LogLevel = "warning"
 	store.settings.Firewall.Enabled = true
-	store.settings.Firewall.SourceCIDRs = []string{"192.168.1.10/32"}
+	store.settings.Firewall.Mode = domain.FirewallModeHosts
+	store.settings.Firewall.Hosts = []string{"192.168.1.10/32"}
 	store.settings.Firewall.TransparentPort = 12345
 
 	backend := &inspectBackend{generatedConfig: []byte(`{"inbounds":[{"tag":"http-in"}]}`)}

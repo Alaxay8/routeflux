@@ -38,7 +38,8 @@ func TestRestoreRuntimeReappliesPersistedConnection(t *testing.T) {
 		},
 	}
 	store.settings.Firewall.Enabled = true
-	store.settings.Firewall.TargetCIDRs = []string{"1.1.1.1"}
+	store.settings.Firewall.Mode = domain.FirewallModeTargets
+	store.settings.Firewall.Targets = domain.FirewallSelectorSet{CIDRs: []string{"1.1.1.1"}}
 
 	runtimeBackend := &recordingBackend{}
 	firewall := &recordingFirewaller{}
@@ -94,7 +95,8 @@ func TestRestoreRuntimeFailureDisconnectsState(t *testing.T) {
 		},
 	}
 	store.settings.Firewall.Enabled = true
-	store.settings.Firewall.SourceCIDRs = []string{"192.168.1.150"}
+	store.settings.Firewall.Mode = domain.FirewallModeHosts
+	store.settings.Firewall.Hosts = []string{"192.168.1.150"}
 
 	runtimeBackend := &recordingBackend{
 		status: backend.RuntimeStatus{

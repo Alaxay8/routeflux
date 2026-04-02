@@ -109,21 +109,47 @@ func transparentRoutingRules(req backend.ConfigRequest) []xrayRouteRule {
 		return nil
 	}
 
-	rules := make([]xrayRouteRule, 0, 8)
-	targetMode := domain.NormalizeFirewallTargetMode(req.TransparentTargetMode)
+	if req.TransparentSelectiveCapture {
+		return transparentSelectiveRoutingRules(req)
+	}
+
+	rules := make([]xrayRouteRule, 0, 12)
 	blockQUIC := req.TransparentBlockQUIC
-	hasTargets := len(req.TransparentTargetDomains) > 0 || len(req.TransparentTargetCIDRs) > 0
+	defaultAction := req.TransparentDefaultAction
+	if defaultAction == "" {
+		defaultAction = domain.FirewallDefaultActionProxy
+	} else {
+		defaultAction = domain.NormalizeFirewallDefaultAction(defaultAction)
+	}
+	hasSelectors := len(req.TransparentProxyDomains) > 0 ||
+		len(req.TransparentProxyCIDRs) > 0 ||
+		len(req.TransparentBypassDomains) > 0 ||
+		len(req.TransparentBypassCIDRs) > 0
 
-	if len(req.TransparentTargetDomains) > 0 {
-		rules = append(rules, transparentDomainRules(targetMode, req.TransparentTargetDomains, blockQUIC)...)
+	if len(req.TransparentBypassDomains) > 0 {
+		rules = append(rules, transparentDomainRules("direct", req.TransparentBypassDomains, blockQUIC)...)
+	}
+	if len(req.TransparentBypassCIDRs) > 0 {
+		rules = append(rules, transparentIPRules("direct", req.TransparentBypassCIDRs, blockQUIC)...)
 	}
 
-	if len(req.TransparentTargetCIDRs) > 0 {
-		rules = append(rules, transparentIPRules(targetMode, req.TransparentTargetCIDRs, blockQUIC)...)
+	if len(req.TransparentProxyDomains) > 0 {
+		rules = append(rules, transparentDomainRules("selected", req.TransparentProxyDomains, blockQUIC)...)
+	}
+	if len(req.TransparentProxyCIDRs) > 0 {
+		rules = append(rules, transparentIPRules("selected", req.TransparentProxyCIDRs, blockQUIC)...)
 	}
 
-	if hasTargets {
-		rules = append(rules, transparentFallbackRules(targetMode, blockQUIC)...)
+	if hasSelectors {
+		rules = append(rules, transparentFallbackRules(defaultAction, blockQUIC)...)
+		return rules
+	}
+
+	if defaultAction == domain.FirewallDefaultActionDirect {
+		rules = append(rules,
+			transparentRouteRule("tcp", "direct", nil, nil),
+			transparentRouteRule("udp", "direct", nil, nil),
+		)
 		return rules
 	}
 
@@ -135,18 +161,32 @@ func transparentRoutingRules(req backend.ConfigRequest) []xrayRouteRule {
 	return rules
 }
 
-func transparentDomainRules(targetMode domain.FirewallTargetMode, domains []string, blockQUIC bool) []xrayRouteRule {
+func transparentSelectiveRoutingRules(req backend.ConfigRequest) []xrayRouteRule {
+	rules := make([]xrayRouteRule, 0, 6)
+	blockQUIC := req.TransparentBlockQUIC
+
+	if len(req.TransparentBypassDomains) > 0 {
+		rules = append(rules, transparentDomainRules("direct", req.TransparentBypassDomains, blockQUIC)...)
+	}
+	if len(req.TransparentBypassCIDRs) > 0 {
+		rules = append(rules, transparentIPRules("direct", req.TransparentBypassCIDRs, blockQUIC)...)
+	}
+
+	rules = append(rules,
+		transparentRouteRule("tcp", "selected", nil, nil),
+		transparentRouteRule("udp", transparentProxiedUDPOutbound(blockQUIC), nil, nil),
+	)
+
+	return rules
+}
+
+func transparentDomainRules(tcpOutbound string, domains []string, blockQUIC bool) []xrayRouteRule {
 	matchers := routeDomainMatchers(domains)
 	if len(matchers) == 0 {
 		return nil
 	}
 
-	tcpOutbound := "selected"
-	udpOutbound := transparentProxiedUDPOutbound(blockQUIC)
-	if targetMode == domain.FirewallTargetModeBypass {
-		tcpOutbound = "direct"
-		udpOutbound = "direct"
-	}
+	udpOutbound := transparentUDPOutboundForTCPOutbound(tcpOutbound, blockQUIC)
 
 	return []xrayRouteRule{
 		transparentRouteRule("tcp", tcpOutbound, matchers, nil),
@@ -154,18 +194,13 @@ func transparentDomainRules(targetMode domain.FirewallTargetMode, domains []stri
 	}
 }
 
-func transparentIPRules(targetMode domain.FirewallTargetMode, cidrs []string, blockQUIC bool) []xrayRouteRule {
+func transparentIPRules(tcpOutbound string, cidrs []string, blockQUIC bool) []xrayRouteRule {
 	cleaned := cleanStringList(cidrs)
 	if len(cleaned) == 0 {
 		return nil
 	}
 
-	tcpOutbound := "selected"
-	udpOutbound := transparentProxiedUDPOutbound(blockQUIC)
-	if targetMode == domain.FirewallTargetModeBypass {
-		tcpOutbound = "direct"
-		udpOutbound = "direct"
-	}
+	udpOutbound := transparentUDPOutboundForTCPOutbound(tcpOutbound, blockQUIC)
 
 	return []xrayRouteRule{
 		transparentRouteRule("tcp", tcpOutbound, nil, cleaned),
@@ -173,10 +208,10 @@ func transparentIPRules(targetMode domain.FirewallTargetMode, cidrs []string, bl
 	}
 }
 
-func transparentFallbackRules(targetMode domain.FirewallTargetMode, blockQUIC bool) []xrayRouteRule {
+func transparentFallbackRules(defaultAction domain.FirewallDefaultAction, blockQUIC bool) []xrayRouteRule {
 	tcpOutbound := "direct"
 	udpOutbound := "direct"
-	if targetMode == domain.FirewallTargetModeBypass {
+	if defaultAction == domain.FirewallDefaultActionProxy {
 		tcpOutbound = "selected"
 		udpOutbound = transparentProxiedUDPOutbound(blockQUIC)
 	}
@@ -192,6 +227,13 @@ func transparentProxiedUDPOutbound(blockQUIC bool) string {
 		return "block"
 	}
 	return "selected"
+}
+
+func transparentUDPOutboundForTCPOutbound(tcpOutbound string, blockQUIC bool) string {
+	if tcpOutbound == "direct" {
+		return "direct"
+	}
+	return transparentProxiedUDPOutbound(blockQUIC)
 }
 
 func transparentRouteRule(network string, outboundTag string, domains []string, cidrs []string) xrayRouteRule {

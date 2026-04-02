@@ -61,8 +61,8 @@ func TestServicesSetGetAndFirewallTargetsUseCustomAlias(t *testing.T) {
 	if err != nil {
 		t.Fatalf("get firewall settings: %v", err)
 	}
-	if len(settings.TargetServices) != 1 || settings.TargetServices[0] != "openai" {
-		t.Fatalf("unexpected target services: %+v", settings.TargetServices)
+	if len(settings.Targets.Services) != 1 || settings.Targets.Services[0] != "openai" {
+		t.Fatalf("unexpected target services: %+v", settings.Targets.Services)
 	}
 }
 
