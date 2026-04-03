@@ -103,6 +103,32 @@ func TestFirewallViewPromotesBypassModeInLuCI(t *testing.T) {
 	}
 }
 
+func TestFirewallViewUsesReadableBypassEditorStyling(t *testing.T) {
+	t.Parallel()
+
+	source := readFirewallViewSource(t)
+
+	for _, want := range []string{
+		"className += ' ' + trim(settings.className);",
+		"var descriptionClassName = 'cbi-value-description';",
+		"descriptionClassName += ' ' + trim(settings.descriptionClassName);",
+		"'className': 'routeflux-firewall-editor-emphasis routeflux-firewall-editor-bypass'",
+		"'descriptionClassName': 'routeflux-firewall-editor-description-strong'",
+		"routeflux-firewall-editor-kicker",
+		".routeflux-firewall-editor-head .cbi-value-description { color:var(--text-color-medium, #4f5f70);",
+		".routeflux-firewall-editor-bypass { border-color:rgba(37, 99, 128, 0.36); background:linear-gradient(180deg, rgba(228, 238, 244, 0.98) 0%, rgba(214, 226, 235, 0.98) 100%); box-shadow:0 16px 30px rgba(22, 50, 74, 0.1), inset 0 1px 0 rgba(255, 255, 255, 0.62); }",
+		".routeflux-firewall-editor-bypass .routeflux-firewall-editor-head h4 { color:#16324a !important; }",
+		".routeflux-firewall-editor-bypass .routeflux-firewall-editor-grid .cbi-value-title { color:#284357 !important; }",
+		".routeflux-firewall-editor-description-strong { color:#16324a !important; font-weight:500; }",
+		".routeflux-firewall-inline .cbi-input-text::placeholder { color:rgba(71, 85, 105, 0.72); opacity:1; }",
+		".routeflux-firewall-toggle { display:flex; gap:10px; align-items:flex-start; font-weight:600; color:var(--text-color-high, #17263a); }",
+	} {
+		if !strings.Contains(source, want) {
+			t.Fatalf("firewall view must contain readable styling marker %q", want)
+		}
+	}
+}
+
 func readFirewallViewSource(t *testing.T) string {
 	t.Helper()
 

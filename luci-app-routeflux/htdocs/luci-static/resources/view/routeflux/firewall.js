@@ -1046,12 +1046,24 @@ return view.extend({
 		return E('div', { 'class': 'routeflux-firewall-list' }, rows);
 	},
 
-	renderSelectorEditor: function(title, description, key, editor, placeholder) {
-		return E('div', { 'class': 'routeflux-firewall-editor' }, [
+	renderSelectorEditor: function(title, description, key, editor, placeholder, options) {
+		var settings = options || {};
+		var className = 'routeflux-firewall-editor';
+		var descriptionClassName = 'cbi-value-description';
+		var kicker = trim(settings.kicker);
+
+		if (trim(settings.className) !== '')
+			className += ' ' + trim(settings.className);
+
+		if (trim(settings.descriptionClassName) !== '')
+			descriptionClassName += ' ' + trim(settings.descriptionClassName);
+
+		return E('div', { 'class': className }, [
 			E('div', { 'class': 'routeflux-firewall-editor-head' }, [
+				kicker !== '' ? E('span', { 'class': 'routeflux-firewall-editor-kicker' }, [ kicker ]) : null,
 				E('h4', {}, [ title ]),
-				E('p', { 'class': 'cbi-value-description' }, [ description ])
-			]),
+				E('p', { 'class': descriptionClassName }, [ description ])
+			].filter(Boolean)),
 			E('div', { 'class': 'routeflux-firewall-editor-grid' }, [
 				E('div', { 'class': 'cbi-value' }, [
 					E('label', { 'class': 'cbi-value-title' }, [ _('Service Preset') ]),
@@ -1093,12 +1105,20 @@ return view.extend({
 		]);
 	},
 
-	renderListEditor: function(title, description, key, list, placeholder, emptyLabel) {
-		return E('div', { 'class': 'routeflux-firewall-editor' }, [
+	renderListEditor: function(title, description, key, list, placeholder, emptyLabel, options) {
+		var settings = options || {};
+		var className = 'routeflux-firewall-editor';
+		var kicker = trim(settings.kicker);
+
+		if (trim(settings.className) !== '')
+			className += ' ' + trim(settings.className);
+
+		return E('div', { 'class': className }, [
 			E('div', { 'class': 'routeflux-firewall-editor-head' }, [
+				kicker !== '' ? E('span', { 'class': 'routeflux-firewall-editor-kicker' }, [ kicker ]) : null,
 				E('h4', {}, [ title ]),
 				E('p', { 'class': 'cbi-value-description' }, [ description ])
-			]),
+			].filter(Boolean)),
 			E('div', { 'class': 'cbi-value' }, [
 				E('div', { 'class': 'routeflux-firewall-inline' }, [
 					E('input', {
@@ -1132,7 +1152,11 @@ return view.extend({
 				'hosts',
 				this.formState.hosts,
 				_('Examples: 192.168.1.150 192.168.1.0/24 192.168.1.150-192.168.1.159 all'),
-				_('Add one or more LAN devices to start host-based routing.')
+				_('Add one or more LAN devices to start host-based routing.'),
+				{
+					'className': 'routeflux-firewall-editor-muted routeflux-firewall-editor-hosts',
+					'kicker': _('Device matching')
+				}
 			));
 		}
 
@@ -1142,7 +1166,11 @@ return view.extend({
 				_('Choose service presets plus any extra domains or IPv4 targets that should go through RouteFlux.'),
 				'targets',
 				this.formState.targets,
-				_('Examples: youtube.com 1.1.1.1 203.0.113.10-203.0.113.20')
+				_('Examples: youtube.com 1.1.1.1 203.0.113.10-203.0.113.20'),
+				{
+					'className': 'routeflux-firewall-editor-emphasis routeflux-firewall-editor-targets',
+					'kicker': _('Proxy targets')
+				}
 			));
 		}
 
@@ -1152,7 +1180,12 @@ return view.extend({
 				_('These service presets, domains, and IPv4 targets stay direct while all other traffic keeps using RouteFlux.'),
 				'bypass',
 				this.formState.bypass.selectors,
-				_('Examples: gosuslugi.ru 203.0.113.10 203.0.113.10-203.0.113.20')
+				_('Examples: gosuslugi.ru 203.0.113.10 203.0.113.10-203.0.113.20'),
+				{
+					'className': 'routeflux-firewall-editor-emphasis routeflux-firewall-editor-bypass',
+					'descriptionClassName': 'routeflux-firewall-editor-description-strong',
+					'kicker': _('Direct exceptions')
+				}
 			));
 			panels.push(this.renderListEditor(
 				_('Excluded Devices'),
@@ -1160,7 +1193,11 @@ return view.extend({
 				'bypass-excluded',
 				this.formState.bypass.excluded,
 				_('Examples: 192.168.1.50 192.168.1.0/24 192.168.1.10-192.168.1.20 all'),
-				_('Excluded devices are optional.')
+				_('Excluded devices are optional.'),
+				{
+					'className': 'routeflux-firewall-editor-muted routeflux-firewall-editor-excluded',
+					'kicker': _('LAN exclusions')
+				}
 			));
 		}
 
@@ -1213,27 +1250,51 @@ return view.extend({
 		content.push(E('style', { 'type': 'text/css' }, [
 			'.routeflux-firewall-layout { display:grid; gap:14px; }',
 			'.routeflux-firewall-grid { display:grid; grid-template-columns:repeat(auto-fit, minmax(240px, 1fr)); gap:12px; margin-bottom:14px; }',
+			'.routeflux-firewall-grid > .cbi-value { padding:15px 16px; border:1px solid var(--border-color-medium, rgba(98, 112, 129, 0.34)); border-radius:16px; background:linear-gradient(180deg, var(--background-color-high, rgba(249, 250, 251, 0.98)) 0%, var(--background-color-low, rgba(237, 242, 247, 0.98)) 100%); box-shadow:0 12px 24px rgba(15, 23, 42, 0.08), inset 0 1px 0 rgba(255, 255, 255, 0.56); }',
+			'.routeflux-firewall-grid > .cbi-value .cbi-value-title { color:var(--text-color-high, #17263a); font-weight:700; }',
+			'.routeflux-firewall-grid > .cbi-value .cbi-value-description { margin-top:8px; color:var(--text-color-medium, #4f5f70); line-height:1.55; }',
 			'.routeflux-firewall-editors { display:grid; gap:12px; }',
-			'.routeflux-firewall-editor { border:1px solid rgba(98, 112, 129, 0.32); border-radius:14px; padding:14px; background:linear-gradient(180deg, rgba(242, 246, 251, 0.96) 0%, rgba(232, 238, 245, 0.96) 100%); }',
-			'.routeflux-firewall-editor-head h4 { margin:0 0 6px; }',
-			'.routeflux-firewall-editor-grid { display:grid; grid-template-columns:repeat(auto-fit, minmax(280px, 1fr)); gap:12px; margin-bottom:12px; }',
-			'.routeflux-firewall-inline { display:flex; gap:8px; align-items:center; }',
-			'.routeflux-firewall-inline > .cbi-input-text, .routeflux-firewall-inline > .cbi-input-select { flex:1 1 auto; min-width:0; }',
+			'.routeflux-firewall-editor { position:relative; border:1px solid rgba(98, 112, 129, 0.32); border-radius:18px; padding:18px; background:linear-gradient(180deg, rgba(248, 250, 252, 0.98) 0%, rgba(238, 243, 249, 0.98) 100%); box-shadow:0 16px 32px rgba(15, 23, 42, 0.1), inset 0 1px 0 rgba(255, 255, 255, 0.66); overflow:hidden; }',
+			'.routeflux-firewall-editor-emphasis { border-color:rgba(56, 189, 248, 0.34); background:linear-gradient(180deg, rgba(246, 250, 255, 0.99) 0%, rgba(233, 243, 252, 0.98) 100%); box-shadow:0 18px 36px rgba(14, 165, 233, 0.11), inset 0 1px 0 rgba(255, 255, 255, 0.72); }',
+			'.routeflux-firewall-editor-muted { background:linear-gradient(180deg, rgba(248, 250, 252, 0.97) 0%, rgba(236, 241, 247, 0.97) 100%); }',
+			'.routeflux-firewall-editor-bypass { border-color:rgba(37, 99, 128, 0.36); background:linear-gradient(180deg, rgba(228, 238, 244, 0.98) 0%, rgba(214, 226, 235, 0.98) 100%); box-shadow:0 16px 30px rgba(22, 50, 74, 0.1), inset 0 1px 0 rgba(255, 255, 255, 0.62); }',
+			'.routeflux-firewall-editor-bypass::before { content:""; position:absolute; inset:0 0 auto 0; height:4px; background:linear-gradient(90deg, #0ea5e9 0%, #22c55e 100%); }',
+			'.routeflux-firewall-editor-head { display:grid; gap:8px; margin-bottom:14px; }',
+			'.routeflux-firewall-editor-kicker { display:inline-flex; align-items:center; width:max-content; max-width:100%; padding:4px 10px; border-radius:999px; background:rgba(15, 118, 110, 0.12); color:#0f766e; font-size:11px; font-weight:800; letter-spacing:.08em; text-transform:uppercase; }',
+			'.routeflux-firewall-editor-head h4 { margin:0; color:var(--text-color-high, #17263a); font-size:clamp(20px, 1vw + 16px, 28px); line-height:1.2; }',
+			'.routeflux-firewall-editor-head .cbi-value-description { color:var(--text-color-medium, #4f5f70); margin:0; max-width:72ch; line-height:1.6; font-size:13px; }',
+			'.routeflux-firewall-editor-bypass .routeflux-firewall-editor-head h4 { color:#16324a !important; }',
+			'.routeflux-firewall-editor-description-strong { color:#16324a !important; font-weight:500; }',
+			'.routeflux-firewall-editor-grid { display:grid; grid-template-columns:repeat(auto-fit, minmax(280px, 1fr)); gap:14px; margin-bottom:14px; }',
+			'.routeflux-firewall-editor-grid .cbi-value-title { display:inline-block; margin-bottom:8px; color:var(--text-color-high, #17263a); font-weight:700; }',
+			'.routeflux-firewall-editor-bypass .routeflux-firewall-editor-grid .cbi-value-title { color:#284357 !important; }',
+			'.routeflux-firewall-inline { display:flex; gap:10px; align-items:stretch; }',
+			'.routeflux-firewall-inline > .cbi-input-text, .routeflux-firewall-inline > .cbi-input-select { flex:1 1 auto; min-width:0; min-height:56px; padding:0 16px; border:1px solid rgba(71, 85, 105, 0.44); border-radius:14px; background:linear-gradient(180deg, rgba(255, 255, 255, 0.98) 0%, rgba(244, 247, 251, 0.98) 100%); color:var(--text-color-high, #17263a); box-shadow:inset 0 1px 0 rgba(255, 255, 255, 0.86), 0 10px 24px rgba(15, 23, 42, 0.08); }',
+			'.routeflux-firewall-inline > .cbi-input-select { padding-right:44px; }',
+			'.routeflux-firewall-inline .cbi-input-text::placeholder { color:rgba(71, 85, 105, 0.72); opacity:1; }',
+			'.routeflux-firewall-inline > .cbi-input-text:focus, .routeflux-firewall-inline > .cbi-input-select:focus { border-color:rgba(14, 165, 233, 0.72); box-shadow:0 0 0 1px rgba(14, 165, 233, 0.2), 0 14px 30px rgba(14, 165, 233, 0.14); }',
+			'.routeflux-firewall-inline > .cbi-button-action { min-width:138px; min-height:56px; padding:0 18px; border:1px solid rgba(14, 165, 233, 0.5); border-radius:14px; background:linear-gradient(180deg, #14324b 0%, #10283b 100%); color:#eef6ff; font-weight:700; box-shadow:0 14px 30px rgba(15, 23, 42, 0.16); }',
 			'.routeflux-firewall-list { display:grid; gap:8px; }',
-			'.routeflux-firewall-item { display:flex; gap:10px; align-items:center; padding:9px 11px; border-radius:11px; background:rgba(255, 255, 255, 0.84); border:1px solid rgba(148, 163, 184, 0.3); }',
+			'.routeflux-firewall-item { display:flex; gap:12px; align-items:center; padding:12px 14px; border-radius:15px; background:rgba(255, 255, 255, 0.9); border:1px solid rgba(148, 163, 184, 0.26); box-shadow:0 8px 18px rgba(15, 23, 42, 0.06); }',
 			'.routeflux-firewall-item-value { flex:1 1 auto; min-width:0; word-break:break-word; font-weight:600; color:#1f2d40; }',
 			'.routeflux-firewall-badge { display:inline-flex; align-items:center; justify-content:center; min-width:58px; padding:4px 8px; border-radius:999px; background:rgba(59, 130, 246, 0.12); color:#1d4ed8; font-size:11px; font-weight:700; letter-spacing:.04em; text-transform:uppercase; }',
 			'.routeflux-firewall-badge-domain { background:rgba(16, 185, 129, 0.12); color:#047857; }',
 			'.routeflux-firewall-badge-ip { background:rgba(249, 115, 22, 0.14); color:#c2410c; }',
 			'.routeflux-firewall-badge-host { background:rgba(99, 102, 241, 0.12); color:#4338ca; }',
-			'.routeflux-firewall-empty { padding:14px; border-radius:12px; background:rgba(255, 255, 255, 0.72); border:1px dashed rgba(148, 163, 184, 0.42); color:#4b5563; }',
+			'.routeflux-firewall-item .cbi-button-remove { margin-left:auto; border-radius:12px; }',
+			'.routeflux-firewall-empty { padding:14px; border-radius:14px; background:rgba(255, 255, 255, 0.78); border:1px dashed rgba(148, 163, 184, 0.42); color:#4b5563; }',
 			'.routeflux-firewall-disabled-note { margin-top:4px; }',
 			'.routeflux-firewall-actions { display:flex; flex-wrap:wrap; gap:10px; }',
-			'.routeflux-firewall-help { white-space:pre-wrap; margin:0; }'
+			'.routeflux-firewall-actions .cbi-button { min-height:48px; padding:0 18px; border-radius:14px; font-weight:700; }',
+			'.routeflux-firewall-page-description { color:var(--text-color-medium, #4f5f70); max-width:78ch; line-height:1.6; }',
+			'.routeflux-firewall-toggle { display:flex; gap:10px; align-items:flex-start; font-weight:600; color:var(--text-color-high, #17263a); }',
+			'.routeflux-firewall-toggle input { margin-top:4px; }',
+			'.routeflux-firewall-help { white-space:pre-wrap; margin:0; padding:14px 16px; border:1px solid rgba(98, 112, 129, 0.28); border-radius:14px; background:linear-gradient(180deg, rgba(248, 250, 252, 0.96) 0%, rgba(238, 243, 249, 0.96) 100%); }',
+			'@media (max-width: 720px) { .routeflux-firewall-inline { flex-direction:column; } .routeflux-firewall-inline > .cbi-button-action, .routeflux-firewall-actions .cbi-button { width:100%; } .routeflux-firewall-grid > .cbi-value { padding:14px; } .routeflux-firewall-editor { padding:16px; } }'
 		]));
 
 		content.push(E('h2', {}, [ _('RouteFlux - Firewall') ]));
-		content.push(E('p', { 'class': 'cbi-section-descr' }, [
+		content.push(E('p', { 'class': 'cbi-section-descr routeflux-firewall-page-description' }, [
 			_('Manage transparent routing with clear structured editors for Hosts, Targets, and Bypass. Use the Services tab to create reusable custom service presets.')
 		]));
 
@@ -1308,7 +1369,7 @@ return view.extend({
 				}, [
 					E('label', { 'class': 'cbi-value-title', 'for': 'routeflux-firewall-block-quic' }, [ _('Block QUIC') ]),
 					E('div', { 'class': 'cbi-value-field' }, [
-						E('label', { 'style': 'display:flex; gap:8px; align-items:center;' }, [
+						E('label', { 'class': 'routeflux-firewall-toggle' }, [
 							E('input', {
 								'id': 'routeflux-firewall-block-quic',
 								'type': 'checkbox',
