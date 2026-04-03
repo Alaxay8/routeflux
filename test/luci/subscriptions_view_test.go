@@ -95,6 +95,28 @@ func TestSubscriptionsViewKeepsRemoveActionVisibleWhenButtonsWrap(t *testing.T) 
 	}
 }
 
+func TestSubscriptionsViewKeepsLastAvailabilitySortingToggle(t *testing.T) {
+	t.Parallel()
+
+	source := readSubscriptionsViewSource(t)
+
+	for _, want := range []string{
+		"Sort by last availability",
+		"routeflux.subscriptions.sort_by_last_availability",
+		"Uses the last saved availability score. Untested nodes stay at the end.",
+		"loadSortByAvailabilityPreference",
+		"persistSortByAvailabilityPreference",
+		"sortNodesByAvailability",
+		"state.health",
+		"pinnedNode",
+		"left.index - right.index",
+	} {
+		if !strings.Contains(source, want) {
+			t.Fatalf("subscriptions view missing last availability sorting marker %q", want)
+		}
+	}
+}
+
 func readSubscriptionsViewSource(t *testing.T) string {
 	t.Helper()
 

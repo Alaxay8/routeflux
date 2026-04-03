@@ -2,6 +2,7 @@ package app
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"net"
@@ -244,6 +245,99 @@ func TestUpdateFirewallBlockQUICCanonicalizesLegacyTargetsMode(t *testing.T) {
 	}
 	if firewall.validated[0].Mode != domain.FirewallModeTargets {
 		t.Fatalf("expected validated canonical targets mode, got %q", firewall.validated[0].Mode)
+	}
+}
+
+func TestUpdateFirewallDisableIPv6StoresSettingAndAppliesManager(t *testing.T) {
+	t.Parallel()
+
+	store := &memoryStore{
+		settings: domain.DefaultSettings(),
+		state:    domain.DefaultRuntimeState(),
+	}
+	ipv6 := &recordingIPv6Manager{}
+
+	service := NewService(Dependencies{
+		Store:       store,
+		IPv6Manager: ipv6,
+	})
+
+	settings, err := service.UpdateFirewallDisableIPv6(context.Background(), true)
+	if err != nil {
+		t.Fatalf("update firewall disable ipv6: %v", err)
+	}
+
+	if !settings.DisableIPv6 {
+		t.Fatal("expected disable-ipv6 to be enabled")
+	}
+	if !store.settings.Firewall.DisableIPv6 {
+		t.Fatal("expected stored firewall setting to keep disable-ipv6")
+	}
+	if !reflect.DeepEqual(ipv6.applied, []bool{true}) {
+		t.Fatalf("unexpected ipv6 apply calls: %+v", ipv6.applied)
+	}
+}
+
+func TestConnectManualReappliesManagedIPv6Disable(t *testing.T) {
+	t.Parallel()
+
+	store := &memoryStore{
+		settings: domain.DefaultSettings(),
+		state:    domain.DefaultRuntimeState(),
+		subs: []domain.Subscription{
+			{
+				ID: "sub-1",
+				Nodes: []domain.Node{
+					{
+						ID:       "node-1",
+						Name:     "Germany",
+						Protocol: domain.ProtocolVLESS,
+						Address:  "de.example.com",
+						Port:     443,
+						UUID:     "11111111-1111-1111-1111-111111111111",
+					},
+				},
+			},
+		},
+	}
+	store.settings.Firewall.DisableIPv6 = true
+
+	ipv6 := &recordingIPv6Manager{}
+	service := NewService(Dependencies{
+		Store:       store,
+		Backend:     &recordingBackend{},
+		IPv6Manager: ipv6,
+	})
+
+	if err := service.ConnectManual(context.Background(), "sub-1", "node-1"); err != nil {
+		t.Fatalf("connect manual: %v", err)
+	}
+	if !reflect.DeepEqual(ipv6.applied, []bool{true}) {
+		t.Fatalf("expected connect path to reapply managed ipv6 disable, got %+v", ipv6.applied)
+	}
+}
+
+func TestRestoreRuntimeReappliesManagedIPv6DisableWhileDisconnected(t *testing.T) {
+	t.Parallel()
+
+	store := &memoryStore{
+		settings: domain.DefaultSettings(),
+		state:    domain.DefaultRuntimeState(),
+	}
+	store.settings.Firewall.DisableIPv6 = true
+
+	ipv6 := &recordingIPv6Manager{}
+	service := NewService(Dependencies{
+		Store:       store,
+		Firewaller:  &recordingFirewaller{},
+		IPv6Manager: ipv6,
+	})
+
+	if err := service.RestoreRuntime(context.Background()); err != nil {
+		t.Fatalf("restore runtime: %v", err)
+	}
+	if !reflect.DeepEqual(ipv6.applied, []bool{true}) {
+		t.Fatalf("expected restore path to reapply managed ipv6 disable, got %+v", ipv6.applied)
 	}
 }
 
@@ -715,7 +809,7 @@ func TestAddSubscriptionReadsExpirationFromSubscriptionUserinfo(t *testing.T) {
 	assertSubscriptionTraffic(t, sub, 0, 11606312440, 322122547200)
 }
 
-func TestAddSubscriptionFallsBackToDDoSGuardCookieExpiry(t *testing.T) {
+func TestAddSubscriptionIgnoresDDoSGuardCookieExpiry(t *testing.T) {
 	t.Parallel()
 
 	store := &memoryStore{
@@ -723,7 +817,6 @@ func TestAddSubscriptionFallsBackToDDoSGuardCookieExpiry(t *testing.T) {
 		state:    domain.DefaultRuntimeState(),
 	}
 
-	expiresAt := time.Date(2027, time.April, 1, 19, 55, 3, 0, time.UTC)
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Server", "ddos-guard")
 		w.Header().Add("Set-Cookie", "__ddg8_=short; Expires=Wed, 01-Apr-2026 20:14:25 GMT; Path=/")
@@ -745,8 +838,8 @@ func TestAddSubscriptionFallsBackToDDoSGuardCookieExpiry(t *testing.T) {
 		t.Fatalf("add subscription: %v", err)
 	}
 
-	if sub.ExpiresAt == nil || !sub.ExpiresAt.Equal(expiresAt) {
-		t.Fatalf("unexpected expiration date: got %v want %s", sub.ExpiresAt, expiresAt)
+	if sub.ExpiresAt != nil {
+		t.Fatalf("expected DDoS-Guard cookies to be ignored, got %v", sub.ExpiresAt)
 	}
 	assertSubscriptionTraffic(t, sub, 0, 0, 0)
 }
@@ -1469,10 +1562,10 @@ func TestRefreshSubscriptionUpdatesExpirationFromSubscriptionUserinfo(t *testing
 	assertSubscriptionTraffic(t, sub, 0, 11606312440, 322122547200)
 }
 
-func TestRefreshSubscriptionFallsBackToDDoSGuardCookieExpiry(t *testing.T) {
+func TestRefreshSubscriptionKeepsExistingExpiryWhenOnlyDDoSGuardCookieIsPresent(t *testing.T) {
 	t.Parallel()
 
-	expiresAt := time.Date(2027, time.April, 1, 19, 55, 3, 0, time.UTC)
+	expiresAt := time.Date(2027, time.March, 25, 10, 0, 0, 0, time.UTC)
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Server", "ddos-guard")
 		w.Header().Add("Set-Cookie", "__ddg8_=short; Expires=Wed, 01-Apr-2026 20:14:25 GMT; Path=/")
@@ -1526,6 +1619,7 @@ func TestRefreshSubscriptionFallsBackToDDoSGuardCookieExpiry(t *testing.T) {
 				Source:       server.URL,
 				ProviderName: "Demo VPN",
 				DisplayName:  "Demo VPN",
+				ExpiresAt:    &expiresAt,
 				Nodes: []domain.Node{
 					{ID: "old-node"},
 				},
@@ -1966,6 +2060,188 @@ func TestConnectManualAutoBlocksQUICForVLESSRealityTCPNodes(t *testing.T) {
 	if !runtimeBackend.requests[0].TransparentBlockQUIC {
 		t.Fatal("expected incompatible node to force transparent QUIC blocking")
 	}
+	if len(firewall.applied) != 1 {
+		t.Fatalf("expected firewall rules to be applied once, got %d", len(firewall.applied))
+	}
+	if !firewall.applied[0].BlockQUIC {
+		t.Fatal("expected firewall rules to receive the effective transparent QUIC policy")
+	}
+}
+
+func TestConnectManualFailsWhenBackendEgressProbeFailsAndDisablesFirewall(t *testing.T) {
+	t.Parallel()
+
+	store := &memoryStore{
+		settings: domain.DefaultSettings(),
+		state:    domain.DefaultRuntimeState(),
+		subs: []domain.Subscription{
+			{
+				ID: "sub-1",
+				Nodes: []domain.Node{
+					{
+						ID:       "node-1",
+						Name:     "Germany",
+						Protocol: domain.ProtocolVLESS,
+						Address:  "de.example.com",
+						Port:     443,
+						UUID:     "11111111-1111-1111-1111-111111111111",
+					},
+				},
+			},
+		},
+	}
+	store.settings.Firewall.Enabled = true
+	store.settings.Firewall.Mode = domain.FirewallModeHosts
+	store.settings.Firewall.Hosts = []string{"192.168.1.150"}
+	store.settings.Firewall.TransparentPort = 12345
+
+	runtimeBackend := &recordingBackend{}
+	firewall := &recordingFirewaller{}
+	service := NewService(Dependencies{
+		Store:      store,
+		Backend:    runtimeBackend,
+		Firewaller: firewall,
+	})
+	service.backendEgressProbe = func(context.Context) error {
+		return errors.New("egress probe failed")
+	}
+	service.backendEgressTimeout = 5 * time.Millisecond
+	service.backendEgressRetryDelay = time.Millisecond
+
+	err := service.ConnectManual(context.Background(), "sub-1", "node-1")
+	if err == nil {
+		t.Fatal("expected connect manual to fail")
+	}
+	if !strings.Contains(err.Error(), "check backend egress") {
+		t.Fatalf("expected backend egress failure, got %v", err)
+	}
+
+	if len(runtimeBackend.requests) != 1 {
+		t.Fatalf("expected one backend apply, got %d", len(runtimeBackend.requests))
+	}
+	if len(firewall.applied) != 0 {
+		t.Fatalf("expected no firewall apply after failed egress probe, got %d", len(firewall.applied))
+	}
+	if firewall.disableCalls != 1 {
+		t.Fatalf("expected firewall disable once after failed egress probe, got %d", firewall.disableCalls)
+	}
+	if store.state.Connected {
+		t.Fatal("expected runtime state to remain disconnected after failed egress probe")
+	}
+	if !strings.Contains(store.state.LastFailureReason, "egress probe failed") {
+		t.Fatalf("expected failure reason to include probe error, got %q", store.state.LastFailureReason)
+	}
+}
+
+func TestConnectManualRetriesBackendEgressProbeBeforeApplyingFirewall(t *testing.T) {
+	t.Parallel()
+
+	store := &memoryStore{
+		settings: domain.DefaultSettings(),
+		state:    domain.DefaultRuntimeState(),
+		subs: []domain.Subscription{
+			{
+				ID: "sub-1",
+				Nodes: []domain.Node{
+					{
+						ID:       "node-1",
+						Name:     "Germany",
+						Protocol: domain.ProtocolVLESS,
+						Address:  "de.example.com",
+						Port:     443,
+						UUID:     "11111111-1111-1111-1111-111111111111",
+					},
+				},
+			},
+		},
+	}
+	store.settings.Firewall.Enabled = true
+	store.settings.Firewall.Mode = domain.FirewallModeHosts
+	store.settings.Firewall.Hosts = []string{"192.168.1.150"}
+	store.settings.Firewall.TransparentPort = 12345
+
+	runtimeBackend := &recordingBackend{}
+	firewall := &recordingFirewaller{}
+	service := NewService(Dependencies{
+		Store:      store,
+		Backend:    runtimeBackend,
+		Firewaller: firewall,
+	})
+	service.backendEgressTimeout = 50 * time.Millisecond
+	service.backendEgressRetryDelay = time.Millisecond
+
+	attempts := 0
+	service.backendEgressProbe = func(context.Context) error {
+		attempts++
+		if attempts < 3 {
+			return errors.New("proxy not ready yet")
+		}
+		return nil
+	}
+
+	if err := service.ConnectManual(context.Background(), "sub-1", "node-1"); err != nil {
+		t.Fatalf("connect manual: %v", err)
+	}
+	if attempts != 3 {
+		t.Fatalf("expected 3 egress probe attempts, got %d", attempts)
+	}
+	if len(firewall.applied) != 1 {
+		t.Fatalf("expected firewall apply after probe recovery, got %d", len(firewall.applied))
+	}
+	if !store.state.Connected {
+		t.Fatal("expected runtime state to be connected after probe recovery")
+	}
+}
+
+func TestConnectManualContinuesWhenBackendEgressProbeSucceeds(t *testing.T) {
+	t.Parallel()
+
+	store := &memoryStore{
+		settings: domain.DefaultSettings(),
+		state:    domain.DefaultRuntimeState(),
+		subs: []domain.Subscription{
+			{
+				ID: "sub-1",
+				Nodes: []domain.Node{
+					{
+						ID:       "node-1",
+						Name:     "Germany",
+						Protocol: domain.ProtocolVLESS,
+						Address:  "de.example.com",
+						Port:     443,
+						UUID:     "11111111-1111-1111-1111-111111111111",
+					},
+				},
+			},
+		},
+	}
+	store.settings.Firewall.Enabled = true
+	store.settings.Firewall.Mode = domain.FirewallModeHosts
+	store.settings.Firewall.Hosts = []string{"192.168.1.150"}
+	store.settings.Firewall.TransparentPort = 12345
+
+	runtimeBackend := &recordingBackend{}
+	firewall := &recordingFirewaller{}
+	service := NewService(Dependencies{
+		Store:      store,
+		Backend:    runtimeBackend,
+		Firewaller: firewall,
+	})
+	service.backendEgressProbe = func(context.Context) error { return nil }
+
+	if err := service.ConnectManual(context.Background(), "sub-1", "node-1"); err != nil {
+		t.Fatalf("connect manual: %v", err)
+	}
+
+	if len(firewall.applied) != 1 {
+		t.Fatalf("expected firewall rules to be applied once, got %d", len(firewall.applied))
+	}
+	if firewall.disableCalls != 0 {
+		t.Fatalf("expected firewall disable to stay unused on successful egress probe, got %d", firewall.disableCalls)
+	}
+	if !store.state.Connected {
+		t.Fatal("expected runtime state to stay connected after successful egress probe")
+	}
 }
 
 func TestConnectManualPassesExpandedTargetSelectorsToBackend(t *testing.T) {
@@ -2256,6 +2532,128 @@ func TestConnectManualResolvesNodeAddressBeforeApplyingBackendConfig(t *testing.
 	}
 }
 
+func TestConnectManualPrefersReachableResolvedIPv4Address(t *testing.T) {
+	t.Parallel()
+
+	store := &memoryStore{
+		settings: domain.DefaultSettings(),
+		state:    domain.DefaultRuntimeState(),
+		subs: []domain.Subscription{
+			{
+				ID: "sub-1",
+				Nodes: []domain.Node{
+					{
+						ID:       "node-1",
+						Name:     "Lithuania",
+						Protocol: domain.ProtocolVLESS,
+						Address:  "lt-cherry-01.com",
+						Port:     8443,
+						UUID:     "11111111-1111-1111-1111-111111111111",
+					},
+				},
+			},
+		},
+	}
+
+	runtimeBackend := &recordingBackend{}
+	service := NewService(Dependencies{
+		Store:   store,
+		Backend: runtimeBackend,
+		Resolver: fakeResolver{
+			lookups: map[string][]net.IPAddr{
+				"lt-cherry-01.com": {
+					{IP: net.ParseIP("5.199.169.84")},
+					{IP: net.ParseIP("185.150.118.87")},
+				},
+			},
+		},
+	})
+
+	var dialAttempts []string
+	service.nodeDialProbeTimeout = time.Second
+	service.dialContext = func(_ context.Context, network, address string) (net.Conn, error) {
+		dialAttempts = append(dialAttempts, network+" "+address)
+		if address == "5.199.169.84:8443" {
+			return nil, fmt.Errorf("connection refused")
+		}
+		left, right := net.Pipe()
+		_ = right.Close()
+		return left, nil
+	}
+
+	if err := service.ConnectManual(context.Background(), "sub-1", "node-1"); err != nil {
+		t.Fatalf("connect manual: %v", err)
+	}
+
+	if len(runtimeBackend.requests) != 1 {
+		t.Fatalf("expected one backend apply, got %d", len(runtimeBackend.requests))
+	}
+	if got := runtimeBackend.requests[0].Nodes[0].Address; got != "185.150.118.87" {
+		t.Fatalf("expected reachable resolved backend address, got %q", got)
+	}
+	wantAttempts := []string{
+		"tcp 5.199.169.84:8443",
+		"tcp 185.150.118.87:8443",
+	}
+	if !reflect.DeepEqual(dialAttempts, wantAttempts) {
+		t.Fatalf("unexpected dial attempts: got %+v want %+v", dialAttempts, wantAttempts)
+	}
+}
+
+func TestConnectManualFallsBackToFirstResolvedIPv4WhenAllProbesFail(t *testing.T) {
+	t.Parallel()
+
+	store := &memoryStore{
+		settings: domain.DefaultSettings(),
+		state:    domain.DefaultRuntimeState(),
+		subs: []domain.Subscription{
+			{
+				ID: "sub-1",
+				Nodes: []domain.Node{
+					{
+						ID:       "node-1",
+						Name:     "Germany",
+						Protocol: domain.ProtocolVLESS,
+						Address:  "de-dp-01.com",
+						Port:     8443,
+						UUID:     "11111111-1111-1111-1111-111111111111",
+					},
+				},
+			},
+		},
+	}
+
+	runtimeBackend := &recordingBackend{}
+	service := NewService(Dependencies{
+		Store:   store,
+		Backend: runtimeBackend,
+		Resolver: fakeResolver{
+			lookups: map[string][]net.IPAddr{
+				"de-dp-01.com": {
+					{IP: net.ParseIP("195.181.175.155")},
+					{IP: net.ParseIP("195.181.175.159")},
+				},
+			},
+		},
+	})
+
+	service.nodeDialProbeTimeout = time.Second
+	service.dialContext = func(_ context.Context, _, address string) (net.Conn, error) {
+		return nil, fmt.Errorf("dial %s: timeout", address)
+	}
+
+	if err := service.ConnectManual(context.Background(), "sub-1", "node-1"); err != nil {
+		t.Fatalf("connect manual: %v", err)
+	}
+
+	if len(runtimeBackend.requests) != 1 {
+		t.Fatalf("expected one backend apply, got %d", len(runtimeBackend.requests))
+	}
+	if got := runtimeBackend.requests[0].Nodes[0].Address; got != "195.181.175.155" {
+		t.Fatalf("expected first resolved backend address fallback, got %q", got)
+	}
+}
+
 func TestRuntimeStatusReturnsBackendStatus(t *testing.T) {
 	t.Parallel()
 
@@ -2436,6 +2834,35 @@ func TestSetSettingAutoModeFalsePinsCurrentNode(t *testing.T) {
 	}
 	if store.state.ActiveNodeID != "node-2" {
 		t.Fatalf("expected current node to stay pinned, got %s", store.state.ActiveNodeID)
+	}
+}
+
+func TestSetSettingRefreshIntervalUpdatesStoredSubscriptions(t *testing.T) {
+	t.Parallel()
+
+	store := &memoryStore{
+		settings: domain.DefaultSettings(),
+		state:    domain.DefaultRuntimeState(),
+		subs: []domain.Subscription{
+			{ID: "sub-1", RefreshInterval: domain.NewDuration(time.Hour)},
+			{ID: "sub-2", RefreshInterval: domain.NewDuration(2 * time.Hour)},
+		},
+	}
+
+	service := NewService(Dependencies{Store: store})
+
+	settings, err := service.SetSetting("refresh-interval", "30m")
+	if err != nil {
+		t.Fatalf("set refresh interval: %v", err)
+	}
+
+	if got := settings.RefreshInterval.Duration(); got != 30*time.Minute {
+		t.Fatalf("unexpected settings refresh interval: %s", got)
+	}
+	for _, sub := range store.subs {
+		if got := sub.RefreshInterval.Duration(); got != 30*time.Minute {
+			t.Fatalf("expected propagated refresh interval for %s, got %s", sub.ID, got)
+		}
 	}
 }
 
@@ -2925,6 +3352,12 @@ type recordingFirewaller struct {
 	validateErr  error
 }
 
+type recordingIPv6Manager struct {
+	applied []bool
+	status  domain.IPv6Status
+	err     error
+}
+
 func (f *recordingFirewaller) Validate(_ context.Context, settings domain.FirewallSettings) error {
 	f.validated = append(f.validated, settings)
 	return f.validateErr
@@ -2938,6 +3371,15 @@ func (f *recordingFirewaller) Apply(_ context.Context, settings domain.FirewallS
 func (f *recordingFirewaller) Disable(context.Context) error {
 	f.disableCalls++
 	return nil
+}
+
+func (m *recordingIPv6Manager) Apply(_ context.Context, disabled bool) error {
+	m.applied = append(m.applied, disabled)
+	return m.err
+}
+
+func (m *recordingIPv6Manager) Status(context.Context) (domain.IPv6Status, error) {
+	return m.status, m.err
 }
 
 type fakeChecker struct {

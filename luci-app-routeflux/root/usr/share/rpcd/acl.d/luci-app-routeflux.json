@@ -7,6 +7,7 @@
 				"/usr/bin/routeflux --json status": [ "exec" ],
 				"/usr/bin/routeflux --json list subscriptions": [ "exec" ],
 				"/usr/bin/routeflux inspect xray-safe --subscription * --node *": [ "exec" ],
+				"/usr/bin/routeflux --json inspect speed --subscription * --node *": [ "exec" ],
 				"/usr/bin/routeflux --json settings get": [ "exec" ],
 				"/usr/bin/routeflux --json dns get": [ "exec" ],
 				"/usr/bin/routeflux dns explain": [ "exec" ],

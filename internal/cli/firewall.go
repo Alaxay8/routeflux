@@ -115,6 +115,7 @@ Hosts selectors:
 Other options:
 - port: port used for transparent redirect
 - block-quic: when true, RouteFlux blocks proxied QUIC/UDP traffic so clients fall back to TCP; when false, QUIC is proxied normally
+- ipv6: when disabled in RouteFlux, the router turns off IPv6 because transparent routing is IPv4-only and otherwise IPv6 can bypass the proxy
 `, firewallPresetSummary())))
 		},
 	}
@@ -142,6 +143,7 @@ Firewall options:
 - hosts: LAN clients whose traffic should go through RouteFlux
 - port: transparent redirect port
 - block-quic: true or false
+- ipv6: disable or enable router IPv6 handling managed by RouteFlux
 `),
 		Example: strings.TrimSpace(`
 routeflux firewall set hosts 192.168.1.150
@@ -154,6 +156,7 @@ routeflux firewall set split --proxy youtube --bypass gosuslugi.ru --exclude-hos
 routeflux firewall set anti-target gosuslugi.ru sberbank.ru
 routeflux firewall set port 12345
 routeflux firewall set block-quic true
+routeflux firewall set ipv6 disable
 routeflux firewall set youtube.com 1.1.1.1
 `),
 		Args: cobra.MinimumNArgs(1),
@@ -272,6 +275,23 @@ routeflux firewall set youtube.com 1.1.1.1
 					return err
 				}
 				return printOutput(cmd, opts.jsonOutput, updated, fmt.Sprintf("Firewall block-quic set to %t", updated.BlockQUIC))
+			case "ipv6":
+				if len(values) != 1 {
+					return fmt.Errorf("firewall ipv6 expects exactly one value")
+				}
+				disabled, err := parseFirewallIPv6State(values[0])
+				if err != nil {
+					return err
+				}
+				updated, err := opts.service.UpdateFirewallDisableIPv6(context.Background(), disabled)
+				if err != nil {
+					return err
+				}
+				stateLabel := "enabled"
+				if updated.DisableIPv6 {
+					stateLabel = "disabled"
+				}
+				return printOutput(cmd, opts.jsonOutput, updated, fmt.Sprintf("Firewall IPv6 protection set to %s", stateLabel))
 			default:
 				return fmt.Errorf("unsupported firewall option %q", option)
 			}
@@ -421,7 +441,7 @@ func parseFirewallSetArgs(args []string) (string, []string, error) {
 	}
 
 	switch strings.TrimSpace(strings.ToLower(args[0])) {
-	case "targets", "bypass", "anti-target", "anti-targets", "hosts", "port", "block-quic":
+	case "targets", "bypass", "anti-target", "anti-targets", "hosts", "port", "block-quic", "ipv6":
 		if len(args) < 2 {
 			return "", nil, fmt.Errorf("firewall %s expects at least one value", args[0])
 		}
@@ -453,8 +473,20 @@ func renderFirewallSettingsText(settings domain.FirewallSettings) string {
 		fmt.Sprintf("split-excluded-sources=%s", strings.Join(settings.Split.ExcludedSources, ", ")),
 		fmt.Sprintf("hosts=%s", strings.Join(settings.Hosts, ", ")),
 		fmt.Sprintf("block-quic=%t", settings.BlockQUIC),
+		fmt.Sprintf("disable-ipv6=%t", settings.DisableIPv6),
 	}
 	return strings.Join(lines, "\n")
+}
+
+func parseFirewallIPv6State(raw string) (bool, error) {
+	switch strings.ToLower(strings.TrimSpace(raw)) {
+	case "disable", "disabled", "off", "true", "1":
+		return true, nil
+	case "enable", "enabled", "on", "false", "0":
+		return false, nil
+	default:
+		return false, fmt.Errorf("unsupported firewall ipv6 value %q: use disable or enable", raw)
+	}
 }
 
 func firewallMode(settings domain.FirewallSettings) string {

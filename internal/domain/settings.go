@@ -189,6 +189,7 @@ type FirewallSettings struct {
 	Enabled              bool                                `json:"enabled"`
 	TransparentPort      int                                 `json:"transparent_port"`
 	Mode                 FirewallMode                        `json:"mode"`
+	DisableIPv6          bool                                `json:"disable_ipv6"`
 	Hosts                []string                            `json:"hosts"`
 	Targets              FirewallSelectorSet                 `json:"targets"`
 	Split                FirewallSplitSettings               `json:"split"`
@@ -210,6 +211,7 @@ func DefaultSettings() Settings {
 			Enabled:              false,
 			TransparentPort:      12345,
 			Mode:                 FirewallModeDisabled,
+			DisableIPv6:          false,
 			Hosts:                nil,
 			Targets:              FirewallSelectorSet{},
 			Split:                DefaultFirewallSplitSettings(),

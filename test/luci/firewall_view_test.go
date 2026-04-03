@@ -129,6 +129,26 @@ func TestFirewallViewUsesReadableBypassEditorStyling(t *testing.T) {
 	}
 }
 
+func TestFirewallViewIncludesIPv6ProtectionToggle(t *testing.T) {
+	t.Parallel()
+
+	source := readFirewallViewSource(t)
+
+	for _, want := range []string{
+		"'disable_ipv6': raw.disable_ipv6 === true",
+		"'disable_ipv6': current.disable_ipv6 === true",
+		"handleDisableIPv6Change",
+		"'firewall', 'set', 'ipv6', this.formState.disable_ipv6 ? 'disable' : 'enable'",
+		"'routeflux-firewall-disable-ipv6'",
+		"_('Disable IPv6')",
+		"_('RouteFlux transparent routing only intercepts IPv4 traffic. If IPv6 stays enabled, matching traffic can still leave the router outside the proxy.')",
+	} {
+		if !strings.Contains(source, want) {
+			t.Fatalf("firewall view must contain IPv6 toggle marker %q", want)
+		}
+	}
+}
+
 func readFirewallViewSource(t *testing.T) string {
 	t.Helper()
 

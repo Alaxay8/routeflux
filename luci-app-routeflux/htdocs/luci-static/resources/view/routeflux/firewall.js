@@ -497,6 +497,7 @@ function canonicalFirewall(firewall) {
 		'mode': compatibilityWarning !== '' ? 'advanced-split' : mode,
 		'transparent_port': Number(raw.transparent_port) > 0 ? Number(raw.transparent_port) : 12345,
 		'block_quic': raw.block_quic === true,
+		'disable_ipv6': raw.disable_ipv6 === true,
 		'hosts': cleanList(raw.hosts || raw.source_cidrs || []),
 		'targets': targets,
 		'bypass': {
@@ -541,6 +542,7 @@ function buildFormState(firewall) {
 		'mode': current.mode || 'disabled',
 		'port': String(current.transparent_port),
 		'block_quic': current.block_quic === true,
+		'disable_ipv6': current.disable_ipv6 === true,
 		'hosts': hosts,
 		'targets': targets,
 		'bypass': bypass,
@@ -738,6 +740,10 @@ return view.extend({
 		this.formState.block_quic = ev.currentTarget.checked === true;
 	},
 
+	handleDisableIPv6Change: function(ev) {
+		this.formState.disable_ipv6 = ev.currentTarget.checked === true;
+	},
+
 	handleServiceChoiceChange: function(key, ev) {
 		var editor = editorByKey(this, key);
 
@@ -884,6 +890,7 @@ return view.extend({
 		var port = parseInt(portRaw, 10);
 		var mode = trim(this.formState.mode);
 		var commands = this.draftCommands();
+		var ipv6Command = [ 'firewall', 'set', 'ipv6', this.formState.disable_ipv6 ? 'disable' : 'enable' ];
 		var targetSelectors = selectorValues(selectorSetFromEditor(this.formState.targets));
 		var bypassSelectors = selectorValues(selectorSetFromEditor(this.formState.bypass.selectors));
 		var bypassExcluded = listValues(this.formState.bypass.excluded);
@@ -920,12 +927,14 @@ return view.extend({
 		if (mode === 'hosts') {
 			commands.push([ 'firewall', 'set', '--port', String(port), 'hosts' ].concat(listValues(this.formState.hosts)));
 			commands.push([ 'firewall', 'set', 'block-quic', this.formState.block_quic ? 'true' : 'false' ]);
+			commands.push(ipv6Command);
 			return this.runCommands(commands, _('Firewall settings saved.'));
 		}
 
 		if (mode === 'targets') {
 			commands.push([ 'firewall', 'set', '--port', String(port), 'targets' ].concat(targetSelectors));
 			commands.push([ 'firewall', 'set', 'block-quic', this.formState.block_quic ? 'true' : 'false' ]);
+			commands.push(ipv6Command);
 			return this.runCommands(commands, _('Firewall settings saved.'));
 		}
 
@@ -933,12 +942,14 @@ return view.extend({
 			appendStringSliceFlags(bypassCommand, '--exclude-host', bypassExcluded);
 			commands.push(bypassCommand.concat(bypassSelectors));
 			commands.push([ 'firewall', 'set', 'block-quic', this.formState.block_quic ? 'true' : 'false' ]);
+			commands.push(ipv6Command);
 			return this.runCommands(commands, _('Firewall settings saved.'));
 		}
 
 		commands.push([ 'firewall', 'disable' ]);
 		commands.push([ 'firewall', 'set', 'port', String(port) ]);
 		commands.push([ 'firewall', 'set', 'block-quic', this.formState.block_quic ? 'true' : 'false' ]);
+		commands.push(ipv6Command);
 		return this.runCommands(commands, _('Firewall settings saved and routing disabled.'));
 	},
 
@@ -1306,6 +1317,7 @@ return view.extend({
 			this.renderCard(_('Mode'), modeSummary(currentMode)),
 			this.renderCard(_('Transparent Port'), String(firewall.transparent_port || 12345)),
 			this.renderCard(_('Block QUIC'), firewall.block_quic === true ? _('Enabled') : _('Disabled')),
+			this.renderCard(_('Disable IPv6'), firewall.disable_ipv6 === true ? _('Enabled') : _('Disabled')),
 			this.renderCard(_('Active Provider'), activeProvider),
 			this.renderCard(_('Active Profile'), activeProfile),
 			this.renderCard(_('Active Node'), activeNodeName)
@@ -1383,6 +1395,28 @@ return view.extend({
 					]),
 					E('div', { 'class': 'cbi-value-description' }, [
 						_('When enabled, RouteFlux blocks proxied QUIC and UDP traffic so clients retry over TCP. Leave it off when you want QUIC to be proxied normally.')
+					])
+				]),
+				E('div', {
+					'class': 'cbi-value',
+					'style': 'grid-column:1 / -1'
+				}, [
+					E('label', { 'class': 'cbi-value-title', 'for': 'routeflux-firewall-disable-ipv6' }, [ _('Disable IPv6') ]),
+					E('div', { 'class': 'cbi-value-field' }, [
+						E('label', { 'class': 'routeflux-firewall-toggle' }, [
+							E('input', {
+								'id': 'routeflux-firewall-disable-ipv6',
+								'type': 'checkbox',
+								'checked': this.formState.disable_ipv6 ? 'checked' : null,
+								'change': function(ev) {
+									this.handleDisableIPv6Change(ev);
+								}.bind(this)
+							}),
+							_('Turn off router IPv6 when you want RouteFlux to prevent IPv6 from bypassing IPv4-only transparent routing.')
+						])
+					]),
+					E('div', { 'class': 'cbi-value-description' }, [
+						_('RouteFlux transparent routing only intercepts IPv4 traffic. If IPv6 stays enabled, matching traffic can still leave the router outside the proxy.')
 					])
 				])
 			]),

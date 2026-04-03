@@ -73,6 +73,34 @@ func TestRenderDiagnosticsTextIncludesTransparentQUICPolicy(t *testing.T) {
 	}
 }
 
+func TestRenderDiagnosticsTextIncludesIPv6FailState(t *testing.T) {
+	t.Parallel()
+
+	text := renderDiagnosticsText(diagnosticsSnapshot{
+		Status: api.StatusResponse{
+			State: domain.DefaultRuntimeState(),
+		},
+		TransparentQUICPolicy: "proxied",
+		IPv6: diagnosticsIPv6Status{
+			FailState:          true,
+			RuntimeDisabled:    false,
+			PersistentDisabled: false,
+			EnabledInterfaces:  []string{"br-lan"},
+			Message:            "Transparent routing does not intercept IPv6 traffic.",
+		},
+	})
+
+	for _, want := range []string{
+		"ipv6-fail-state=true",
+		"ipv6-runtime-disabled=false",
+		"ipv6-enabled-interfaces=br-lan",
+	} {
+		if !strings.Contains(text, want) {
+			t.Fatalf("expected diagnostics text to include %q, got %q", want, text)
+		}
+	}
+}
+
 func TestDiagnosticsTransparentQUICPolicyMarksIncompatibleNodeAsBlocked(t *testing.T) {
 	t.Parallel()
 
@@ -90,5 +118,28 @@ func TestDiagnosticsTransparentQUICPolicyMarksIncompatibleNodeAsBlocked(t *testi
 
 	if policy != "blocked-incompatible-node" {
 		t.Fatalf("expected incompatible node policy, got %q", policy)
+	}
+}
+
+func TestBuildDiagnosticsIPv6StatusFailsWhenTransparentRoutingLeavesIPv6Enabled(t *testing.T) {
+	t.Parallel()
+
+	settings := domain.DefaultSettings().Firewall
+	settings.Enabled = true
+	settings.Mode = domain.FirewallModeHosts
+	settings.Hosts = []string{"192.168.1.150"}
+
+	status := buildDiagnosticsIPv6Status(settings, domain.IPv6Status{
+		Available:          true,
+		RuntimeDisabled:    false,
+		PersistentDisabled: false,
+		EnabledInterfaces:  []string{"br-lan"},
+	})
+
+	if !status.FailState {
+		t.Fatal("expected ipv6 diagnostics to mark transparent routing leak risk as failed")
+	}
+	if !strings.Contains(status.Message, "does not intercept IPv6") {
+		t.Fatalf("unexpected ipv6 diagnostics message: %q", status.Message)
 	}
 }

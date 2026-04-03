@@ -23,7 +23,20 @@ type diagnosticsSnapshot struct {
 	Runtime               backend.RuntimeStatus `json:"runtime"`
 	RuntimeError          string                `json:"runtime_error,omitempty"`
 	TransparentQUICPolicy string                `json:"transparent_quic_policy"`
+	IPv6                  diagnosticsIPv6Status `json:"ipv6"`
 	Files                 diagnosticsFiles      `json:"files"`
+}
+
+type diagnosticsIPv6Status struct {
+	Available          bool     `json:"available"`
+	ConfiguredDisabled bool     `json:"configured_disabled"`
+	ConfigPath         string   `json:"config_path,omitempty"`
+	FailState          bool     `json:"fail_state"`
+	PersistentDisabled bool     `json:"persistent_disabled"`
+	RuntimeDisabled    bool     `json:"runtime_disabled"`
+	EnabledInterfaces  []string `json:"enabled_interfaces,omitempty"`
+	Message            string   `json:"message,omitempty"`
+	Error              string   `json:"error,omitempty"`
 }
 
 type diagnosticsFiles struct {
@@ -76,6 +89,7 @@ func buildDiagnosticsSnapshot(ctx context.Context, opts *rootOptions) (diagnosti
 	}
 
 	runtimeStatus, runtimeErr := opts.service.RuntimeStatus(ctx)
+	ipv6Status, ipv6Err := opts.service.IPv6Status(ctx)
 
 	rootDir := opts.rootDir
 	if rootDir == "" {
@@ -86,6 +100,7 @@ func buildDiagnosticsSnapshot(ctx context.Context, opts *rootOptions) (diagnosti
 		Status:                api.StatusResponseFromSnapshot(status),
 		Runtime:               runtimeStatus,
 		TransparentQUICPolicy: diagnosticsTransparentQUICPolicy(status.Settings.Firewall, status.ActiveNode),
+		IPv6:                  buildDiagnosticsIPv6Status(status.Settings.Firewall, ipv6Status),
 		Files: diagnosticsFiles{
 			RoutefluxBinary:   inspectPath(routefluxBinaryPath),
 			RoutefluxRoot:     inspectPath(rootDir),
@@ -101,6 +116,15 @@ func buildDiagnosticsSnapshot(ctx context.Context, opts *rootOptions) (diagnosti
 
 	if runtimeErr != nil {
 		snapshot.RuntimeError = runtimeErr.Error()
+	}
+	if ipv6Err != nil {
+		snapshot.IPv6.Error = ipv6Err.Error()
+		if snapshot.IPv6.Message == "" {
+			snapshot.IPv6.Message = ipv6Err.Error()
+		}
+		if snapshot.IPv6.ConfigPath == "" {
+			snapshot.IPv6.ConfigPath = openwrt.IPv6SysctlConfigPath()
+		}
 	}
 
 	return snapshot, nil
@@ -148,6 +172,15 @@ func renderDiagnosticsText(snapshot diagnosticsSnapshot) string {
 		fmt.Sprintf("connected=%t", snapshot.Status.State.Connected),
 		fmt.Sprintf("mode=%s", snapshot.Status.State.Mode),
 		fmt.Sprintf("transparent-quic-policy=%s", snapshot.TransparentQUICPolicy),
+		fmt.Sprintf("ipv6-available=%t", snapshot.IPv6.Available),
+		fmt.Sprintf("ipv6-configured-disabled=%t", snapshot.IPv6.ConfiguredDisabled),
+		fmt.Sprintf("ipv6-fail-state=%t", snapshot.IPv6.FailState),
+		fmt.Sprintf("ipv6-runtime-disabled=%t", snapshot.IPv6.RuntimeDisabled),
+		fmt.Sprintf("ipv6-persistent-disabled=%t", snapshot.IPv6.PersistentDisabled),
+		fmt.Sprintf("ipv6-enabled-interfaces=%s", strings.Join(snapshot.IPv6.EnabledInterfaces, ", ")),
+		fmt.Sprintf("ipv6-config-path=%s", snapshot.IPv6.ConfigPath),
+		fmt.Sprintf("ipv6-message=%s", snapshot.IPv6.Message),
+		fmt.Sprintf("ipv6-error=%s", snapshot.IPv6.Error),
 		fmt.Sprintf("backend-running=%t", snapshot.Runtime.Running),
 		fmt.Sprintf("backend-service-state=%s", snapshot.Runtime.ServiceState),
 		fmt.Sprintf("backend-config=%s", snapshot.Runtime.ConfigPath),
@@ -179,6 +212,48 @@ func diagnosticsTransparentQUICPolicy(settings domain.FirewallSettings, activeNo
 		return "blocked-incompatible-node"
 	}
 	return "proxied"
+}
+
+func buildDiagnosticsIPv6Status(settings domain.FirewallSettings, status domain.IPv6Status) diagnosticsIPv6Status {
+	diagnostics := diagnosticsIPv6Status{
+		Available:          status.Available,
+		ConfiguredDisabled: settings.DisableIPv6,
+		ConfigPath:         status.ConfigPath,
+		PersistentDisabled: status.PersistentDisabled,
+		RuntimeDisabled:    status.RuntimeDisabled,
+		EnabledInterfaces:  append([]string(nil), status.EnabledInterfaces...),
+	}
+
+	routingEnabled := domain.FirewallRoutingEnabled(settings)
+	configMismatch := settings.DisableIPv6 && (!status.PersistentDisabled || !status.RuntimeDisabled)
+	bypassRisk := routingEnabled && status.Available && !status.RuntimeDisabled
+
+	diagnostics.FailState = configMismatch || bypassRisk
+
+	switch {
+	case settings.DisableIPv6 && status.Available && (!status.PersistentDisabled || !status.RuntimeDisabled):
+		if len(status.EnabledInterfaces) > 0 {
+			diagnostics.Message = fmt.Sprintf(
+				"RouteFlux is configured to disable IPv6, but IPv6 is still enabled on %s. Transparent routing does not intercept IPv6 traffic.",
+				strings.Join(status.EnabledInterfaces, ", "),
+			)
+			return diagnostics
+		}
+		if !status.PersistentDisabled {
+			diagnostics.Message = "RouteFlux is configured to disable IPv6, but the persistent IPv6 sysctl file is missing."
+			return diagnostics
+		}
+		diagnostics.Message = "RouteFlux is configured to disable IPv6, but runtime IPv6 is still active. Transparent routing does not intercept IPv6 traffic."
+		return diagnostics
+	case bypassRisk:
+		diagnostics.Message = "Transparent routing does not intercept IPv6 traffic. Disable IPv6 in RouteFlux to prevent bypass."
+	case settings.DisableIPv6 && status.Available && status.PersistentDisabled && status.RuntimeDisabled:
+		diagnostics.Message = "IPv6 is disabled by RouteFlux."
+	case status.Available && !status.RuntimeDisabled:
+		diagnostics.Message = "IPv6 remains enabled on the router."
+	}
+
+	return diagnostics
 }
 
 func describeDiagnosticFile(label string, status diagnosticsPathStatus) string {

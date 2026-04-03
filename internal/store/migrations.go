@@ -60,6 +60,7 @@ func decodeSettings(data []byte, path string) (domain.Settings, error) {
 		Enabled              *bool                                       `json:"enabled"`
 		TransparentPort      *int                                        `json:"transparent_port"`
 		Mode                 *domain.FirewallMode                        `json:"mode"`
+		DisableIPv6          *bool                                       `json:"disable_ipv6"`
 		Hosts                *[]string                                   `json:"hosts"`
 		Targets              *rawFirewallSelectorSet                     `json:"targets"`
 		Split                *rawFirewallSplitSettings                   `json:"split"`
@@ -164,6 +165,9 @@ func decodeSettings(data []byte, path string) (domain.Settings, error) {
 		}
 		if raw.Firewall.Mode != nil {
 			settings.Firewall.Mode = domain.NormalizeFirewallMode(*raw.Firewall.Mode)
+		}
+		if raw.Firewall.DisableIPv6 != nil {
+			settings.Firewall.DisableIPv6 = *raw.Firewall.DisableIPv6
 		}
 		if raw.Firewall.Hosts != nil {
 			settings.Firewall.Hosts = append([]string(nil), (*raw.Firewall.Hosts)...)

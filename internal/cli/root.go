@@ -117,13 +117,16 @@ func (o *rootOptions) initService() error {
 	fileStore.WithLogger(logger)
 	controller := openwrt.NewXrayController()
 	firewall := openwrt.NewFirewallManager()
+	ipv6Manager := openwrt.NewIPv6Manager()
 	var runtimeBackend backend.Backend = xray.NewRuntimeBackend(configPath, controller).WithLogger(logger)
 	o.service = app.NewService(app.Dependencies{
-		Store:      fileStore,
-		Backend:    runtimeBackend,
-		Firewaller: firewall,
-		HTTPClient: &http.Client{Timeout: 20 * time.Second},
-		Checker:    probe.TCPChecker{Timeout: 5 * time.Second},
+		Store:              fileStore,
+		Backend:            runtimeBackend,
+		Firewaller:         firewall,
+		IPv6Manager:        ipv6Manager,
+		HTTPClient:         &http.Client{Timeout: 20 * time.Second},
+		Checker:            probe.TCPChecker{Timeout: 5 * time.Second},
+		RuntimeEgressProbe: openwrt.IsOpenWrt(),
 		SpeedTester: speedtest.Runner{
 			LockPath:   filepath.Join(root, "speedtest.lock"),
 			BinaryPath: xray.BinaryPath(),

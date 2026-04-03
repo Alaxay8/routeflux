@@ -36,7 +36,7 @@ func TestBuildNFTablesRules(t *testing.T) {
 		"ip daddr @local_bypass_v4 return",
 		"ip saddr @source_v4 ip daddr @proxy_target_v4 tcp dport != 12345 redirect to :12345",
 		"chain prerouting_mangle",
-		"ip saddr @source_v4 ip daddr @proxy_target_v4 udp dport 443",
+		"ip saddr @source_v4 ip daddr @proxy_target_v4 udp meta mark set 0x1 tproxy ip to :12345 accept",
 		"meta mark set 0x1",
 		"tproxy ip to :12345",
 		"chain prerouting",
@@ -75,7 +75,7 @@ func TestBuildNFTablesRulesSupportsTargetDomainsWithoutStaticCIDRs(t *testing.T)
 		"192.168.0.0/16",
 		"ip daddr @local_bypass_v4 return",
 		"ip saddr @source_v4 ip daddr @proxy_target_v4 tcp dport != 12345 redirect to :12345",
-		"ip saddr @source_v4 ip daddr @proxy_target_v4 udp dport 443",
+		"ip saddr @source_v4 ip daddr @proxy_target_v4 udp meta mark set 0x1 tproxy ip to :12345 accept",
 		"chain output",
 	}
 	for _, want := range wants {
@@ -104,7 +104,7 @@ func TestBuildNFTablesRulesSupportsTargetServicesWithPresetCIDRs(t *testing.T) {
 		"91.108.0.0/16",
 		"149.154.0.0/16",
 		"ip saddr @source_v4 ip daddr @proxy_target_v4 tcp dport != 12345 redirect to :12345",
-		"ip saddr @source_v4 ip daddr @proxy_target_v4 udp dport 443",
+		"ip saddr @source_v4 ip daddr @proxy_target_v4 udp meta mark set 0x1 tproxy ip to :12345 accept",
 	} {
 		if !strings.Contains(rules, want) {
 			t.Fatalf("rules missing %q\n%s", want, rules)
@@ -135,7 +135,7 @@ func TestBuildNFTablesRulesSupportsCustomTargetServices(t *testing.T) {
 	for _, want := range []string{
 		"104.18.0.0/15",
 		"ip saddr @source_v4 ip daddr @proxy_target_v4 tcp dport != 12345 redirect to :12345",
-		"ip saddr @source_v4 ip daddr @proxy_target_v4 udp dport 443",
+		"ip saddr @source_v4 ip daddr @proxy_target_v4 udp meta mark set 0x1 tproxy ip to :12345 accept",
 	} {
 		if !strings.Contains(rules, want) {
 			t.Fatalf("rules missing %q\n%s", want, rules)
@@ -187,6 +187,34 @@ func TestBuildNFTablesRulesInterceptsUDPForTargetDomainsWithoutDroppingQUIC(t *t
 	}
 	if strings.Contains(rules, "udp dport 443 drop") {
 		t.Fatalf("rules should not drop quic once udp interception is enabled\n%s", rules)
+	}
+}
+
+func TestBuildNFTablesRulesInterceptsAllUDPWhenQUICProxyingEnabled(t *testing.T) {
+	t.Parallel()
+
+	rules, err := BuildNFTablesRules(domain.FirewallSettings{
+		Enabled:         true,
+		TransparentPort: 12345,
+		Mode:            domain.FirewallModeSplit,
+		Split: domain.FirewallSplitSettings{
+			Bypass: domain.FirewallSelectorSet{
+				Domains: []string{"youtube.com"},
+			},
+			DefaultAction: domain.FirewallDefaultActionProxy,
+		},
+		BlockQUIC: false,
+	})
+	if err != nil {
+		t.Fatalf("build rules: %v", err)
+	}
+
+	want := "ip saddr @source_v4 udp meta mark set 0x1 tproxy ip to :12345 accept"
+	if !strings.Contains(rules, want) {
+		t.Fatalf("rules missing %q\n%s", want, rules)
+	}
+	if strings.Contains(rules, "ip saddr @source_v4 udp dport 443 meta mark set 0x1 tproxy ip to :12345 accept") {
+		t.Fatalf("rules should not limit transparent udp interception to port 443 when quic proxying is enabled\n%s", rules)
 	}
 }
 

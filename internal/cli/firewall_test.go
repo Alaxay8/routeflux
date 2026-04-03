@@ -224,6 +224,38 @@ func TestFirewallExplainOutputsFriendlyGuide(t *testing.T) {
 	}
 }
 
+func TestFirewallSetIPv6DisableCommand(t *testing.T) {
+	t.Parallel()
+
+	store := &cliMemoryStore{
+		settings: domain.DefaultSettings(),
+		state:    domain.DefaultRuntimeState(),
+	}
+	service := app.NewService(app.Dependencies{Store: store})
+
+	cmd := newFirewallCmd(&rootOptions{service: service})
+	var stdout bytes.Buffer
+	cmd.SetOut(&stdout)
+	cmd.SetErr(new(bytes.Buffer))
+	cmd.SetArgs([]string{"set", "ipv6", "disable"})
+
+	if err := cmd.Execute(); err != nil {
+		t.Fatalf("execute firewall set ipv6 disable: %v", err)
+	}
+
+	if got := stdout.String(); !strings.Contains(got, "Firewall IPv6 protection set to disabled") {
+		t.Fatalf("unexpected output: %q", got)
+	}
+
+	settings, err := service.GetFirewallSettings()
+	if err != nil {
+		t.Fatalf("get firewall settings: %v", err)
+	}
+	if !settings.DisableIPv6 {
+		t.Fatal("expected disable-ipv6 to be enabled")
+	}
+}
+
 func TestSettingsGetIncludesFirewallHosts(t *testing.T) {
 	t.Parallel()
 

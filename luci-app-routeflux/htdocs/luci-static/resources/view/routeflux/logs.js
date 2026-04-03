@@ -353,6 +353,45 @@ return view.extend({
 		});
 	},
 
+	copyTextToClipboard: function(text) {
+		var value = String(text || '');
+
+		if (value === '')
+			return Promise.reject(new Error(_('Nothing to copy.')));
+
+		if (typeof navigator !== 'undefined' && navigator.clipboard && typeof navigator.clipboard.writeText === 'function')
+			return navigator.clipboard.writeText(value);
+
+		return new Promise(function(resolve, reject) {
+			var area;
+
+			if (typeof document === 'undefined' || !document.body) {
+				reject(new Error(_('Clipboard export is unavailable.')));
+				return;
+			}
+
+			area = E('textarea', {
+				'style': 'position:fixed; left:-9999px; top:-9999px; opacity:0'
+			}, [ value ]);
+
+			document.body.appendChild(area);
+			area.focus();
+			area.select();
+
+			try {
+				if (!document.execCommand('copy'))
+					throw new Error(_('Clipboard export is unavailable.'));
+				resolve();
+			}
+			catch (err) {
+				reject(err);
+			}
+			finally {
+				document.body.removeChild(area);
+			}
+		});
+	},
+
 	renderCard: function(label, value, options) {
 		return routefluxUI.renderSummaryCard(label, value, options);
 	},
@@ -382,6 +421,16 @@ return view.extend({
 
 		button.disabled = this.isManualRefreshing;
 		button.textContent = this.isManualRefreshing ? _('Refreshing...') : _('Refresh');
+	},
+
+	setPauseButtonState: function(isPaused) {
+		this.isLogsPaused = isPaused === true;
+
+		var button = document.querySelector('#routeflux-logs-pause-button');
+		if (!button)
+			return;
+
+		button.textContent = this.isLogsPaused ? _('Resume') : _('Pause');
 	},
 
 	createLogBuffer: function(lines) {
@@ -596,9 +645,23 @@ return view.extend({
 		return joinLines(buffer ? buffer.visible : [], emptyText);
 	},
 
+	logCopyText: function(key) {
+		var buffer = this.logBuffers && this.logBuffers[key];
+		return joinLines(buffer ? buffer.visible : [], '');
+	},
+
 	renderLogSection: function(title, key, emptyText) {
 		return E('div', { 'class': 'cbi-section' }, [
-			E('h3', {}, [ title ]),
+			E('div', { 'class': 'routeflux-logs-section-head' }, [
+				E('h3', {}, [ title ]),
+				E('div', { 'class': 'routeflux-logs-section-actions' }, [
+					E('button', {
+						'type': 'button',
+						'class': 'cbi-button',
+						'click': ui.createHandlerFn(this, 'handleCopyLog', key)
+					}, [ _('Copy') ])
+				])
+			]),
 			E('pre', {
 				'class': 'routeflux-logs-pre',
 				'id': 'routeflux-logs-' + key + '-pre'
@@ -707,6 +770,9 @@ return view.extend({
 			if (requestId !== this.latestIssuedRequestId)
 				return;
 
+			if (!forced && this.isLogsPaused === true)
+				return;
+
 			if (nextStatus.__error__) {
 				if (showNotification === true)
 					notifications.push(_('Status error: %s').format(nextStatus.__error__));
@@ -760,7 +826,7 @@ return view.extend({
 			return;
 
 		this.pollFn = L.bind(function() {
-			if (this.isManualRefreshing === true)
+			if (this.isManualRefreshing === true || this.isLogsPaused === true)
 				return Promise.resolve();
 
 			return this.refreshLiveData(false, false);
@@ -782,16 +848,42 @@ return view.extend({
 	},
 
 	handleRefreshPage: function(ev) {
+		if (ev)
+			ev.preventDefault();
+
 		return this.refreshLiveData(true, true).then(L.bind(function() {
 			this.scrollLogBlocksToBottom();
 		}, this));
 	},
 
+	handleTogglePauseLogs: function(ev) {
+		if (ev)
+			ev.preventDefault();
+
+		this.setPauseButtonState(this.isLogsPaused !== true);
+	},
+
 	handleCleanLogs: function(ev) {
+		if (ev)
+			ev.preventDefault();
+
 		this.currentPollingError = '';
 		this.resetLogBuffers();
 		this.renderLiveError();
 		this.renderLiveLogs(false);
+	},
+
+	handleCopyLog: function(key, ev) {
+		if (ev)
+			ev.preventDefault();
+
+		return this.copyTextToClipboard(this.logCopyText(key)).then(function() {
+			ui.addNotification(null, notificationParagraph(_('Log copied to clipboard.')), 'info');
+		}).catch(function(err) {
+			var message = err && err.message ? err.message : String(err);
+			ui.addNotification(null, notificationParagraph(message));
+			return null;
+		});
 	},
 
 	render: function(data) {
@@ -805,6 +897,7 @@ return view.extend({
 		this.currentLogsMeta = logs && !logs.__error__ ? logs : {};
 		this.currentPollingError = '';
 		this.isManualRefreshing = false;
+		this.isLogsPaused = false;
 		this.initializeLogBuffers(this.currentLogsMeta);
 		this.lastUpdatedLabel = (data[0] && data[0].__error__) || (data[2] && data[2].__error__)
 			? _('Never')
@@ -826,6 +919,9 @@ return view.extend({
 			'.routeflux-logs-actions { display:flex; flex-wrap:wrap; justify-content:space-between; gap:12px; margin-bottom:16px; align-items:center; }',
 			'.routeflux-logs-buttons { display:flex; flex-wrap:wrap; gap:10px; }',
 			'.routeflux-logs-meta { color:var(--text-color-secondary, #94a3b8); font-size:12px; letter-spacing:.03em; }',
+			'.routeflux-logs-section-head { display:flex; flex-wrap:wrap; justify-content:space-between; align-items:center; gap:10px; margin-bottom:10px; }',
+			'.routeflux-logs-section-head h3 { margin:0; }',
+			'.routeflux-logs-section-actions { display:flex; flex-wrap:wrap; gap:8px; }',
 			'.routeflux-logs-pre { white-space:pre-wrap; margin:0; max-height:420px; overflow:auto; padding:14px 16px; border:1px solid rgba(71, 85, 105, 0.82); border-radius:12px; background:linear-gradient(180deg, #09111d 0%, #0d1623 48%, #101a29 100%); color:#eef4fb; box-shadow:inset 0 1px 0 rgba(255, 255, 255, 0.04), 0 18px 32px rgba(0, 0, 0, 0.24); font-family:SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", monospace; font-size:13px; font-weight:500; line-height:1.72; letter-spacing:.01em; tab-size:4; word-break:break-word; overflow-wrap:anywhere; font-variant-ligatures:none; }',
 			'.routeflux-logs-pre::selection { background:rgba(56, 189, 248, 0.25); }'
 		]));
@@ -848,11 +944,19 @@ return view.extend({
 			E('div', { 'class': 'routeflux-logs-actions' }, [
 				E('div', { 'class': 'routeflux-logs-buttons' }, [
 					E('button', {
+						'type': 'button',
 						'id': 'routeflux-logs-refresh-button',
 						'class': 'cbi-button cbi-button-action',
 						'click': ui.createHandlerFn(this, 'handleRefreshPage')
 					}, [ _('Refresh') ]),
 					E('button', {
+						'type': 'button',
+						'id': 'routeflux-logs-pause-button',
+						'class': 'cbi-button cbi-button-action',
+						'click': ui.createHandlerFn(this, 'handleTogglePauseLogs')
+					}, [ _('Pause') ]),
+					E('button', {
+						'type': 'button',
 						'class': 'cbi-button cbi-button-negative',
 						'click': ui.createHandlerFn(this, 'handleCleanLogs')
 					}, [ _('Clean') ])

@@ -7,6 +7,7 @@
 
 var routefluxBinary = '/usr/bin/routeflux';
 var speedTestRPCTimeoutSeconds = 90;
+var sortByAvailabilityStorageKey = 'routeflux.subscriptions.sort_by_last_availability';
 
 function trim(value) {
 	if (value == null)
@@ -423,6 +424,109 @@ function responsiveTableCell(label, content, extraClass) {
 	}, Array.isArray(content) ? content : [ content ]);
 }
 
+function sortPreferenceStorage() {
+	try {
+		if (typeof window !== 'undefined' && window.localStorage)
+			return window.localStorage;
+	}
+	catch (err) {
+	}
+
+	return null;
+}
+
+function loadSortByAvailabilityPreference() {
+	var storage = sortPreferenceStorage();
+	var value;
+
+	if (!storage)
+		return false;
+
+	try {
+		value = trim(storage.getItem(sortByAvailabilityStorageKey)).toLowerCase();
+	}
+	catch (err) {
+		return false;
+	}
+
+	return value === '1' || value === 'true';
+}
+
+function persistSortByAvailabilityPreference(enabled) {
+	var storage = sortPreferenceStorage();
+
+	if (!storage)
+		return;
+
+	try {
+		storage.setItem(sortByAvailabilityStorageKey, enabled ? '1' : '0');
+	}
+	catch (err) {
+	}
+}
+
+function nodeAvailabilityScore(healthByNodeId, nodeID) {
+	var health = healthByNodeId && healthByNodeId[trim(nodeID)];
+	var score = Number(health && health.score);
+
+	if (!isFinite(score))
+		return null;
+
+	return score;
+}
+
+function sortNodesByAvailability(subscription, healthByNodeId, activeSubscriptionId, activeNodeId, sortByAvailability) {
+	var nodes = Array.isArray(subscription && subscription.nodes) ? subscription.nodes.slice() : [];
+	var isActiveSubscription = trim(subscription && subscription.id) !== '' && trim(subscription && subscription.id) === trim(activeSubscriptionId);
+	var pinnedNode = null;
+	var scoredNodes = [];
+	var unknownNodes = [];
+	var i;
+
+	if (!sortByAvailability)
+		return nodes;
+
+	for (i = 0; i < nodes.length; i++) {
+		var node = nodes[i];
+		var entry = {
+			'node': node,
+			'index': i,
+			'score': nodeAvailabilityScore(healthByNodeId, node && node.id)
+		};
+
+		if (isActiveSubscription && trim(node && node.id) !== '' && trim(node && node.id) === trim(activeNodeId)) {
+			pinnedNode = entry;
+			continue;
+		}
+
+		if (entry.score == null) {
+			unknownNodes.push(entry);
+			continue;
+		}
+
+		scoredNodes.push(entry);
+	}
+
+	scoredNodes.sort(function(left, right) {
+		if (left.score !== right.score)
+			return right.score - left.score;
+
+		return left.index - right.index;
+	});
+
+	var orderedNodes = [];
+	if (pinnedNode)
+		orderedNodes.push(pinnedNode.node);
+
+	for (i = 0; i < scoredNodes.length; i++)
+		orderedNodes.push(scoredNodes[i].node);
+
+	for (i = 0; i < unknownNodes.length; i++)
+		orderedNodes.push(unknownNodes[i].node);
+
+	return orderedNodes;
+}
+
 function emptyAddDraft() {
 	return {
 		'name': '',
@@ -452,6 +556,7 @@ return view.extend({
 		this.addDraft = emptyAddDraft();
 		this.subscriptionOpen = {};
 		this.speedTestBusy = false;
+		this.sortByLastAvailability = loadSortByAvailabilityPreference();
 	},
 
 	setPageInfo: function(message) {
@@ -730,6 +835,13 @@ return view.extend({
 			return;
 
 		this.addDraft[key] = ev && ev.target ? ev.target.value : '';
+	},
+
+	handleSortByAvailabilityToggle: function(ev) {
+		this.ensureState();
+		this.sortByLastAvailability = !!(ev && ev.target && ev.target.checked);
+		persistSortByAvailabilityPreference(this.sortByLastAvailability);
+		this.renderIntoRoot();
 	},
 
 	refreshPageContent: function(options) {
@@ -1076,8 +1188,8 @@ return view.extend({
 		}, this));
 	},
 
-	renderNodeTable: function(subscription, activeSubscriptionId, activeNodeId) {
-		var nodes = Array.isArray(subscription.nodes) ? subscription.nodes : [];
+	renderNodeTable: function(subscription, healthByNodeId, activeSubscriptionId, activeNodeId) {
+		var nodes = sortNodesByAvailability(subscription, healthByNodeId, activeSubscriptionId, activeNodeId, this.sortByLastAvailability);
 		var speedTestBusy = this.speedTestBusy === true;
 
 		if (nodes.length === 0)
@@ -1149,7 +1261,7 @@ return view.extend({
 		]);
 	},
 
-	renderSubscriptionCard: function(entry, activeSubscriptionId, activeNodeId) {
+	renderSubscriptionCard: function(entry, healthByNodeId, activeSubscriptionId, activeNodeId) {
 		var subscription = entry.subscription;
 		var displayName = entry.profile_label;
 		var providerName = entry.provider_title;
@@ -1221,12 +1333,12 @@ return view.extend({
 				E('summary', {}, [
 					_('Nodes (%d)').format(nodesCount)
 				]),
-				this.renderNodeTable(subscription, activeSubscriptionId, activeNodeId)
+				this.renderNodeTable(subscription, healthByNodeId, activeSubscriptionId, activeNodeId)
 			])
 		]);
 	},
 
-	renderProviderGroup: function(group, activeSubscriptionId, activeNodeId) {
+	renderProviderGroup: function(group, healthByNodeId, activeSubscriptionId, activeNodeId) {
 		var description = _('%d profile(s), %d node(s)').format(group.items.length, group.total_nodes);
 		var content = [
 			E('div', { 'class': 'routeflux-provider-group-header' }, [
@@ -1236,7 +1348,7 @@ return view.extend({
 		];
 
 		for (var i = 0; i < group.items.length; i++)
-			content.push(this.renderSubscriptionCard(group.items[i], activeSubscriptionId, activeNodeId));
+			content.push(this.renderSubscriptionCard(group.items[i], healthByNodeId, activeSubscriptionId, activeNodeId));
 
 		return E('div', { 'class': 'routeflux-provider-group' }, content);
 	},
@@ -1247,6 +1359,7 @@ return view.extend({
 		var presentation = buildSubscriptionPresentation(subscriptions);
 		var activeSubscriptionId = trim(status.active_subscription && status.active_subscription.id);
 		var activeNodeId = trim(status.active_node && status.active_node.id);
+		var healthByNodeId = (status.state && status.state.health) || {};
 		var addBusy = routefluxUI.isPendingAction(this, 'add');
 		var addBusyMessage = routefluxUI.pendingActionMessage(this, 'add');
 		var removeAllBusy = routefluxUI.isPendingAction(this, 'remove-all');
@@ -1303,6 +1416,10 @@ return view.extend({
 			'.routeflux-add-actions { display:flex; flex-wrap:wrap; gap:10px; }',
 			'.routeflux-add-grid .cbi-value-field, .routeflux-add-grid .cbi-input-text, .routeflux-add-grid .cbi-input-textarea { width:100%; max-width:100%; box-sizing:border-box; }',
 			'.routeflux-add-grid textarea { min-height:140px; width:100%; max-width:100%; }',
+			'.routeflux-sort-controls { margin-bottom:16px; }',
+			'.routeflux-sort-toggle { display:inline-flex; align-items:center; gap:8px; font-weight:600; cursor:pointer; }',
+			'.routeflux-sort-toggle input { margin:0; }',
+			'.routeflux-sort-help { margin:8px 0 0; color:var(--text-color-medium, #586677); line-height:1.45; }',
 			'.routeflux-node-details { margin-top:12px; }',
 			'.routeflux-node-details summary { cursor:pointer; margin-bottom:10px; }',
 			'.routeflux-provider-group { margin-bottom:22px; }',
@@ -1404,8 +1521,24 @@ return view.extend({
 			return content;
 		}
 
+		content.push(E('div', { 'class': 'cbi-section routeflux-sort-controls' }, [
+			E('h3', {}, [ _('Display Options') ]),
+			E('label', { 'class': 'routeflux-sort-toggle', 'for': 'routeflux-sort-by-availability' }, [
+				E('input', {
+					'id': 'routeflux-sort-by-availability',
+					'type': 'checkbox',
+					'checked': this.sortByLastAvailability ? 'checked' : null,
+					'change': ui.createHandlerFn(this, 'handleSortByAvailabilityToggle')
+				}),
+				E('span', {}, [ _('Sort by last availability') ])
+			]),
+			E('p', { 'class': 'routeflux-sort-help' }, [
+				_('Uses the last saved availability score. Untested nodes stay at the end. Scores are not shown in the table.')
+			])
+		]));
+
 		for (var i = 0; i < presentation.groups.length; i++)
-			content.push(this.renderProviderGroup(presentation.groups[i], activeSubscriptionId, activeNodeId));
+			content.push(this.renderProviderGroup(presentation.groups[i], healthByNodeId, activeSubscriptionId, activeNodeId));
 
 		return content;
 	},

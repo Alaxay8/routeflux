@@ -342,6 +342,32 @@ func TestLoadSettingsPreservesBlockQUICForCurrentSchema(t *testing.T) {
 	}
 }
 
+func TestLoadSettingsPreservesDisableIPv6ForCurrentSchema(t *testing.T) {
+	t.Parallel()
+
+	root := t.TempDir()
+	fileStore := store.NewFileStore(root)
+
+	settingsJSON := `{
+  "schema_version": 8,
+  "firewall": {
+    "disable_ipv6": true
+  }
+}`
+	if err := os.WriteFile(filepath.Join(root, "settings.json"), []byte(settingsJSON), 0o644); err != nil {
+		t.Fatalf("write settings file: %v", err)
+	}
+
+	settings, err := fileStore.LoadSettings()
+	if err != nil {
+		t.Fatalf("load settings: %v", err)
+	}
+
+	if !settings.Firewall.DisableIPv6 {
+		t.Fatal("expected current schema settings to preserve disable_ipv6=true")
+	}
+}
+
 func TestLoadSettingsRejectsFutureSchemaVersion(t *testing.T) {
 	t.Parallel()
 

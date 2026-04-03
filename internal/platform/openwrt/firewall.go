@@ -186,6 +186,7 @@ func BuildNFTablesRules(settings domain.FirewallSettings) (string, error) {
 	}
 	hasProxyOutput := len(policy.ProxyCIDRs) > 0 || len(policy.ProxyDomains) > 0
 	hasBypassOutput := len(policy.BypassCIDRs) > 0 || len(policy.BypassDomains) > 0
+	udpSelector := transparentUDPSelector(settings)
 
 	port := settings.TransparentPort
 	if port <= 0 {
@@ -246,10 +247,10 @@ func BuildNFTablesRules(settings domain.FirewallSettings) (string, error) {
 		}
 		if policy.SelectiveCapture {
 			if hasProxyOutput {
-				fmt.Fprintf(&builder, "    ip saddr @source_v4 ip daddr @proxy_target_v4 udp dport 443 meta mark set %s tproxy ip to :%d accept\n", udpTProxyMark, port)
+				fmt.Fprintf(&builder, "    ip saddr @source_v4 ip daddr @proxy_target_v4 %s meta mark set %s tproxy ip to :%d accept\n", udpSelector, udpTProxyMark, port)
 			}
 		} else {
-			fmt.Fprintf(&builder, "    ip saddr @source_v4 udp dport 443 meta mark set %s tproxy ip to :%d accept\n", udpTProxyMark, port)
+			fmt.Fprintf(&builder, "    ip saddr @source_v4 %s meta mark set %s tproxy ip to :%d accept\n", udpSelector, udpTProxyMark, port)
 		}
 		builder.WriteString("  }\n")
 	}
@@ -264,6 +265,13 @@ func BuildNFTablesRules(settings domain.FirewallSettings) (string, error) {
 
 	builder.WriteString("}\n")
 	return builder.String(), nil
+}
+
+func transparentUDPSelector(settings domain.FirewallSettings) string {
+	if settings.BlockQUIC {
+		return "udp dport 443"
+	}
+	return "udp"
 }
 
 func resolveFirewallPolicy(settings domain.FirewallSettings) (firewallPolicy, error) {

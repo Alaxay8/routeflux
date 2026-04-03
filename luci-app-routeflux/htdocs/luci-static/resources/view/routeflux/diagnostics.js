@@ -323,6 +323,24 @@ function fileDetails(file) {
 	return parts.join(' | ');
 }
 
+function ipv6StateLabel(ipv6) {
+	if (ipv6 && ipv6.runtime_disabled === true)
+		return _('Disabled');
+
+	if (ipv6 && ipv6.available === true)
+		return _('Enabled');
+
+	return _('Unknown');
+}
+
+function ipv6EnabledInterfacesLabel(ipv6) {
+	var values = Array.isArray(ipv6 && ipv6.enabled_interfaces) ? ipv6.enabled_interfaces.filter(function(entry) {
+		return trim(entry) !== '';
+	}) : [];
+
+	return values.length > 0 ? values.join(', ') : '-';
+}
+
 return view.extend({
 	load: function() {
 		return Promise.all([
@@ -352,6 +370,30 @@ return view.extend({
 			catch (err) {
 				throw new Error(_('RouteFlux returned invalid JSON output.'));
 			}
+		});
+	},
+
+	execText: function(argv) {
+		return fs.exec(routefluxBinary, argv).then(function(res) {
+			var stderr = trim(res.stderr);
+			var stdout = trim(res.stdout);
+
+			if (res.code !== 0)
+				throw new Error(stderr || stdout || _('RouteFlux command failed.'));
+
+			return stdout;
+		});
+	},
+
+	runCommand: function(argv, successMessage) {
+		return this.execText(argv).then(function(stdout) {
+			ui.addNotification(null, notificationParagraph(stdout || successMessage), 'info');
+			window.setTimeout(function() {
+				window.location.reload();
+			}, 350);
+		}).catch(function(err) {
+			ui.addNotification(null, notificationParagraph(err.message || String(err)));
+			throw err;
 		});
 	},
 
@@ -393,7 +435,17 @@ return view.extend({
 	},
 
 	handleRefreshPage: function(ev) {
+		if (ev && typeof ev.preventDefault === 'function')
+			ev.preventDefault();
+
 		window.location.reload();
+	},
+
+	handleDisableIPv6: function(ev) {
+		if (ev && typeof ev.preventDefault === 'function')
+			ev.preventDefault();
+
+		return this.runCommand([ 'firewall', 'set', 'ipv6', 'disable' ], _('IPv6 disabled.'));
 	},
 
 	render: function(data) {
@@ -403,6 +455,7 @@ return view.extend({
 		var status = diagnostics.status || {};
 		var state = status.state || {};
 		var runtime = diagnostics.runtime || {};
+		var ipv6 = diagnostics.ipv6 || {};
 		var files = diagnostics.files || {};
 		var activeSubscription = status.active_subscription || {};
 		var activeNode = status.active_node || {};
@@ -424,7 +477,8 @@ return view.extend({
 
 		content.push(routefluxUI.renderSharedStyles());
 		content.push(E('style', { 'type': 'text/css' }, [
-			'.routeflux-diagnostics-actions { display:flex; flex-wrap:wrap; gap:10px; }'
+			'.routeflux-diagnostics-actions { display:flex; flex-wrap:wrap; gap:10px; }',
+			'.routeflux-diagnostics-warning-actions { display:flex; flex-wrap:wrap; gap:10px; margin-top:12px; }'
 		]));
 
 		content.push(E('h2', {}, [ _('RouteFlux - Diagnostics') ]));
@@ -443,6 +497,12 @@ return view.extend({
 			this.renderCard(_('Active Provider'), activeProvider),
 			this.renderCard(_('Active Profile'), activeProfile),
 			this.renderCard(_('Active Node'), activeNodeName),
+			this.renderCard(_('IPv6 Runtime'), ipv6StateLabel(ipv6), {
+				'tone': ipv6.runtime_disabled === true ? 'connected' : 'disconnected'
+			}),
+			this.renderCard(_('IPv6 Fail-State'), ipv6.fail_state === true ? _('Detected') : _('Clear'), {
+				'tone': ipv6.fail_state === true ? 'disconnected' : 'connected'
+			}),
 			this.renderCard(_('Last Success'), routefluxUI.formatTimestamp(state.last_success_at) || _('Never')),
 			this.renderCard(_('Last Switch'), routefluxUI.formatTimestamp(state.last_switch_at) || _('Never')),
 			this.renderCard(_('Backend Config'), firstNonEmpty([ runtime.config_path ], _('Not configured')))
@@ -464,13 +524,42 @@ return view.extend({
 			]));
 		}
 
+		if (ipv6.fail_state === true) {
+			content.push(E('div', { 'class': 'cbi-section' }, [
+				E('div', { 'class': 'alert-message warning' }, [
+					E('strong', {}, [ _('IPv6 fail-state detected.') ]),
+					E('div', {}, [
+						firstNonEmpty([ ipv6.message ], _('Transparent routing does not intercept IPv6 traffic.'))
+					]),
+					E('div', { 'class': 'routeflux-diagnostics-warning-actions' }, [
+						E('button', {
+							'class': 'cbi-button cbi-button-action',
+							'type': 'button',
+							'click': ui.createHandlerFn(this, 'handleDisableIPv6')
+						}, [ _('Disable IPv6 in RouteFlux') ])
+					])
+				])
+			]));
+		}
+
 		content.push(E('div', { 'class': 'cbi-section' }, [
 			E('h3', {}, [ _('Actions') ]),
 			E('div', { 'class': 'routeflux-diagnostics-actions' }, [
 				E('button', {
 					'class': 'cbi-button cbi-button-action',
+					'type': 'button',
 					'click': ui.createHandlerFn(this, 'handleRefreshPage')
 				}, [ _('Refresh') ])
+			])
+		]));
+
+		content.push(E('div', { 'class': 'cbi-section' }, [
+			E('h3', {}, [ _('IPv6 State') ]),
+			E('div', { 'class': 'routeflux-overview-grid' }, [
+				this.renderCard(_('Configured by RouteFlux'), ipv6.configured_disabled === true ? _('Disable IPv6') : _('Leave Enabled')),
+				this.renderCard(_('Persistent State'), ipv6.persistent_disabled === true ? _('Disabled') : _('Enabled')),
+				this.renderCard(_('Enabled Interfaces'), ipv6EnabledInterfacesLabel(ipv6)),
+				this.renderCard(_('Config Path'), firstNonEmpty([ ipv6.config_path ], '-'))
 			])
 		]));
 

@@ -5,6 +5,8 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
+	"net/http"
+	"net/http/httptest"
 	"strings"
 	"testing"
 	"time"
@@ -186,5 +188,54 @@ func TestSchedulerHealthLoopConfigLogsErrorAgainAfterRecovery(t *testing.T) {
 
 	if count := strings.Count(logs.String(), "load settings for auto health loop"); count != 2 {
 		t.Fatalf("expected warning to be logged again after recovery, got %d\nlogs:\n%s", count, logs.String())
+	}
+}
+
+func TestSchedulerRunOnceUsesLastRefreshAttemptAfterFailure(t *testing.T) {
+	t.Parallel()
+
+	now := time.Date(2026, 3, 24, 12, 0, 0, 0, time.UTC)
+	attempts := 0
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		attempts++
+		http.Error(w, "upstream unavailable", http.StatusServiceUnavailable)
+	}))
+	t.Cleanup(server.Close)
+
+	store := &memoryStore{
+		settings: domain.DefaultSettings(),
+		state:    domain.DefaultRuntimeState(),
+		subs: []domain.Subscription{
+			{
+				ID:                 "sub-1",
+				SourceType:         domain.SourceTypeURL,
+				Source:             server.URL,
+				ProviderName:       "Demo VPN",
+				DisplayName:        "Demo VPN",
+				ProviderNameSource: domain.ProviderNameSourceManual,
+				LastUpdatedAt:      now.Add(-2 * time.Hour),
+				RefreshInterval:    domain.NewDuration(time.Hour),
+			},
+		},
+	}
+
+	service := NewService(Dependencies{Store: store, HTTPClient: server.Client()})
+	scheduler := NewScheduler(service)
+	scheduler.now = func() time.Time { return now }
+
+	scheduler.RunOnce(context.Background())
+
+	if attempts != subscriptionFetchMaxAttempts {
+		t.Fatalf("expected one scheduled refresh attempt with retries, got %d HTTP calls", attempts)
+	}
+	if got := store.state.LastRefreshAt["sub-1"]; !got.Equal(now) {
+		t.Fatalf("expected failed refresh to record last attempt at %s, got %s", now, got)
+	}
+
+	scheduler.now = func() time.Time { return now.Add(30 * time.Minute) }
+	scheduler.RunOnce(context.Background())
+
+	if attempts != subscriptionFetchMaxAttempts {
+		t.Fatalf("expected scheduler to skip retry before interval elapsed, got %d HTTP calls", attempts)
 	}
 }

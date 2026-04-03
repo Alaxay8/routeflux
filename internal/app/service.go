@@ -55,6 +55,12 @@ type HostResolver interface {
 	LookupIPAddr(ctx context.Context, host string) ([]net.IPAddr, error)
 }
 
+// IPv6Manager applies and inspects RouteFlux-managed IPv6 state.
+type IPv6Manager interface {
+	Apply(ctx context.Context, disabled bool) error
+	Status(ctx context.Context) (domain.IPv6Status, error)
+}
+
 // AddSubscriptionRequest defines how a subscription is added.
 type AddSubscriptionRequest struct {
 	URL  string
@@ -81,8 +87,14 @@ type Service struct {
 	speedTester             speedtest.Tester
 	logger                  *slog.Logger
 	resolver                HostResolver
+	ipv6Manager             IPv6Manager
 	backendReadyChecks      int
 	backendReadyDelay       time.Duration
+	backendEgressProbe      func(ctx context.Context) error
+	backendEgressTimeout    time.Duration
+	backendEgressRetryDelay time.Duration
+	nodeDialProbeTimeout    time.Duration
+	dialContext             func(ctx context.Context, network, address string) (net.Conn, error)
 	now                     func() time.Time
 	autoHealthStateMu       sync.Mutex
 	autoHealthState         *autoHealthStateCache
@@ -90,14 +102,16 @@ type Service struct {
 
 // Dependencies groups the service construction inputs.
 type Dependencies struct {
-	Store       Store
-	Backend     backend.Backend
-	Firewaller  Firewaller
-	HTTPClient  *http.Client
-	Checker     probe.Checker
-	SpeedTester speedtest.Tester
-	Logger      *slog.Logger
-	Resolver    HostResolver
+	Store              Store
+	Backend            backend.Backend
+	Firewaller         Firewaller
+	HTTPClient         *http.Client
+	Checker            probe.Checker
+	SpeedTester        speedtest.Tester
+	Logger             *slog.Logger
+	Resolver           HostResolver
+	IPv6Manager        IPv6Manager
+	RuntimeEgressProbe bool
 }
 
 type subscriptionFetchMetadata struct {
@@ -121,12 +135,18 @@ const (
 	subscriptionAltUserInfoKey            = "X-Subscription-Userinfo"
 	backendReadyMaxChecks                 = 8
 	backendReadyCheckDelay                = 250 * time.Millisecond
+	backendEgressProbeTimeout             = 12 * time.Second
+	backendEgressProbeRetryDelay          = 250 * time.Millisecond
 )
 
 var subscriptionShareLinkPattern = regexp.MustCompile(`(?i)(vless|vmess|trojan|ss)://[^"'<>]+`)
 var htmlTitlePattern = regexp.MustCompile(`(?is)<title[^>]*>\s*(.*?)\s*</title>`)
 var htmlH1Pattern = regexp.MustCompile(`(?is)<h1[^>]*>\s*(.*?)\s*</h1>`)
 var htmlTagPattern = regexp.MustCompile(`(?s)<[^>]+>`)
+var backendEgressProbeURLs = []string{
+	"https://cp.cloudflare.com/generate_204",
+	"https://www.gstatic.com/generate_204",
+}
 
 // NewService creates an application service with sensible defaults.
 func NewService(deps Dependencies) *Service {
@@ -145,7 +165,7 @@ func NewService(deps Dependencies) *Service {
 		resolver = net.DefaultResolver
 	}
 
-	return &Service{
+	service := &Service{
 		store:                   deps.Store,
 		backend:                 deps.Backend,
 		firewall:                deps.Firewaller,
@@ -155,10 +175,21 @@ func NewService(deps Dependencies) *Service {
 		speedTester:             deps.SpeedTester,
 		logger:                  logger,
 		resolver:                resolver,
+		ipv6Manager:             deps.IPv6Manager,
 		backendReadyChecks:      backendReadyMaxChecks,
 		backendReadyDelay:       backendReadyCheckDelay,
+		backendEgressTimeout:    backendEgressProbeTimeout,
+		backendEgressRetryDelay: backendEgressProbeRetryDelay,
+		nodeDialProbeTimeout:    2 * time.Second,
+		dialContext:             (&net.Dialer{}).DialContext,
 		now:                     time.Now,
 	}
+
+	if deps.RuntimeEgressProbe && deps.Backend != nil && deps.HTTPClient != nil {
+		service.backendEgressProbe = service.defaultBackendEgressProbe
+	}
+
+	return service
 }
 
 // AddSubscription adds a new subscription and parses its nodes.
@@ -721,6 +752,15 @@ func (s *Service) RuntimeStatus(ctx context.Context) (backend.RuntimeStatus, err
 	return s.backend.Status(ctx)
 }
 
+// IPv6Status returns the current RouteFlux-managed IPv6 state, if available.
+func (s *Service) IPv6Status(ctx context.Context) (domain.IPv6Status, error) {
+	if s.ipv6Manager == nil {
+		return domain.IPv6Status{}, nil
+	}
+
+	return s.ipv6Manager.Status(ctx)
+}
+
 // RestoreRuntime reapplies a persisted active connection during daemon startup.
 func (s *Service) RestoreRuntime(ctx context.Context) error {
 	return runStoreWriteLocked(s, func() error {
@@ -760,6 +800,12 @@ func (s *Service) restoreRuntime(ctx context.Context) error {
 	if err != nil {
 		return fmt.Errorf("load state: %w", err)
 	}
+	settings, settingsErr := s.store.LoadSettings()
+	if settingsErr == nil {
+		if err := s.ensureManagedIPv6State(ctx, settings); err != nil {
+			return err
+		}
+	}
 
 	if !state.Connected || state.ActiveSubscriptionID == "" || state.ActiveNodeID == "" {
 		if s.firewall != nil {
@@ -780,8 +826,7 @@ func (s *Service) restoreRuntime(ctx context.Context) error {
 		return errors.New(reason)
 	}
 
-	settings, err := s.store.LoadSettings()
-	if err == nil && syncSettingsToRuntime(&settings, state) {
+	if settingsErr == nil && syncSettingsToRuntime(&settings, state) {
 		_ = s.store.SaveSettings(settings)
 	}
 
@@ -1341,6 +1386,34 @@ func (s *Service) updateFirewallBlockQUIC(ctx context.Context, enabled bool) (do
 	return settings.Firewall, nil
 }
 
+// UpdateFirewallDisableIPv6 changes whether RouteFlux disables router IPv6 to avoid transparent-routing bypass.
+func (s *Service) UpdateFirewallDisableIPv6(ctx context.Context, disabled bool) (domain.FirewallSettings, error) {
+	return runStoreWriteLockedResult(s, func() (domain.FirewallSettings, error) {
+		return s.updateFirewallDisableIPv6(ctx, disabled)
+	})
+}
+
+func (s *Service) updateFirewallDisableIPv6(ctx context.Context, disabled bool) (domain.FirewallSettings, error) {
+	settings, err := s.store.LoadSettings()
+	if err != nil {
+		return domain.FirewallSettings{}, fmt.Errorf("load settings: %w", err)
+	}
+
+	settings.Firewall = domain.CanonicalFirewallSettings(settings.Firewall)
+	settings.Firewall.DisableIPv6 = disabled
+	if err := s.store.SaveSettings(settings); err != nil {
+		return domain.FirewallSettings{}, fmt.Errorf("save settings: %w", err)
+	}
+
+	if s.ipv6Manager != nil {
+		if err := s.ipv6Manager.Apply(ctx, disabled); err != nil {
+			return domain.FirewallSettings{}, fmt.Errorf("apply ipv6 setting: %w", err)
+		}
+	}
+
+	return settings.Firewall, nil
+}
+
 // DisableFirewall disables transparent proxy routing.
 func (s *Service) DisableFirewall(ctx context.Context) (domain.FirewallSettings, error) {
 	return runStoreWriteLockedResult(s, func() (domain.FirewallSettings, error) {
@@ -1399,6 +1472,16 @@ func (s *Service) setSetting(key, value string) (domain.Settings, error) {
 			return domain.Settings{}, err
 		}
 		settings.RefreshInterval = d
+		subscriptions, err := s.store.LoadSubscriptions()
+		if err != nil {
+			return domain.Settings{}, fmt.Errorf("load subscriptions: %w", err)
+		}
+		for idx := range subscriptions {
+			subscriptions[idx].RefreshInterval = d
+		}
+		if err := s.store.SaveSubscriptions(subscriptions); err != nil {
+			return domain.Settings{}, fmt.Errorf("save subscriptions: %w", err)
+		}
 	case "health-check-interval":
 		d, err := domain.ParseDurationValue(value)
 		if err != nil {
@@ -1676,11 +1759,7 @@ func mergeSubscriptionMetadata(primary, fallback subscriptionFetchMetadata) subs
 }
 
 func parseSubscriptionExpiry(headers http.Header) *time.Time {
-	if parsed := parseSubscriptionUserinfo(headers); parsed.ExpiresAt != nil {
-		return parsed.ExpiresAt
-	}
-
-	return parseDDoSGuardCookieExpiry(headers)
+	return parseSubscriptionUserinfo(headers).ExpiresAt
 }
 
 func parseSubscriptionTraffic(headers http.Header) *domain.SubscriptionTraffic {
@@ -1752,39 +1831,6 @@ func parseSubscriptionUserinfoValue(raw string) parsedSubscriptionUserinfo {
 	return result
 }
 
-func parseDDoSGuardCookieExpiry(headers http.Header) *time.Time {
-	if !strings.Contains(strings.ToLower(headers.Get("Server")), "ddos-guard") {
-		return nil
-	}
-
-	var latest time.Time
-	found := false
-	for _, value := range headers.Values("Set-Cookie") {
-		cookie, err := http.ParseSetCookie(value)
-		if err != nil {
-			continue
-		}
-		if !strings.HasPrefix(strings.ToLower(strings.TrimSpace(cookie.Name)), "__ddg") {
-			continue
-		}
-		if cookie.Expires.IsZero() {
-			continue
-		}
-
-		expiresAt := cookie.Expires.UTC()
-		if !found || expiresAt.After(latest) {
-			latest = expiresAt
-			found = true
-		}
-	}
-
-	if !found {
-		return nil
-	}
-
-	return &latest
-}
-
 func isTransientSubscriptionStatus(code int) bool {
 	switch code {
 	case http.StatusTooManyRequests,
@@ -1842,6 +1888,27 @@ func cloneSubscriptionTransportWithTLSMaxVersion(base http.RoundTripper, maxVers
 
 	clone := transport.Clone()
 	clone.TLSClientConfig = cloneTLSConfigWithMaxVersion(clone.TLSClientConfig, maxVersion)
+	return clone, true
+}
+
+func cloneSubscriptionTransportWithProxy(base http.RoundTripper, proxyURL *url.URL) (*http.Transport, bool) {
+	if proxyURL == nil {
+		return nil, false
+	}
+
+	if base == nil {
+		transport := http.DefaultTransport.(*http.Transport).Clone()
+		transport.Proxy = http.ProxyURL(proxyURL)
+		return transport, true
+	}
+
+	transport, ok := base.(*http.Transport)
+	if !ok {
+		return nil, false
+	}
+
+	clone := transport.Clone()
+	clone.Proxy = http.ProxyURL(proxyURL)
 	return clone, true
 }
 
@@ -2154,6 +2221,9 @@ func (s *Service) applyNodeSelection(ctx context.Context, sub domain.Subscriptio
 	if err != nil {
 		return fmt.Errorf("load settings: %w", err)
 	}
+	if err := s.ensureManagedIPv6State(ctx, settings); err != nil {
+		return err
+	}
 
 	resolvedNode, err := s.resolveNodeAddress(ctx, node)
 	if err != nil {
@@ -2170,10 +2240,16 @@ func (s *Service) applyNodeSelection(ctx context.Context, sub domain.Subscriptio
 		if err := s.ensureBackendRunning(ctx, sub.ID, node.ID, mode); err != nil {
 			return err
 		}
+		if err := s.ensureBackendEgress(ctx, settings, sub.ID, node.ID, mode); err != nil {
+			return err
+		}
 	}
 
 	if s.firewall != nil {
 		if domain.FirewallRoutingEnabled(settings.Firewall) {
+			effectiveBlockQUIC := domain.EffectiveTransparentBlockQUIC(settings.Firewall, &resolvedNode)
+			runtimeFirewall := domain.CanonicalFirewallSettings(settings.Firewall)
+			runtimeFirewall.BlockQUIC = effectiveBlockQUIC
 			s.logInfo(
 				"apply firewall rules",
 				"subscription", sub.ID,
@@ -2184,8 +2260,9 @@ func (s *Service) applyNodeSelection(ctx context.Context, sub domain.Subscriptio
 				"split_bypass", settings.Firewall.Split.Bypass,
 				"split_excluded_sources", settings.Firewall.Split.ExcludedSources,
 				"hosts", settings.Firewall.Hosts,
+				"effective_block_quic", effectiveBlockQUIC,
 			)
-			if err := s.firewall.Apply(ctx, settings.Firewall); err != nil {
+			if err := s.firewall.Apply(ctx, runtimeFirewall); err != nil {
 				s.logWarn("apply firewall failed", "subscription", sub.ID, "node", node.ID, "error", err.Error())
 				_ = s.markConnectionFailed(ctx, sub.ID, node.ID, mode, fmt.Sprintf("apply firewall: %v", err))
 				return fmt.Errorf("apply firewall: %w", err)
@@ -2232,11 +2309,15 @@ func (s *Service) resolveNodeAddress(ctx context.Context, node domain.Node) (dom
 		return node, nil
 	}
 
+	ipv4Addrs := make([]net.IP, 0, len(addrs))
 	for _, addr := range addrs {
 		if ipv4 := addr.IP.To4(); ipv4 != nil {
-			node.Address = ipv4.String()
-			return node, nil
+			ipv4Addrs = append(ipv4Addrs, ipv4)
 		}
+	}
+	if len(ipv4Addrs) > 0 {
+		node.Address = s.selectReachableResolvedIPv4(ctx, node, ipv4Addrs).String()
+		return node, nil
 	}
 	if len(addrs) == 0 {
 		s.logger.Debug("resolve node address returned no addresses", "host", node.Address)
@@ -2245,6 +2326,35 @@ func (s *Service) resolveNodeAddress(ctx context.Context, node domain.Node) (dom
 
 	node.Address = addrs[0].IP.String()
 	return node, nil
+}
+
+func (s *Service) selectReachableResolvedIPv4(ctx context.Context, node domain.Node, candidates []net.IP) net.IP {
+	if len(candidates) == 0 {
+		return nil
+	}
+	if len(candidates) == 1 || s.dialContext == nil || s.nodeDialProbeTimeout <= 0 || node.Port <= 0 {
+		return candidates[0]
+	}
+
+	for _, candidate := range candidates {
+		probeCtx, cancel := context.WithTimeout(ctx, s.nodeDialProbeTimeout)
+		conn, err := s.dialContext(probeCtx, "tcp", net.JoinHostPort(candidate.String(), strconv.Itoa(node.Port)))
+		cancel()
+		if err != nil {
+			s.logger.Debug(
+				"resolved node endpoint probe failed",
+				"host", node.Address,
+				"candidate", candidate.String(),
+				"port", node.Port,
+				"error", err,
+			)
+			continue
+		}
+		_ = conn.Close()
+		return candidate
+	}
+
+	return candidates[0]
 }
 
 func (s *Service) probeSubscription(ctx context.Context, sub domain.Subscription, health map[string]domain.NodeHealth, failureThreshold int) []probe.Result {
@@ -2658,6 +2768,58 @@ func (s *Service) ensureBackendRunning(ctx context.Context, subscriptionID, node
 	return errors.New(reason)
 }
 
+func (s *Service) ensureBackendEgress(ctx context.Context, settings domain.Settings, subscriptionID, nodeID string, mode domain.SelectionMode) error {
+	if s.backend == nil || s.backendEgressProbe == nil {
+		return nil
+	}
+
+	timeout := s.backendEgressTimeout
+	if timeout <= 0 {
+		timeout = backendEgressProbeTimeout
+	}
+
+	retryDelay := s.backendEgressRetryDelay
+	if retryDelay <= 0 {
+		retryDelay = backendEgressProbeRetryDelay
+	}
+
+	probeCtx, cancel := context.WithTimeout(ctx, timeout)
+	defer cancel()
+
+	attempt := 0
+	var lastErr error
+	for {
+		attempt++
+		err := s.backendEgressProbe(probeCtx)
+		if err == nil {
+			s.logInfo("backend egress confirmed", "subscription", subscriptionID, "node", nodeID, "mode", mode, "attempt", attempt)
+			return nil
+		}
+
+		lastErr = err
+		if probeCtx.Err() != nil {
+			break
+		}
+
+		s.logDebug("backend egress probe retry", "subscription", subscriptionID, "node", nodeID, "mode", mode, "attempt", attempt, "error", err.Error())
+		if err := sleepWithContext(probeCtx, retryDelay); err != nil {
+			break
+		}
+	}
+
+	if lastErr == nil {
+		lastErr = probeCtx.Err()
+	}
+
+	reason := fmt.Sprintf("backend egress probe failed: %v", lastErr)
+	s.logWarn("backend egress probe failed", "subscription", subscriptionID, "node", nodeID, "mode", mode, "attempts", attempt, "error", errString(lastErr))
+	if domain.FirewallRoutingEnabled(settings.Firewall) && s.firewall != nil {
+		s.logWarn("firewall fail-open scheduled after failed backend egress probe", "subscription", subscriptionID, "node", nodeID, "mode", mode)
+	}
+	_ = s.markConnectionFailed(ctx, subscriptionID, nodeID, mode, reason)
+	return fmt.Errorf("check backend egress: %w", lastErr)
+}
+
 func (s *Service) waitForBackendRunning(ctx context.Context, subscriptionID, nodeID string, mode domain.SelectionMode) (backend.RuntimeStatus, error) {
 	checks := s.backendReadyChecks
 	if checks < 1 {
@@ -2695,6 +2857,58 @@ func (s *Service) waitForBackendRunning(ctx context.Context, subscriptionID, nod
 	return last, nil
 }
 
+func (s *Service) defaultBackendEgressProbe(ctx context.Context) error {
+	timeout := s.backendEgressTimeout
+	if timeout <= 0 {
+		timeout = backendEgressProbeTimeout
+	}
+
+	probeCtx, cancel := context.WithTimeout(ctx, timeout)
+	defer cancel()
+
+	proxyURL, err := url.Parse("http://127.0.0.1:10809")
+	if err != nil {
+		return err
+	}
+
+	client := ensureSubscriptionHTTPClient(s.httpClient)
+	transport, ok := cloneSubscriptionTransportWithProxy(client.Transport, proxyURL)
+	if !ok {
+		return fmt.Errorf("unsupported HTTP transport %T", client.Transport)
+	}
+
+	clientCopy := *client
+	clientCopy.Transport = transport
+	clientCopy.Timeout = timeout
+
+	var lastErr error
+	for _, rawURL := range backendEgressProbeURLs {
+		req, err := http.NewRequestWithContext(probeCtx, http.MethodGet, rawURL, nil)
+		if err != nil {
+			return err
+		}
+
+		resp, err := clientCopy.Do(req)
+		if err != nil {
+			lastErr = err
+			continue
+		}
+
+		_, _ = io.Copy(io.Discard, io.LimitReader(resp.Body, 1024))
+		_ = resp.Body.Close()
+		if resp.StatusCode >= http.StatusOK && resp.StatusCode < http.StatusInternalServerError {
+			return nil
+		}
+		lastErr = fmt.Errorf("%s returned status %d", rawURL, resp.StatusCode)
+	}
+
+	if lastErr == nil {
+		lastErr = errors.New("no egress probe endpoints configured")
+	}
+
+	return lastErr
+}
+
 func backendStateMayStillBeStarting(serviceState string) bool {
 	normalized := strings.ToLower(strings.TrimSpace(serviceState))
 	switch {
@@ -2723,6 +2937,39 @@ func sleepWithContext(ctx context.Context, d time.Duration) error {
 	case <-timer.C:
 		return nil
 	}
+}
+
+func (s *Service) ensureManagedIPv6State(ctx context.Context, settings domain.Settings) error {
+	if s == nil || s.ipv6Manager == nil || !settings.Firewall.DisableIPv6 {
+		return nil
+	}
+
+	if err := s.ipv6Manager.Apply(ctx, true); err != nil {
+		return fmt.Errorf("apply ipv6 setting: %w", err)
+	}
+
+	return nil
+}
+
+func (s *Service) touchRefreshAttempt(subscriptionID string, at time.Time) error {
+	if s == nil || s.store == nil || strings.TrimSpace(subscriptionID) == "" {
+		return nil
+	}
+
+	return runStoreWriteLocked(s, func() error {
+		state, err := s.store.LoadState()
+		if err != nil {
+			return fmt.Errorf("load state: %w", err)
+		}
+		if state.LastRefreshAt == nil {
+			state.LastRefreshAt = make(map[string]time.Time)
+		}
+		state.LastRefreshAt[subscriptionID] = at.UTC()
+		if err := s.saveState(state); err != nil {
+			return fmt.Errorf("save state: %w", err)
+		}
+		return nil
+	})
 }
 
 func (s *Service) markConnectionFailed(ctx context.Context, subscriptionID, nodeID string, mode domain.SelectionMode, reason string) error {
