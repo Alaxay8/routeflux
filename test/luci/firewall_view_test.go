@@ -113,6 +113,7 @@ func TestFirewallViewUsesReadableBypassEditorStyling(t *testing.T) {
 		"var descriptionClassName = 'cbi-value-description';",
 		"descriptionClassName += ' ' + trim(settings.descriptionClassName);",
 		"'className': 'routeflux-firewall-editor-emphasis routeflux-firewall-editor-bypass'",
+		"'className': 'routeflux-firewall-editor-emphasis routeflux-firewall-editor-bypass routeflux-firewall-editor-excluded'",
 		"'descriptionClassName': 'routeflux-firewall-editor-description-strong'",
 		"routeflux-firewall-editor-kicker",
 		".routeflux-firewall-editor-head .cbi-value-description { color:var(--text-color-medium, #4f5f70);",
@@ -120,6 +121,9 @@ func TestFirewallViewUsesReadableBypassEditorStyling(t *testing.T) {
 		".routeflux-firewall-editor-bypass .routeflux-firewall-editor-head h4 { color:#16324a !important; }",
 		".routeflux-firewall-editor-bypass .routeflux-firewall-editor-grid .cbi-value-title { color:#284357 !important; }",
 		".routeflux-firewall-editor-description-strong { color:#16324a !important; font-weight:500; }",
+		"'class': 'routeflux-firewall-editor routeflux-firewall-editor-emphasis routeflux-firewall-editor-bypass routeflux-firewall-help-shell'",
+		".routeflux-firewall-help { white-space:pre-wrap; margin:0; padding:0; border:0; border-radius:0; background:transparent; color:#16324a; font:inherit; line-height:1.7; }",
+		"_('Use this reference while tuning bypass rules, excluded devices, and other transparent routing behavior.')",
 		".routeflux-firewall-inline .cbi-input-text::placeholder { color:rgba(71, 85, 105, 0.72); opacity:1; }",
 		".routeflux-firewall-toggle { display:flex; gap:10px; align-items:flex-start; font-weight:600; color:var(--text-color-high, #17263a); }",
 	} {

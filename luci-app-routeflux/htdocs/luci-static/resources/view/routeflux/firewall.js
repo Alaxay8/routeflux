@@ -1119,16 +1119,20 @@ return view.extend({
 	renderListEditor: function(title, description, key, list, placeholder, emptyLabel, options) {
 		var settings = options || {};
 		var className = 'routeflux-firewall-editor';
+		var descriptionClassName = 'cbi-value-description';
 		var kicker = trim(settings.kicker);
 
 		if (trim(settings.className) !== '')
 			className += ' ' + trim(settings.className);
 
+		if (trim(settings.descriptionClassName) !== '')
+			descriptionClassName += ' ' + trim(settings.descriptionClassName);
+
 		return E('div', { 'class': className }, [
 			E('div', { 'class': 'routeflux-firewall-editor-head' }, [
 				kicker !== '' ? E('span', { 'class': 'routeflux-firewall-editor-kicker' }, [ kicker ]) : null,
 				E('h4', {}, [ title ]),
-				E('p', { 'class': 'cbi-value-description' }, [ description ])
+				E('p', { 'class': descriptionClassName }, [ description ])
 			].filter(Boolean)),
 			E('div', { 'class': 'cbi-value' }, [
 				E('div', { 'class': 'routeflux-firewall-inline' }, [
@@ -1206,7 +1210,8 @@ return view.extend({
 				_('Examples: 192.168.1.50 192.168.1.0/24 192.168.1.10-192.168.1.20 all'),
 				_('Excluded devices are optional.'),
 				{
-					'className': 'routeflux-firewall-editor-muted routeflux-firewall-editor-excluded',
+					'className': 'routeflux-firewall-editor-emphasis routeflux-firewall-editor-bypass routeflux-firewall-editor-excluded',
+					'descriptionClassName': 'routeflux-firewall-editor-description-strong',
 					'kicker': _('LAN exclusions')
 				}
 			));
@@ -1300,7 +1305,7 @@ return view.extend({
 			'.routeflux-firewall-page-description { color:var(--text-color-medium, #4f5f70); max-width:78ch; line-height:1.6; }',
 			'.routeflux-firewall-toggle { display:flex; gap:10px; align-items:flex-start; font-weight:600; color:var(--text-color-high, #17263a); }',
 			'.routeflux-firewall-toggle input { margin-top:4px; }',
-			'.routeflux-firewall-help { white-space:pre-wrap; margin:0; padding:14px 16px; border:1px solid rgba(98, 112, 129, 0.28); border-radius:14px; background:linear-gradient(180deg, rgba(248, 250, 252, 0.96) 0%, rgba(238, 243, 249, 0.96) 100%); }',
+			'.routeflux-firewall-help { white-space:pre-wrap; margin:0; padding:0; border:0; border-radius:0; background:transparent; color:#16324a; font:inherit; line-height:1.7; }',
 			'@media (max-width: 720px) { .routeflux-firewall-inline { flex-direction:column; } .routeflux-firewall-inline > .cbi-button-action, .routeflux-firewall-actions .cbi-button { width:100%; } .routeflux-firewall-grid > .cbi-value { padding:14px; } .routeflux-firewall-editor { padding:16px; } }'
 		]));
 
@@ -1437,8 +1442,14 @@ return view.extend({
 		]));
 
 		content.push(E('div', { 'class': 'cbi-section' }, [
-			E('details', { 'open': 'open' }, [
-				E('summary', {}, [ _('Help') ]),
+			E('div', { 'class': 'routeflux-firewall-editor routeflux-firewall-editor-emphasis routeflux-firewall-editor-bypass routeflux-firewall-help-shell' }, [
+				E('div', { 'class': 'routeflux-firewall-editor-head' }, [
+					E('span', { 'class': 'routeflux-firewall-editor-kicker' }, [ _('Reference') ]),
+					E('h4', {}, [ _('Help') ]),
+					E('p', { 'class': 'cbi-value-description routeflux-firewall-editor-description-strong' }, [
+						_('Use this reference while tuning bypass rules, excluded devices, and other transparent routing behavior.')
+					])
+				]),
 				E('pre', { 'class': 'routeflux-firewall-help' }, [
 					this.pageData.explainText || _('No firewall help text is available.')
 				])
