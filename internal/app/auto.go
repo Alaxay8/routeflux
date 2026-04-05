@@ -72,7 +72,7 @@ func (s *Service) runAutoHealthCheck(ctx context.Context) error {
 		return nil
 	}
 
-	_, err = s.commitAutoSelection(ctx, sub, decision)
+	_, err = s.commitAutoSelection(ctx, sub, state, decision)
 	return err
 }
 
@@ -139,8 +139,8 @@ func (s *Service) evaluateAutoSelection(ctx context.Context, sub domain.Subscrip
 	return decision, nil
 }
 
-func (s *Service) commitAutoSelection(ctx context.Context, sub domain.Subscription, decision autoSelectionDecision) (domain.Node, error) {
-	if err := s.applyNodeSelection(ctx, sub, decision.SelectedNode, domain.SelectionModeAuto); err != nil {
+func (s *Service) commitAutoSelection(ctx context.Context, sub domain.Subscription, currentState domain.RuntimeState, decision autoSelectionDecision) (domain.Node, error) {
+	if err := s.applyNodeSelection(ctx, sub, decision.SelectedNode, domain.SelectionModeAuto, selectionOptionsForState(currentState)); err != nil {
 		return domain.Node{}, err
 	}
 

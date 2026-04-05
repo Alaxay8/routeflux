@@ -70,12 +70,17 @@ func TestRestoreRuntimeFailureDisconnectsState(t *testing.T) {
 	t.Parallel()
 
 	store := &memoryStore{
-		settings: domain.DefaultSettings(),
+		settings: func() domain.Settings {
+			settings := domain.DefaultSettings()
+			settings.AutoMode = true
+			settings.Mode = domain.SelectionModeAuto
+			return settings
+		}(),
 		state: domain.RuntimeState{
 			SchemaVersion:        1,
 			ActiveSubscriptionID: "sub-1",
 			ActiveNodeID:         "node-1",
-			Mode:                 domain.SelectionModeManual,
+			Mode:                 domain.SelectionModeAuto,
 			Connected:            true,
 		},
 		subs: []domain.Subscription{
@@ -126,19 +131,19 @@ func TestRestoreRuntimeFailureDisconnectsState(t *testing.T) {
 	if store.state.Connected {
 		t.Fatal("expected state to be disconnected")
 	}
-	if store.state.Mode != domain.SelectionModeDisconnected {
-		t.Fatalf("expected disconnected mode, got %s", store.state.Mode)
+	if store.state.Mode != domain.SelectionModeAuto {
+		t.Fatalf("expected mode to stay auto, got %s", store.state.Mode)
 	}
-	if store.state.ActiveSubscriptionID != "" || store.state.ActiveNodeID != "" {
-		t.Fatalf("expected active selection to be cleared, got %+v", store.state)
+	if store.state.ActiveSubscriptionID != "sub-1" || store.state.ActiveNodeID != "node-1" {
+		t.Fatalf("expected active selection to be preserved, got %+v", store.state)
 	}
-	if !strings.Contains(store.state.LastFailureReason, "backend is not running") {
+	if !strings.Contains(store.state.LastFailureReason, "restore runtime: backend is not running") {
 		t.Fatalf("unexpected failure reason: %q", store.state.LastFailureReason)
 	}
-	if store.settings.AutoMode {
-		t.Fatal("expected auto mode to be disabled in settings")
+	if !store.settings.AutoMode {
+		t.Fatal("expected auto mode setting to be preserved")
 	}
-	if store.settings.Mode != domain.SelectionModeDisconnected {
-		t.Fatalf("expected settings mode disconnected, got %s", store.settings.Mode)
+	if store.settings.Mode != domain.SelectionModeAuto {
+		t.Fatalf("expected settings mode auto, got %s", store.settings.Mode)
 	}
 }

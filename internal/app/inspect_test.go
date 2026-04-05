@@ -320,6 +320,14 @@ func (b *inspectBackend) ApplyConfig(context.Context, backend.ConfigRequest) err
 	return fmt.Errorf("unexpected ApplyConfig call")
 }
 
+func (b *inspectBackend) CaptureRollback() (backend.RollbackSnapshot, error) {
+	return backend.RollbackSnapshot{}, nil
+}
+
+func (b *inspectBackend) RollbackConfig(context.Context, backend.RollbackSnapshot) error {
+	return nil
+}
+
 func (b *inspectBackend) Start(context.Context) error  { return nil }
 func (b *inspectBackend) Stop(context.Context) error   { return nil }
 func (b *inspectBackend) Reload(context.Context) error { return nil }

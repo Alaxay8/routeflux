@@ -76,6 +76,12 @@ type StatusSnapshot struct {
 	ActiveNode         *domain.Node         `json:"active_node,omitempty"`
 }
 
+type applyNodeSelectionOptions struct {
+	persistFailure             bool
+	rollbackOnVerificationFail bool
+	preservedState             domain.RuntimeState
+}
+
 // Service orchestrates subscription, health, and backend workflows.
 type Service struct {
 	store                   Store
@@ -607,8 +613,13 @@ func (s *Service) connectManual(ctx context.Context, subscriptionID, nodeID stri
 		return fmt.Errorf("node %q not found in subscription %q", nodeID, subscriptionID)
 	}
 
+	state, err := s.store.LoadState()
+	if err != nil {
+		return fmt.Errorf("load state: %w", err)
+	}
+
 	s.logInfo("manual connect requested", "subscription", sub.ID, "node", node.ID)
-	if err := s.applyNodeSelection(ctx, sub, node, domain.SelectionModeManual); err != nil {
+	if err := s.applyNodeSelection(ctx, sub, node, domain.SelectionModeManual, selectionOptionsForState(state)); err != nil {
 		return err
 	}
 
@@ -662,7 +673,7 @@ func (s *Service) connectAuto(ctx context.Context, subscriptionID string) (domai
 		return domain.Node{}, errors.New(decision.Reason)
 	}
 
-	selectedNode, err := s.commitAutoSelection(ctx, sub, decision)
+	selectedNode, err := s.commitAutoSelection(ctx, sub, state, decision)
 	if err != nil {
 		return domain.Node{}, err
 	}
@@ -2216,7 +2227,7 @@ func pickFreeTCPPort() (int, error) {
 	return addr.Port, nil
 }
 
-func (s *Service) applyNodeSelection(ctx context.Context, sub domain.Subscription, node domain.Node, mode domain.SelectionMode) error {
+func (s *Service) applyNodeSelection(ctx context.Context, sub domain.Subscription, node domain.Node, mode domain.SelectionMode, opts applyNodeSelectionOptions) error {
 	settings, err := s.store.LoadSettings()
 	if err != nil {
 		return fmt.Errorf("load settings: %w", err)
@@ -2230,18 +2241,30 @@ func (s *Service) applyNodeSelection(ctx context.Context, sub domain.Subscriptio
 		return fmt.Errorf("resolve node address: %w", err)
 	}
 
+	var rollbackSnapshot backend.RollbackSnapshot
 	if s.backend != nil {
+		if opts.rollbackOnVerificationFail {
+			snapshot, err := s.backend.CaptureRollback()
+			if err != nil {
+				s.logWarn("capture runtime rollback failed", "subscription", sub.ID, "node", node.ID, "mode", mode, "error", err.Error())
+			} else if snapshot.Available {
+				rollbackSnapshot = snapshot
+				s.logInfo("candidate apply start", "subscription", sub.ID, "node", node.ID, "mode", mode)
+			} else {
+				s.logWarn("capture runtime rollback unavailable", "subscription", sub.ID, "node", node.ID, "mode", mode)
+			}
+		}
+
 		s.logInfo("apply backend config", "subscription", sub.ID, "node", node.ID, "mode", mode, "resolved_address", resolvedNode.Address)
 		if err := s.backend.ApplyConfig(ctx, s.backendConfigRequest(settings, resolvedNode, mode, 10808, 10809, firewallEnabled(settings.Firewall))); err != nil {
 			s.logWarn("apply backend config failed", "subscription", sub.ID, "node", node.ID, "mode", mode, "error", err.Error())
-			_ = s.markConnectionFailed(ctx, sub.ID, node.ID, mode, fmt.Sprintf("apply backend config: %v", err))
-			return fmt.Errorf("apply backend config: %w", err)
+			return s.handleNodeSelectionFailure(ctx, sub, node, mode, opts, fmt.Sprintf("apply backend config: %v", err), fmt.Errorf("apply backend config: %w", err))
 		}
-		if err := s.ensureBackendRunning(ctx, sub.ID, node.ID, mode); err != nil {
-			return err
+		if reason, err := s.ensureBackendRunning(ctx, sub.ID, node.ID, mode); err != nil {
+			return s.handlePostApplyVerificationFailure(ctx, sub, node, mode, opts, rollbackSnapshot, reason, err)
 		}
-		if err := s.ensureBackendEgress(ctx, settings, sub.ID, node.ID, mode); err != nil {
-			return err
+		if reason, err := s.ensureBackendEgress(ctx, settings, sub.ID, node.ID, mode); err != nil {
+			return s.handlePostApplyVerificationFailure(ctx, sub, node, mode, opts, rollbackSnapshot, reason, err)
 		}
 	}
 
@@ -2264,14 +2287,12 @@ func (s *Service) applyNodeSelection(ctx context.Context, sub domain.Subscriptio
 			)
 			if err := s.firewall.Apply(ctx, runtimeFirewall); err != nil {
 				s.logWarn("apply firewall failed", "subscription", sub.ID, "node", node.ID, "error", err.Error())
-				_ = s.markConnectionFailed(ctx, sub.ID, node.ID, mode, fmt.Sprintf("apply firewall: %v", err))
-				return fmt.Errorf("apply firewall: %w", err)
+				return s.handleNodeSelectionFailure(ctx, sub, node, mode, opts, fmt.Sprintf("apply firewall: %v", err), fmt.Errorf("apply firewall: %w", err))
 			}
 			s.logInfo("firewall rules applied", "subscription", sub.ID, "node", node.ID)
 		} else if err := s.firewall.Disable(ctx); err != nil {
 			s.logWarn("disable firewall failed", "subscription", sub.ID, "node", node.ID, "error", err.Error())
-			_ = s.markConnectionFailed(ctx, sub.ID, node.ID, mode, fmt.Sprintf("disable firewall: %v", err))
-			return fmt.Errorf("disable firewall: %w", err)
+			return s.handleNodeSelectionFailure(ctx, sub, node, mode, opts, fmt.Sprintf("disable firewall: %v", err), fmt.Errorf("disable firewall: %w", err))
 		} else {
 			s.logInfo("firewall rules disabled", "subscription", sub.ID, "node", node.ID)
 		}
@@ -2290,6 +2311,61 @@ func (s *Service) applyNodeSelection(ctx context.Context, sub domain.Subscriptio
 
 	if err := s.saveState(state); err != nil {
 		return fmt.Errorf("save state: %w", err)
+	}
+
+	return nil
+}
+
+func selectionOptionsForState(state domain.RuntimeState) applyNodeSelectionOptions {
+	options := applyNodeSelectionOptions{persistFailure: true}
+	if state.Connected && strings.TrimSpace(state.ActiveSubscriptionID) != "" && strings.TrimSpace(state.ActiveNodeID) != "" {
+		options.rollbackOnVerificationFail = true
+		options.preservedState = state
+	}
+	return options
+}
+
+func (s *Service) handleNodeSelectionFailure(ctx context.Context, sub domain.Subscription, node domain.Node, mode domain.SelectionMode, opts applyNodeSelectionOptions, reason string, err error) error {
+	if !opts.persistFailure {
+		return err
+	}
+
+	if persistErr := s.markConnectionFailed(ctx, sub.ID, node.ID, mode, reason); persistErr != nil {
+		return fmt.Errorf("%s: %w", reason, persistErr)
+	}
+
+	return err
+}
+
+func (s *Service) handlePostApplyVerificationFailure(ctx context.Context, sub domain.Subscription, node domain.Node, mode domain.SelectionMode, opts applyNodeSelectionOptions, rollbackSnapshot backend.RollbackSnapshot, reason string, err error) error {
+	if opts.rollbackOnVerificationFail && rollbackSnapshot.Available {
+		recoveredReason := "candidate verify failed: " + reason
+		s.logWarn("candidate verify failed", "subscription", sub.ID, "node", node.ID, "mode", mode, "reason", reason)
+		if rollbackErr := s.backend.RollbackConfig(ctx, rollbackSnapshot); rollbackErr == nil {
+			s.logInfo("rollback succeeded", "subscription", sub.ID, "node", node.ID, "mode", mode)
+			if persistErr := s.persistPreservedConnection(opts.preservedState, recoveredReason); persistErr != nil {
+				return fmt.Errorf("%s: %w", recoveredReason, persistErr)
+			}
+			return errors.New(recoveredReason)
+		} else {
+			s.logWarn("rollback failed", "subscription", sub.ID, "node", node.ID, "mode", mode, "error", rollbackErr.Error())
+			reason = fmt.Sprintf("%s; rollback failed: %v", recoveredReason, rollbackErr)
+			err = errors.New(reason)
+		}
+	}
+
+	return s.handleNodeSelectionFailure(ctx, sub, node, mode, opts, reason, err)
+}
+
+func (s *Service) persistPreservedConnection(state domain.RuntimeState, reason string) error {
+	if strings.TrimSpace(state.ActiveSubscriptionID) == "" || strings.TrimSpace(state.ActiveNodeID) == "" {
+		return fmt.Errorf("preserved runtime state is incomplete")
+	}
+
+	state.Connected = true
+	state.LastFailureReason = reason
+	if err := s.saveState(state); err != nil {
+		return fmt.Errorf("save preserved state: %w", err)
 	}
 
 	return nil
@@ -2740,23 +2816,23 @@ func (s *Service) reapplyCurrentConnection(ctx context.Context) error {
 		return fmt.Errorf("node %q not found in subscription %q", state.ActiveNodeID, state.ActiveSubscriptionID)
 	}
 
-	return s.applyNodeSelection(ctx, sub, node, state.Mode)
+	return s.applyNodeSelection(ctx, sub, node, state.Mode, applyNodeSelectionOptions{})
 }
 
-func (s *Service) ensureBackendRunning(ctx context.Context, subscriptionID, nodeID string, mode domain.SelectionMode) error {
+func (s *Service) ensureBackendRunning(ctx context.Context, subscriptionID, nodeID string, mode domain.SelectionMode) (string, error) {
 	if s.backend == nil {
-		return nil
+		return "", nil
 	}
 
 	status, err := s.waitForBackendRunning(ctx, subscriptionID, nodeID, mode)
 	if err != nil {
 		s.logWarn("backend status check failed", "subscription", subscriptionID, "node", nodeID, "mode", mode, "error", err.Error())
-		_ = s.markConnectionFailed(ctx, subscriptionID, nodeID, mode, fmt.Sprintf("backend status check failed: %v", err))
-		return fmt.Errorf("check backend status: %w", err)
+		reason := fmt.Sprintf("backend status check failed: %v", err)
+		return reason, fmt.Errorf("check backend status: %w", err)
 	}
 	if status.Running {
 		s.logInfo("backend running confirmed", "subscription", subscriptionID, "node", nodeID, "mode", mode, "service_state", status.ServiceState)
-		return nil
+		return "", nil
 	}
 
 	reason := "backend is not running"
@@ -2764,13 +2840,12 @@ func (s *Service) ensureBackendRunning(ctx context.Context, subscriptionID, node
 		reason = fmt.Sprintf("backend is not running (%s)", status.ServiceState)
 	}
 	s.logWarn("backend reported not running", "subscription", subscriptionID, "node", nodeID, "mode", mode, "service_state", status.ServiceState)
-	_ = s.markConnectionFailed(ctx, subscriptionID, nodeID, mode, reason)
-	return errors.New(reason)
+	return reason, errors.New(reason)
 }
 
-func (s *Service) ensureBackendEgress(ctx context.Context, settings domain.Settings, subscriptionID, nodeID string, mode domain.SelectionMode) error {
+func (s *Service) ensureBackendEgress(ctx context.Context, settings domain.Settings, subscriptionID, nodeID string, mode domain.SelectionMode) (string, error) {
 	if s.backend == nil || s.backendEgressProbe == nil {
-		return nil
+		return "", nil
 	}
 
 	timeout := s.backendEgressTimeout
@@ -2793,7 +2868,7 @@ func (s *Service) ensureBackendEgress(ctx context.Context, settings domain.Setti
 		err := s.backendEgressProbe(probeCtx)
 		if err == nil {
 			s.logInfo("backend egress confirmed", "subscription", subscriptionID, "node", nodeID, "mode", mode, "attempt", attempt)
-			return nil
+			return "", nil
 		}
 
 		lastErr = err
@@ -2816,8 +2891,7 @@ func (s *Service) ensureBackendEgress(ctx context.Context, settings domain.Setti
 	if domain.FirewallRoutingEnabled(settings.Firewall) && s.firewall != nil {
 		s.logWarn("firewall fail-open scheduled after failed backend egress probe", "subscription", subscriptionID, "node", nodeID, "mode", mode)
 	}
-	_ = s.markConnectionFailed(ctx, subscriptionID, nodeID, mode, reason)
-	return fmt.Errorf("check backend egress: %w", lastErr)
+	return reason, fmt.Errorf("check backend egress: %w", lastErr)
 }
 
 func (s *Service) waitForBackendRunning(ctx context.Context, subscriptionID, nodeID string, mode domain.SelectionMode) (backend.RuntimeStatus, error) {
@@ -3010,25 +3084,13 @@ func (s *Service) persistRestoreFailure(ctx context.Context, reason string) erro
 		return fmt.Errorf("load state after restore failure: %w", err)
 	}
 
-	state.ActiveSubscriptionID = ""
-	state.ActiveNodeID = ""
-	state.Mode = domain.SelectionModeDisconnected
 	state.Connected = false
 	state.LastFailureReason = reason
 	if err := s.saveState(state); err != nil {
 		return fmt.Errorf("save state after restore failure: %w", err)
 	}
 
-	settings, err := s.store.LoadSettings()
-	if err == nil {
-		settings.AutoMode = false
-		settings.Mode = domain.SelectionModeDisconnected
-		if saveErr := s.store.SaveSettings(settings); saveErr != nil {
-			return fmt.Errorf("save settings after restore failure: %w", saveErr)
-		}
-	}
-
-	s.logWarn("restore failure persisted", "reason", reason)
+	s.logWarn("restore degraded", "reason", reason)
 	return nil
 }
 

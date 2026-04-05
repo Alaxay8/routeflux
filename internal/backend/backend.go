@@ -26,6 +26,12 @@ type ConfigRequest struct {
 	TransparentBypassCIDRs      []string
 }
 
+// RollbackSnapshot stores an opaque backend-specific runtime snapshot.
+type RollbackSnapshot struct {
+	Available bool
+	Config    []byte
+}
+
 // RuntimeStatus describes backend runtime state.
 type RuntimeStatus struct {
 	Running      bool   `json:"running"`
@@ -45,6 +51,8 @@ type ServiceController interface {
 type Backend interface {
 	GenerateConfig(req ConfigRequest) ([]byte, error)
 	ApplyConfig(ctx context.Context, req ConfigRequest) error
+	CaptureRollback() (RollbackSnapshot, error)
+	RollbackConfig(ctx context.Context, snapshot RollbackSnapshot) error
 	Start(ctx context.Context) error
 	Stop(ctx context.Context) error
 	Reload(ctx context.Context) error

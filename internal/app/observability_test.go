@@ -160,7 +160,7 @@ func TestRestoreRuntimeLogsFailure(t *testing.T) {
 	for _, want := range []string{
 		"restore runtime start",
 		"restore runtime failed",
-		"restore failure persisted",
+		"restore degraded",
 	} {
 		if !strings.Contains(logs.String(), want) {
 			t.Fatalf("expected logs to contain %q, got %q", want, logs.String())

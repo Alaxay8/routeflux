@@ -3297,13 +3297,18 @@ func (s *memoryStore) SaveState(state domain.RuntimeState) error {
 }
 
 type recordingBackend struct {
-	requests    []backend.ConfigRequest
-	stopCalls   int
-	startCalls  int
-	status      backend.RuntimeStatus
-	statuses    []backend.RuntimeStatus
-	statusCalls int
-	statusErr   error
+	requests             []backend.ConfigRequest
+	stopCalls            int
+	startCalls           int
+	status               backend.RuntimeStatus
+	statuses             []backend.RuntimeStatus
+	statusCalls          int
+	statusErr            error
+	captureRollbackCalls int
+	rollbackCalls        int
+	rollbackErr          error
+	rollbackSnapshot     backend.RollbackSnapshot
+	lastRollbackSnapshot backend.RollbackSnapshot
 }
 
 func (b *recordingBackend) GenerateConfig(req backend.ConfigRequest) ([]byte, error) {
@@ -3313,6 +3318,23 @@ func (b *recordingBackend) GenerateConfig(req backend.ConfigRequest) ([]byte, er
 func (b *recordingBackend) ApplyConfig(_ context.Context, req backend.ConfigRequest) error {
 	b.requests = append(b.requests, req)
 	return nil
+}
+
+func (b *recordingBackend) CaptureRollback() (backend.RollbackSnapshot, error) {
+	b.captureRollbackCalls++
+	if b.rollbackSnapshot.Available || len(b.rollbackSnapshot.Config) > 0 {
+		return b.rollbackSnapshot, nil
+	}
+	return backend.RollbackSnapshot{
+		Available: true,
+		Config:    []byte("last-known-good"),
+	}, nil
+}
+
+func (b *recordingBackend) RollbackConfig(_ context.Context, snapshot backend.RollbackSnapshot) error {
+	b.rollbackCalls++
+	b.lastRollbackSnapshot = snapshot
+	return b.rollbackErr
 }
 
 func (b *recordingBackend) Start(context.Context) error {
