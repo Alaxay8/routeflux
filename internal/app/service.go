@@ -55,6 +55,12 @@ type HostResolver interface {
 	LookupIPAddr(ctx context.Context, host string) ([]net.IPAddr, error)
 }
 
+// IPv6Manager applies and inspects RouteFlux-managed IPv6 state.
+type IPv6Manager interface {
+	Apply(ctx context.Context, disabled bool) error
+	Status(ctx context.Context) (domain.IPv6Status, error)
+}
+
 // AddSubscriptionRequest defines how a subscription is added.
 type AddSubscriptionRequest struct {
 	URL  string
@@ -70,6 +76,12 @@ type StatusSnapshot struct {
 	ActiveNode         *domain.Node         `json:"active_node,omitempty"`
 }
 
+type applyNodeSelectionOptions struct {
+	persistFailure             bool
+	rollbackOnVerificationFail bool
+	preservedState             domain.RuntimeState
+}
+
 // Service orchestrates subscription, health, and backend workflows.
 type Service struct {
 	store                   Store
@@ -81,8 +93,14 @@ type Service struct {
 	speedTester             speedtest.Tester
 	logger                  *slog.Logger
 	resolver                HostResolver
+	ipv6Manager             IPv6Manager
 	backendReadyChecks      int
 	backendReadyDelay       time.Duration
+	backendEgressProbe      func(ctx context.Context) error
+	backendEgressTimeout    time.Duration
+	backendEgressRetryDelay time.Duration
+	nodeDialProbeTimeout    time.Duration
+	dialContext             func(ctx context.Context, network, address string) (net.Conn, error)
 	now                     func() time.Time
 	autoHealthStateMu       sync.Mutex
 	autoHealthState         *autoHealthStateCache
@@ -90,19 +108,22 @@ type Service struct {
 
 // Dependencies groups the service construction inputs.
 type Dependencies struct {
-	Store       Store
-	Backend     backend.Backend
-	Firewaller  Firewaller
-	HTTPClient  *http.Client
-	Checker     probe.Checker
-	SpeedTester speedtest.Tester
-	Logger      *slog.Logger
-	Resolver    HostResolver
+	Store              Store
+	Backend            backend.Backend
+	Firewaller         Firewaller
+	HTTPClient         *http.Client
+	Checker            probe.Checker
+	SpeedTester        speedtest.Tester
+	Logger             *slog.Logger
+	Resolver           HostResolver
+	IPv6Manager        IPv6Manager
+	RuntimeEgressProbe bool
 }
 
 type subscriptionFetchMetadata struct {
 	ProviderName string
 	ExpiresAt    *time.Time
+	Traffic      *domain.SubscriptionTraffic
 }
 
 type subscriptionFetchResult struct {
@@ -120,12 +141,18 @@ const (
 	subscriptionAltUserInfoKey            = "X-Subscription-Userinfo"
 	backendReadyMaxChecks                 = 8
 	backendReadyCheckDelay                = 250 * time.Millisecond
+	backendEgressProbeTimeout             = 12 * time.Second
+	backendEgressProbeRetryDelay          = 250 * time.Millisecond
 )
 
 var subscriptionShareLinkPattern = regexp.MustCompile(`(?i)(vless|vmess|trojan|ss)://[^"'<>]+`)
 var htmlTitlePattern = regexp.MustCompile(`(?is)<title[^>]*>\s*(.*?)\s*</title>`)
 var htmlH1Pattern = regexp.MustCompile(`(?is)<h1[^>]*>\s*(.*?)\s*</h1>`)
 var htmlTagPattern = regexp.MustCompile(`(?s)<[^>]+>`)
+var backendEgressProbeURLs = []string{
+	"https://cp.cloudflare.com/generate_204",
+	"https://www.gstatic.com/generate_204",
+}
 
 // NewService creates an application service with sensible defaults.
 func NewService(deps Dependencies) *Service {
@@ -144,7 +171,7 @@ func NewService(deps Dependencies) *Service {
 		resolver = net.DefaultResolver
 	}
 
-	return &Service{
+	service := &Service{
 		store:                   deps.Store,
 		backend:                 deps.Backend,
 		firewall:                deps.Firewaller,
@@ -154,10 +181,21 @@ func NewService(deps Dependencies) *Service {
 		speedTester:             deps.SpeedTester,
 		logger:                  logger,
 		resolver:                resolver,
+		ipv6Manager:             deps.IPv6Manager,
 		backendReadyChecks:      backendReadyMaxChecks,
 		backendReadyDelay:       backendReadyCheckDelay,
+		backendEgressTimeout:    backendEgressProbeTimeout,
+		backendEgressRetryDelay: backendEgressProbeRetryDelay,
+		nodeDialProbeTimeout:    2 * time.Second,
+		dialContext:             (&net.Dialer{}).DialContext,
 		now:                     time.Now,
 	}
+
+	if deps.RuntimeEgressProbe && deps.Backend != nil && deps.HTTPClient != nil {
+		service.backendEgressProbe = service.defaultBackendEgressProbe
+	}
+
+	return service
 }
 
 // AddSubscription adds a new subscription and parses its nodes.
@@ -204,6 +242,7 @@ func (s *Service) addSubscription(ctx context.Context, req AddSubscriptionReques
 		DisplayName:        providerName,
 		LastUpdatedAt:      now,
 		ExpiresAt:          metadata.ExpiresAt,
+		Traffic:            metadata.Traffic,
 		RefreshInterval:    settings.RefreshInterval,
 		ParserStatus:       "ok",
 		Nodes:              nodes,
@@ -508,6 +547,9 @@ func (s *Service) refreshSubscription(ctx context.Context, subscriptionID string
 	if metadata.ExpiresAt != nil {
 		sub.ExpiresAt = metadata.ExpiresAt
 	}
+	if metadata.Traffic != nil {
+		sub.Traffic = metadata.Traffic
+	}
 	sub.LastError = ""
 	sub.ParserStatus = "ok"
 	sub.LastUpdatedAt = time.Now().UTC()
@@ -571,8 +613,13 @@ func (s *Service) connectManual(ctx context.Context, subscriptionID, nodeID stri
 		return fmt.Errorf("node %q not found in subscription %q", nodeID, subscriptionID)
 	}
 
+	state, err := s.store.LoadState()
+	if err != nil {
+		return fmt.Errorf("load state: %w", err)
+	}
+
 	s.logInfo("manual connect requested", "subscription", sub.ID, "node", node.ID)
-	if err := s.applyNodeSelection(ctx, sub, node, domain.SelectionModeManual); err != nil {
+	if err := s.applyNodeSelection(ctx, sub, node, domain.SelectionModeManual, selectionOptionsForState(state)); err != nil {
 		return err
 	}
 
@@ -626,7 +673,7 @@ func (s *Service) connectAuto(ctx context.Context, subscriptionID string) (domai
 		return domain.Node{}, errors.New(decision.Reason)
 	}
 
-	selectedNode, err := s.commitAutoSelection(ctx, sub, decision)
+	selectedNode, err := s.commitAutoSelection(ctx, sub, state, decision)
 	if err != nil {
 		return domain.Node{}, err
 	}
@@ -716,6 +763,15 @@ func (s *Service) RuntimeStatus(ctx context.Context) (backend.RuntimeStatus, err
 	return s.backend.Status(ctx)
 }
 
+// IPv6Status returns the current RouteFlux-managed IPv6 state, if available.
+func (s *Service) IPv6Status(ctx context.Context) (domain.IPv6Status, error) {
+	if s.ipv6Manager == nil {
+		return domain.IPv6Status{}, nil
+	}
+
+	return s.ipv6Manager.Status(ctx)
+}
+
 // RestoreRuntime reapplies a persisted active connection during daemon startup.
 func (s *Service) RestoreRuntime(ctx context.Context) error {
 	return runStoreWriteLocked(s, func() error {
@@ -755,6 +811,12 @@ func (s *Service) restoreRuntime(ctx context.Context) error {
 	if err != nil {
 		return fmt.Errorf("load state: %w", err)
 	}
+	settings, settingsErr := s.store.LoadSettings()
+	if settingsErr == nil {
+		if err := s.ensureManagedIPv6State(ctx, settings); err != nil {
+			return err
+		}
+	}
 
 	if !state.Connected || state.ActiveSubscriptionID == "" || state.ActiveNodeID == "" {
 		if s.firewall != nil {
@@ -775,8 +837,7 @@ func (s *Service) restoreRuntime(ctx context.Context) error {
 		return errors.New(reason)
 	}
 
-	settings, err := s.store.LoadSettings()
-	if err == nil && syncSettingsToRuntime(&settings, state) {
+	if settingsErr == nil && syncSettingsToRuntime(&settings, state) {
 		_ = s.store.SaveSettings(settings)
 	}
 
@@ -791,7 +852,7 @@ func (s *Service) GetFirewallSettings() (domain.FirewallSettings, error) {
 		return domain.FirewallSettings{}, fmt.Errorf("load settings: %w", err)
 	}
 
-	return settings.Firewall, nil
+	return domain.CanonicalFirewallSettings(settings.Firewall), nil
 }
 
 // UpdateFirewallModeDraft stores selectors for one LuCI firewall mode without applying them.
@@ -812,8 +873,12 @@ func (s *Service) updateFirewallModeDraft(ctx context.Context, mode string, sele
 	mode = strings.TrimSpace(strings.ToLower(mode))
 	switch mode {
 	case "hosts":
+		sources, err := domain.ParseFirewallSources(selectors)
+		if err != nil {
+			return domain.FirewallSettings{}, err
+		}
 		settings.Firewall.ModeDrafts.Hosts = domain.FirewallModeDraft{
-			SourceCIDRs: normalizeFirewallSources(selectors),
+			SourceCIDRs: sources,
 		}
 	case "targets":
 		parsed, err := domain.ParseFirewallTargets(selectors, settings.Firewall.TargetServiceCatalog)
@@ -825,18 +890,56 @@ func (s *Service) updateFirewallModeDraft(ctx context.Context, mode string, sele
 			TargetCIDRs:    slices.Clone(parsed.CIDRs),
 			TargetDomains:  slices.Clone(parsed.Domains),
 		}
-	case "anti-target":
-		parsed, err := domain.ParseFirewallTargets(selectors, settings.Firewall.TargetServiceCatalog)
-		if err != nil {
-			return domain.FirewallSettings{}, err
-		}
-		settings.Firewall.ModeDrafts.AntiTarget = domain.FirewallModeDraft{
-			TargetServices: slices.Clone(parsed.Services),
-			TargetCIDRs:    slices.Clone(parsed.CIDRs),
-			TargetDomains:  slices.Clone(parsed.Domains),
-		}
 	default:
 		return domain.FirewallSettings{}, fmt.Errorf("unsupported firewall draft mode %q", mode)
+	}
+
+	if err := s.store.SaveSettings(settings); err != nil {
+		return domain.FirewallSettings{}, fmt.Errorf("save settings: %w", err)
+	}
+
+	return settings.Firewall, nil
+}
+
+// UpdateFirewallSplitDraft stores split selectors without applying them.
+func (s *Service) UpdateFirewallSplitDraft(ctx context.Context, proxySelectors, bypassSelectors, excludedSources []string) (domain.FirewallSettings, error) {
+	return runStoreWriteLockedResult(s, func() (domain.FirewallSettings, error) {
+		return s.updateFirewallSplitDraft(ctx, proxySelectors, bypassSelectors, excludedSources)
+	})
+}
+
+// UpdateFirewallBypassDraft stores bypass selectors without applying them.
+func (s *Service) UpdateFirewallBypassDraft(ctx context.Context, bypassSelectors, excludedSources []string) (domain.FirewallSettings, error) {
+	return runStoreWriteLockedResult(s, func() (domain.FirewallSettings, error) {
+		return s.updateFirewallSplitDraft(ctx, nil, bypassSelectors, excludedSources)
+	})
+}
+
+func (s *Service) updateFirewallSplitDraft(ctx context.Context, proxySelectors, bypassSelectors, excludedSources []string) (domain.FirewallSettings, error) {
+	_ = ctx
+
+	settings, err := s.store.LoadSettings()
+	if err != nil {
+		return domain.FirewallSettings{}, fmt.Errorf("load settings: %w", err)
+	}
+
+	proxyTargets, err := domain.ParseFirewallTargets(proxySelectors, settings.Firewall.TargetServiceCatalog)
+	if err != nil {
+		return domain.FirewallSettings{}, err
+	}
+	bypassTargets, err := domain.ParseFirewallTargets(bypassSelectors, settings.Firewall.TargetServiceCatalog)
+	if err != nil {
+		return domain.FirewallSettings{}, err
+	}
+	sources, err := domain.ParseFirewallSources(excludedSources)
+	if err != nil {
+		return domain.FirewallSettings{}, err
+	}
+
+	settings.Firewall.ModeDrafts.Split = domain.FirewallSplitDraft{
+		Proxy:           domain.FirewallSelectorSetFromTargets(proxyTargets),
+		Bypass:          domain.FirewallSelectorSetFromTargets(bypassTargets),
+		ExcludedSources: sources,
 	}
 
 	if err := s.store.SaveSettings(settings); err != nil {
@@ -867,8 +970,8 @@ func (s *Service) clearFirewallModeDraft(ctx context.Context, mode string) (doma
 		settings.Firewall.ModeDrafts.Hosts = domain.FirewallModeDraft{}
 	case "targets":
 		settings.Firewall.ModeDrafts.Targets = domain.FirewallModeDraft{}
-	case "anti-target":
-		settings.Firewall.ModeDrafts.AntiTarget = domain.FirewallModeDraft{}
+	case "split", "bypass":
+		settings.Firewall.ModeDrafts.Split = domain.FirewallSplitDraft{}
 	default:
 		return domain.FirewallSettings{}, fmt.Errorf("unsupported firewall draft mode %q", mode)
 	}
@@ -968,14 +1071,19 @@ func (s *Service) deleteFirewallTargetService(ctx context.Context, name string) 
 	if entry.ReadOnly {
 		return fmt.Errorf("target service %q is readonly and cannot be deleted", entry.Name)
 	}
-	if firewallTargetsReferenceService(settings.Firewall.TargetServices, settings.Firewall.TargetServiceCatalog, entry.Name) {
+	if firewallSelectorSetReferencesService(settings.Firewall.Targets, settings.Firewall.TargetServiceCatalog, entry.Name) {
 		return fmt.Errorf("target service %q is still used by firewall targets; remove it from firewall targets first", entry.Name)
+	}
+	if firewallSelectorSetReferencesService(settings.Firewall.Split.Proxy, settings.Firewall.TargetServiceCatalog, entry.Name) ||
+		firewallSelectorSetReferencesService(settings.Firewall.Split.Bypass, settings.Firewall.TargetServiceCatalog, entry.Name) {
+		return fmt.Errorf("target service %q is still used by split tunnelling; remove it from split tunnelling first", entry.Name)
 	}
 	if firewallTargetsReferenceService(settings.Firewall.ModeDrafts.Targets.TargetServices, settings.Firewall.TargetServiceCatalog, entry.Name) {
 		return fmt.Errorf("target service %q is still referenced by the saved targets draft", entry.Name)
 	}
-	if firewallTargetsReferenceService(settings.Firewall.ModeDrafts.AntiTarget.TargetServices, settings.Firewall.TargetServiceCatalog, entry.Name) {
-		return fmt.Errorf("target service %q is still referenced by the saved anti-target draft", entry.Name)
+	if firewallSelectorSetReferencesService(settings.Firewall.ModeDrafts.Split.Proxy, settings.Firewall.TargetServiceCatalog, entry.Name) ||
+		firewallSelectorSetReferencesService(settings.Firewall.ModeDrafts.Split.Bypass, settings.Firewall.TargetServiceCatalog, entry.Name) {
+		return fmt.Errorf("target service %q is still referenced by the saved split draft", entry.Name)
 	}
 	if referrer, ok := findReferencingTargetService(settings.Firewall.TargetServiceCatalog, entry.Name); ok {
 		return fmt.Errorf("target service %q is still referenced by target service %q", entry.Name, referrer)
@@ -1009,6 +1117,10 @@ func firewallTargetsReferenceService(roots []string, catalog map[string]domain.F
 		}
 	}
 	return false
+}
+
+func firewallSelectorSetReferencesService(selectors domain.FirewallSelectorSet, catalog map[string]domain.FirewallTargetDefinition, target string) bool {
+	return firewallTargetsReferenceService(selectors.Services, catalog, target)
 }
 
 func findReferencingTargetService(catalog map[string]domain.FirewallTargetDefinition, target string) (string, bool) {
@@ -1056,23 +1168,29 @@ func targetServiceDependencyMatches(root, target string, catalog map[string]doma
 // ConfigureFirewall updates firewall targets and enabled state.
 func (s *Service) ConfigureFirewall(ctx context.Context, targets []string, enabled bool, port int) (domain.FirewallSettings, error) {
 	return runStoreWriteLockedResult(s, func() (domain.FirewallSettings, error) {
-		return s.configureFirewallTargets(ctx, targets, enabled, port, domain.FirewallTargetModeProxy)
+		return s.configureFirewallTargets(ctx, targets, enabled, port)
 	})
 }
 
 func (s *Service) configureFirewall(ctx context.Context, targets []string, enabled bool, port int) (domain.FirewallSettings, error) {
-	return s.configureFirewallTargets(ctx, targets, enabled, port, domain.FirewallTargetModeProxy)
+	return s.configureFirewallTargets(ctx, targets, enabled, port)
 }
 
 // ConfigureFirewallAntiTargets routes all other LAN traffic through the transparent proxy
 // while keeping selected targets direct.
 func (s *Service) ConfigureFirewallAntiTargets(ctx context.Context, targets []string, enabled bool, port int) (domain.FirewallSettings, error) {
+	return s.ConfigureFirewallBypass(ctx, targets, nil, enabled, port)
+}
+
+// ConfigureFirewallBypass routes all other LAN traffic through the transparent proxy
+// while keeping selected targets direct and allowing excluded sources.
+func (s *Service) ConfigureFirewallBypass(ctx context.Context, targets, excludedSources []string, enabled bool, port int) (domain.FirewallSettings, error) {
 	return runStoreWriteLockedResult(s, func() (domain.FirewallSettings, error) {
-		return s.configureFirewallTargets(ctx, targets, enabled, port, domain.FirewallTargetModeBypass)
+		return s.configureFirewallSplit(ctx, nil, targets, excludedSources, enabled, port, domain.FirewallDefaultActionProxy)
 	})
 }
 
-func (s *Service) configureFirewallTargets(ctx context.Context, targets []string, enabled bool, port int, targetMode domain.FirewallTargetMode) (domain.FirewallSettings, error) {
+func (s *Service) configureFirewallTargets(ctx context.Context, targets []string, enabled bool, port int) (domain.FirewallSettings, error) {
 	settings, err := s.store.LoadSettings()
 	if err != nil {
 		return domain.FirewallSettings{}, fmt.Errorf("load settings: %w", err)
@@ -1084,23 +1202,74 @@ func (s *Service) configureFirewallTargets(ctx context.Context, targets []string
 	}
 
 	settings.Firewall.Enabled = enabled
-	settings.Firewall.TargetMode = domain.NormalizeFirewallTargetMode(targetMode)
-	settings.Firewall.TargetServices = slices.Clone(parsedTargets.Services)
-	settings.Firewall.TargetCIDRs = slices.Clone(parsedTargets.CIDRs)
-	settings.Firewall.TargetDomains = slices.Clone(parsedTargets.Domains)
-	settings.Firewall.SourceCIDRs = nil
-	if targetMode == domain.FirewallTargetModeBypass {
-		settings.Firewall.ModeDrafts.AntiTarget = domain.FirewallModeDraft{
-			TargetServices: slices.Clone(parsedTargets.Services),
-			TargetCIDRs:    slices.Clone(parsedTargets.CIDRs),
-			TargetDomains:  slices.Clone(parsedTargets.Domains),
-		}
-	} else {
-		settings.Firewall.ModeDrafts.Targets = domain.FirewallModeDraft{
-			TargetServices: slices.Clone(parsedTargets.Services),
-			TargetCIDRs:    slices.Clone(parsedTargets.CIDRs),
-			TargetDomains:  slices.Clone(parsedTargets.Domains),
-		}
+	settings.Firewall.Mode = domain.FirewallModeTargets
+	settings.Firewall.Hosts = nil
+	settings.Firewall.Targets = domain.FirewallSelectorSetFromTargets(parsedTargets)
+	settings.Firewall.Split = domain.DefaultFirewallSplitSettings()
+	settings.Firewall.ModeDrafts.Targets = domain.FirewallModeDraft{
+		TargetServices: slices.Clone(parsedTargets.Services),
+		TargetCIDRs:    slices.Clone(parsedTargets.CIDRs),
+		TargetDomains:  slices.Clone(parsedTargets.Domains),
+	}
+	if port > 0 {
+		settings.Firewall.TransparentPort = port
+	}
+
+	if err := s.validateFirewall(ctx, settings.Firewall); err != nil {
+		return domain.FirewallSettings{}, err
+	}
+
+	if err := s.store.SaveSettings(settings); err != nil {
+		return domain.FirewallSettings{}, fmt.Errorf("save settings: %w", err)
+	}
+
+	if err := s.reapplyCurrentConnection(ctx); err != nil {
+		return domain.FirewallSettings{}, err
+	}
+
+	return settings.Firewall, nil
+}
+
+// ConfigureFirewallSplit applies an explicit split tunnelling policy.
+func (s *Service) ConfigureFirewallSplit(ctx context.Context, proxyTargets, bypassTargets, excludedSources []string, enabled bool, port int) (domain.FirewallSettings, error) {
+	return runStoreWriteLockedResult(s, func() (domain.FirewallSettings, error) {
+		return s.configureFirewallSplit(ctx, proxyTargets, bypassTargets, excludedSources, enabled, port, domain.FirewallDefaultActionDirect)
+	})
+}
+
+func (s *Service) configureFirewallSplit(ctx context.Context, proxyTargets, bypassTargets, excludedSources []string, enabled bool, port int, defaultAction domain.FirewallDefaultAction) (domain.FirewallSettings, error) {
+	settings, err := s.store.LoadSettings()
+	if err != nil {
+		return domain.FirewallSettings{}, fmt.Errorf("load settings: %w", err)
+	}
+
+	proxyParsed, err := domain.ParseFirewallTargets(proxyTargets, settings.Firewall.TargetServiceCatalog)
+	if err != nil {
+		return domain.FirewallSettings{}, err
+	}
+	bypassParsed, err := domain.ParseFirewallTargets(bypassTargets, settings.Firewall.TargetServiceCatalog)
+	if err != nil {
+		return domain.FirewallSettings{}, err
+	}
+	sources, err := domain.ParseFirewallSources(excludedSources)
+	if err != nil {
+		return domain.FirewallSettings{}, err
+	}
+
+	settings.Firewall.Enabled = enabled
+	settings.Firewall.Mode = domain.FirewallModeSplit
+	settings.Firewall.Hosts = nil
+	settings.Firewall.Targets = domain.FirewallSelectorSet{}
+	settings.Firewall.Split = domain.FirewallSplitSettings{
+		Proxy:           domain.FirewallSelectorSetFromTargets(proxyParsed),
+		Bypass:          domain.FirewallSelectorSetFromTargets(bypassParsed),
+		ExcludedSources: sources,
+		DefaultAction:   domain.NormalizeFirewallDefaultAction(defaultAction),
+	}
+	settings.Firewall.ModeDrafts.Split = domain.FirewallSplitDraft{
+		Proxy:           domain.CloneFirewallSelectorSet(settings.Firewall.Split.Proxy),
+		Bypass:          domain.CloneFirewallSelectorSet(settings.Firewall.Split.Bypass),
+		ExcludedSources: slices.Clone(settings.Firewall.Split.ExcludedSources),
 	}
 	if port > 0 {
 		settings.Firewall.TransparentPort = port
@@ -1134,14 +1303,18 @@ func (s *Service) configureFirewallHosts(ctx context.Context, sources []string, 
 		return domain.FirewallSettings{}, fmt.Errorf("load settings: %w", err)
 	}
 
+	parsedSources, err := domain.ParseFirewallSources(sources)
+	if err != nil {
+		return domain.FirewallSettings{}, err
+	}
+
 	settings.Firewall.Enabled = enabled
-	settings.Firewall.TargetMode = domain.FirewallTargetModeProxy
-	settings.Firewall.SourceCIDRs = normalizeFirewallSources(sources)
-	settings.Firewall.TargetServices = nil
-	settings.Firewall.TargetCIDRs = nil
-	settings.Firewall.TargetDomains = nil
+	settings.Firewall.Mode = domain.FirewallModeHosts
+	settings.Firewall.Hosts = parsedSources
+	settings.Firewall.Targets = domain.FirewallSelectorSet{}
+	settings.Firewall.Split = domain.DefaultFirewallSplitSettings()
 	settings.Firewall.ModeDrafts.Hosts = domain.FirewallModeDraft{
-		SourceCIDRs: slices.Clone(settings.Firewall.SourceCIDRs),
+		SourceCIDRs: slices.Clone(settings.Firewall.Hosts),
 	}
 	if port > 0 {
 		settings.Firewall.TransparentPort = port
@@ -1179,6 +1352,7 @@ func (s *Service) updateFirewallPort(ctx context.Context, port int) (domain.Fire
 		return domain.FirewallSettings{}, fmt.Errorf("load settings: %w", err)
 	}
 
+	settings.Firewall = domain.CanonicalFirewallSettings(settings.Firewall)
 	settings.Firewall.TransparentPort = port
 	if err := s.validateFirewall(ctx, settings.Firewall); err != nil {
 		return domain.FirewallSettings{}, err
@@ -1207,6 +1381,7 @@ func (s *Service) updateFirewallBlockQUIC(ctx context.Context, enabled bool) (do
 		return domain.FirewallSettings{}, fmt.Errorf("load settings: %w", err)
 	}
 
+	settings.Firewall = domain.CanonicalFirewallSettings(settings.Firewall)
 	settings.Firewall.BlockQUIC = enabled
 	if err := s.validateFirewall(ctx, settings.Firewall); err != nil {
 		return domain.FirewallSettings{}, err
@@ -1217,6 +1392,34 @@ func (s *Service) updateFirewallBlockQUIC(ctx context.Context, enabled bool) (do
 
 	if err := s.reapplyCurrentConnection(ctx); err != nil {
 		return domain.FirewallSettings{}, err
+	}
+
+	return settings.Firewall, nil
+}
+
+// UpdateFirewallDisableIPv6 changes whether RouteFlux disables router IPv6 to avoid transparent-routing bypass.
+func (s *Service) UpdateFirewallDisableIPv6(ctx context.Context, disabled bool) (domain.FirewallSettings, error) {
+	return runStoreWriteLockedResult(s, func() (domain.FirewallSettings, error) {
+		return s.updateFirewallDisableIPv6(ctx, disabled)
+	})
+}
+
+func (s *Service) updateFirewallDisableIPv6(ctx context.Context, disabled bool) (domain.FirewallSettings, error) {
+	settings, err := s.store.LoadSettings()
+	if err != nil {
+		return domain.FirewallSettings{}, fmt.Errorf("load settings: %w", err)
+	}
+
+	settings.Firewall = domain.CanonicalFirewallSettings(settings.Firewall)
+	settings.Firewall.DisableIPv6 = disabled
+	if err := s.store.SaveSettings(settings); err != nil {
+		return domain.FirewallSettings{}, fmt.Errorf("save settings: %w", err)
+	}
+
+	if s.ipv6Manager != nil {
+		if err := s.ipv6Manager.Apply(ctx, disabled); err != nil {
+			return domain.FirewallSettings{}, fmt.Errorf("apply ipv6 setting: %w", err)
+		}
 	}
 
 	return settings.Firewall, nil
@@ -1236,11 +1439,10 @@ func (s *Service) disableFirewall(ctx context.Context) (domain.FirewallSettings,
 	}
 
 	settings.Firewall.Enabled = false
-	settings.Firewall.TargetMode = domain.FirewallTargetModeProxy
-	settings.Firewall.TargetServices = nil
-	settings.Firewall.TargetCIDRs = nil
-	settings.Firewall.TargetDomains = nil
-	settings.Firewall.SourceCIDRs = nil
+	settings.Firewall.Mode = domain.FirewallModeDisabled
+	settings.Firewall.Hosts = nil
+	settings.Firewall.Targets = domain.FirewallSelectorSet{}
+	settings.Firewall.Split = domain.DefaultFirewallSplitSettings()
 	if err := s.store.SaveSettings(settings); err != nil {
 		return domain.FirewallSettings{}, fmt.Errorf("save settings: %w", err)
 	}
@@ -1256,7 +1458,7 @@ func (s *Service) validateFirewall(ctx context.Context, settings domain.Firewall
 	if s.firewall == nil {
 		return nil
 	}
-	return s.firewall.Validate(ctx, settings)
+	return s.firewall.Validate(ctx, domain.CanonicalFirewallSettings(settings))
 }
 
 // SetSetting updates a single setting key.
@@ -1281,6 +1483,16 @@ func (s *Service) setSetting(key, value string) (domain.Settings, error) {
 			return domain.Settings{}, err
 		}
 		settings.RefreshInterval = d
+		subscriptions, err := s.store.LoadSubscriptions()
+		if err != nil {
+			return domain.Settings{}, fmt.Errorf("load subscriptions: %w", err)
+		}
+		for idx := range subscriptions {
+			subscriptions[idx].RefreshInterval = d
+		}
+		if err := s.store.SaveSubscriptions(subscriptions); err != nil {
+			return domain.Settings{}, fmt.Errorf("save subscriptions: %w", err)
+		}
 	case "health-check-interval":
 		d, err := domain.ParseDurationValue(value)
 		if err != nil {
@@ -1510,6 +1722,7 @@ func (s *Service) fetchSubscriptionOnceWithClient(ctx context.Context, rawURL st
 		Metadata: subscriptionFetchMetadata{
 			ProviderName: decodeProfileTitle(resp.Header.Get(subscriptionProfileTitleKey)),
 			ExpiresAt:    parseSubscriptionExpiry(resp.Header),
+			Traffic:      parseSubscriptionTraffic(resp.Header),
 		},
 	}, false, nil
 }
@@ -1535,11 +1748,12 @@ func (s *Service) fetchSubscriptionMetadata(ctx context.Context, rawURL, userAge
 	return subscriptionFetchMetadata{
 		ProviderName: decodeProfileTitle(resp.Header.Get(subscriptionProfileTitleKey)),
 		ExpiresAt:    parseSubscriptionExpiry(resp.Header),
+		Traffic:      parseSubscriptionTraffic(resp.Header),
 	}, nil
 }
 
 func needsSubscriptionMetadataFallback(metadata subscriptionFetchMetadata) bool {
-	return metadata.ExpiresAt == nil
+	return metadata.ExpiresAt == nil || metadata.Traffic == nil
 }
 
 func mergeSubscriptionMetadata(primary, fallback subscriptionFetchMetadata) subscriptionFetchMetadata {
@@ -1549,39 +1763,83 @@ func mergeSubscriptionMetadata(primary, fallback subscriptionFetchMetadata) subs
 	if primary.ExpiresAt == nil {
 		primary.ExpiresAt = fallback.ExpiresAt
 	}
+	if primary.Traffic == nil {
+		primary.Traffic = fallback.Traffic
+	}
 	return primary
 }
 
 func parseSubscriptionExpiry(headers http.Header) *time.Time {
+	return parseSubscriptionUserinfo(headers).ExpiresAt
+}
+
+func parseSubscriptionTraffic(headers http.Header) *domain.SubscriptionTraffic {
+	return parseSubscriptionUserinfo(headers).Traffic
+}
+
+type parsedSubscriptionUserinfo struct {
+	ExpiresAt *time.Time
+	Traffic   *domain.SubscriptionTraffic
+}
+
+func parseSubscriptionUserinfo(headers http.Header) parsedSubscriptionUserinfo {
+	var result parsedSubscriptionUserinfo
+
 	for _, value := range []string{
 		headers.Get(subscriptionUserInfoKey),
 		headers.Get(subscriptionAltUserInfoKey),
 	} {
-		if parsed := parseSubscriptionUserinfoExpiry(value); parsed != nil {
-			return parsed
+		parsed := parseSubscriptionUserinfoValue(value)
+		if result.ExpiresAt == nil {
+			result.ExpiresAt = parsed.ExpiresAt
+		}
+		if result.Traffic == nil {
+			result.Traffic = parsed.Traffic
 		}
 	}
 
-	return nil
+	return result
 }
 
-func parseSubscriptionUserinfoExpiry(raw string) *time.Time {
+func parseSubscriptionUserinfoValue(raw string) parsedSubscriptionUserinfo {
+	var result parsedSubscriptionUserinfo
+	var traffic domain.SubscriptionTraffic
+	hasTraffic := false
+
 	for _, part := range strings.Split(raw, ";") {
 		key, value, ok := strings.Cut(strings.TrimSpace(part), "=")
-		if !ok || !strings.EqualFold(strings.TrimSpace(key), "expire") {
+		if !ok {
 			continue
 		}
 
-		seconds, err := strconv.ParseInt(strings.TrimSpace(value), 10, 64)
-		if err != nil || seconds <= 0 {
-			return nil
+		number, err := strconv.ParseInt(strings.TrimSpace(value), 10, 64)
+		if err != nil || number < 0 {
+			continue
 		}
 
-		expiresAt := time.Unix(seconds, 0).UTC()
-		return &expiresAt
+		switch strings.ToLower(strings.TrimSpace(key)) {
+		case "expire":
+			if number > 0 {
+				expiresAt := time.Unix(number, 0).UTC()
+				result.ExpiresAt = &expiresAt
+			}
+		case "upload":
+			traffic.UploadBytes = number
+			hasTraffic = true
+		case "download":
+			traffic.DownloadBytes = number
+			hasTraffic = true
+		case "total":
+			traffic.TotalBytes = number
+			hasTraffic = true
+		}
 	}
 
-	return nil
+	if hasTraffic {
+		result.Traffic = &traffic
+	}
+
+	return result
 }
 
 func isTransientSubscriptionStatus(code int) bool {
@@ -1641,6 +1899,27 @@ func cloneSubscriptionTransportWithTLSMaxVersion(base http.RoundTripper, maxVers
 
 	clone := transport.Clone()
 	clone.TLSClientConfig = cloneTLSConfigWithMaxVersion(clone.TLSClientConfig, maxVersion)
+	return clone, true
+}
+
+func cloneSubscriptionTransportWithProxy(base http.RoundTripper, proxyURL *url.URL) (*http.Transport, bool) {
+	if proxyURL == nil {
+		return nil, false
+	}
+
+	if base == nil {
+		transport := http.DefaultTransport.(*http.Transport).Clone()
+		transport.Proxy = http.ProxyURL(proxyURL)
+		return transport, true
+	}
+
+	transport, ok := base.(*http.Transport)
+	if !ok {
+		return nil, false
+	}
+
+	clone := transport.Clone()
+	clone.Proxy = http.ProxyURL(proxyURL)
 	return clone, true
 }
 
@@ -1887,24 +2166,51 @@ func (s *Service) subscriptionNode(subscriptionID, nodeID string) (domain.Subscr
 }
 
 func (s *Service) backendConfigRequest(settings domain.Settings, node domain.Node, mode domain.SelectionMode, socksPort, httpPort int, transparent bool) backend.ConfigRequest {
-	return backend.ConfigRequest{
-		Mode:                     mode,
-		Nodes:                    []domain.Node{node},
-		SelectedNodeID:           node.ID,
-		LogLevel:                 settings.LogLevel,
-		DNS:                      settings.DNS,
-		SOCKSPort:                socksPort,
-		HTTPPort:                 httpPort,
-		TransparentProxy:         transparent,
-		TransparentPort:          settings.Firewall.TransparentPort,
-		TransparentTargetMode:    domain.NormalizeFirewallTargetMode(settings.Firewall.TargetMode),
-		TransparentTargetDomains: domain.ExpandFirewallTargetDomains(settings.Firewall.TargetServiceCatalog, settings.Firewall.TargetServices, settings.Firewall.TargetDomains),
-		TransparentTargetCIDRs:   domain.ExpandFirewallTargetCIDRs(settings.Firewall.TargetServiceCatalog, settings.Firewall.TargetServices, settings.Firewall.TargetCIDRs),
+	req := backend.ConfigRequest{
+		Mode:                        mode,
+		Nodes:                       []domain.Node{node},
+		SelectedNodeID:              node.ID,
+		LogLevel:                    settings.LogLevel,
+		DNS:                         settings.DNS,
+		SOCKSPort:                   socksPort,
+		HTTPPort:                    httpPort,
+		TransparentProxy:            transparent,
+		TransparentSelectiveCapture: transparentSelectiveCapture(settings.Firewall),
+		TransparentBlockQUIC:        domain.EffectiveTransparentBlockQUIC(settings.Firewall, &node),
+		TransparentPort:             settings.Firewall.TransparentPort,
+	}
+
+	switch domain.NormalizeFirewallMode(settings.Firewall.Mode) {
+	case domain.FirewallModeTargets:
+		req.TransparentDefaultAction = domain.FirewallDefaultActionDirect
+		req.TransparentProxyDomains = domain.ExpandFirewallSelectorSetDomains(settings.Firewall.TargetServiceCatalog, settings.Firewall.Targets)
+		req.TransparentProxyCIDRs = domain.ExpandFirewallSelectorSetCIDRs(settings.Firewall.TargetServiceCatalog, settings.Firewall.Targets)
+	case domain.FirewallModeSplit:
+		req.TransparentDefaultAction = domain.NormalizeFirewallDefaultAction(settings.Firewall.Split.DefaultAction)
+		req.TransparentProxyDomains = domain.ExpandFirewallSelectorSetDomains(settings.Firewall.TargetServiceCatalog, settings.Firewall.Split.Proxy)
+		req.TransparentProxyCIDRs = domain.ExpandFirewallSelectorSetCIDRs(settings.Firewall.TargetServiceCatalog, settings.Firewall.Split.Proxy)
+		req.TransparentBypassDomains = domain.ExpandFirewallSelectorSetDomains(settings.Firewall.TargetServiceCatalog, settings.Firewall.Split.Bypass)
+		req.TransparentBypassCIDRs = domain.ExpandFirewallSelectorSetCIDRs(settings.Firewall.TargetServiceCatalog, settings.Firewall.Split.Bypass)
+	default:
+		req.TransparentDefaultAction = domain.FirewallDefaultActionProxy
+	}
+
+	return req
+}
+
+func transparentSelectiveCapture(settings domain.FirewallSettings) bool {
+	switch domain.CanonicalFirewallMode(settings) {
+	case domain.FirewallModeTargets:
+		return true
+	case domain.FirewallModeSplit:
+		return domain.NormalizeFirewallDefaultAction(settings.Split.DefaultAction) == domain.FirewallDefaultActionDirect
+	default:
+		return false
 	}
 }
 
 func firewallEnabled(settings domain.FirewallSettings) bool {
-	return settings.Enabled && (len(settings.TargetServices) > 0 || len(settings.TargetCIDRs) > 0 || len(settings.TargetDomains) > 0 || len(settings.SourceCIDRs) > 0)
+	return domain.FirewallRoutingEnabled(settings)
 }
 
 func pickFreeTCPPort() (int, error) {
@@ -1921,10 +2227,13 @@ func pickFreeTCPPort() (int, error) {
 	return addr.Port, nil
 }
 
-func (s *Service) applyNodeSelection(ctx context.Context, sub domain.Subscription, node domain.Node, mode domain.SelectionMode) error {
+func (s *Service) applyNodeSelection(ctx context.Context, sub domain.Subscription, node domain.Node, mode domain.SelectionMode, opts applyNodeSelectionOptions) error {
 	settings, err := s.store.LoadSettings()
 	if err != nil {
 		return fmt.Errorf("load settings: %w", err)
+	}
+	if err := s.ensureManagedIPv6State(ctx, settings); err != nil {
+		return err
 	}
 
 	resolvedNode, err := s.resolveNodeAddress(ctx, node)
@@ -1932,31 +2241,58 @@ func (s *Service) applyNodeSelection(ctx context.Context, sub domain.Subscriptio
 		return fmt.Errorf("resolve node address: %w", err)
 	}
 
+	var rollbackSnapshot backend.RollbackSnapshot
 	if s.backend != nil {
+		if opts.rollbackOnVerificationFail {
+			snapshot, err := s.backend.CaptureRollback()
+			if err != nil {
+				s.logWarn("capture runtime rollback failed", "subscription", sub.ID, "node", node.ID, "mode", mode, "error", err.Error())
+			} else if snapshot.Available {
+				rollbackSnapshot = snapshot
+				s.logInfo("candidate apply start", "subscription", sub.ID, "node", node.ID, "mode", mode)
+			} else {
+				s.logWarn("capture runtime rollback unavailable", "subscription", sub.ID, "node", node.ID, "mode", mode)
+			}
+		}
+
 		s.logInfo("apply backend config", "subscription", sub.ID, "node", node.ID, "mode", mode, "resolved_address", resolvedNode.Address)
 		if err := s.backend.ApplyConfig(ctx, s.backendConfigRequest(settings, resolvedNode, mode, 10808, 10809, firewallEnabled(settings.Firewall))); err != nil {
 			s.logWarn("apply backend config failed", "subscription", sub.ID, "node", node.ID, "mode", mode, "error", err.Error())
-			_ = s.markConnectionFailed(ctx, sub.ID, node.ID, mode, fmt.Sprintf("apply backend config: %v", err))
-			return fmt.Errorf("apply backend config: %w", err)
+			return s.handleNodeSelectionFailure(ctx, sub, node, mode, opts, fmt.Sprintf("apply backend config: %v", err), fmt.Errorf("apply backend config: %w", err))
 		}
-		if err := s.ensureBackendRunning(ctx, sub.ID, node.ID, mode); err != nil {
-			return err
+		if reason, err := s.ensureBackendRunning(ctx, sub.ID, node.ID, mode); err != nil {
+			return s.handlePostApplyVerificationFailure(ctx, sub, node, mode, opts, rollbackSnapshot, reason, err)
+		}
+		if reason, err := s.ensureBackendEgress(ctx, settings, sub.ID, node.ID, mode); err != nil {
+			return s.handlePostApplyVerificationFailure(ctx, sub, node, mode, opts, rollbackSnapshot, reason, err)
 		}
 	}
 
 	if s.firewall != nil {
-		if settings.Firewall.Enabled && (len(settings.Firewall.TargetServices) > 0 || len(settings.Firewall.TargetCIDRs) > 0 || len(settings.Firewall.TargetDomains) > 0 || len(settings.Firewall.SourceCIDRs) > 0) {
-			s.logInfo("apply firewall rules", "subscription", sub.ID, "node", node.ID, "target_services", settings.Firewall.TargetServices, "target_cidrs", settings.Firewall.TargetCIDRs, "target_domains", settings.Firewall.TargetDomains, "hosts", settings.Firewall.SourceCIDRs)
-			if err := s.firewall.Apply(ctx, settings.Firewall); err != nil {
+		if domain.FirewallRoutingEnabled(settings.Firewall) {
+			effectiveBlockQUIC := domain.EffectiveTransparentBlockQUIC(settings.Firewall, &resolvedNode)
+			runtimeFirewall := domain.CanonicalFirewallSettings(settings.Firewall)
+			runtimeFirewall.BlockQUIC = effectiveBlockQUIC
+			s.logInfo(
+				"apply firewall rules",
+				"subscription", sub.ID,
+				"node", node.ID,
+				"firewall_mode", settings.Firewall.Mode,
+				"targets", settings.Firewall.Targets,
+				"split_proxy", settings.Firewall.Split.Proxy,
+				"split_bypass", settings.Firewall.Split.Bypass,
+				"split_excluded_sources", settings.Firewall.Split.ExcludedSources,
+				"hosts", settings.Firewall.Hosts,
+				"effective_block_quic", effectiveBlockQUIC,
+			)
+			if err := s.firewall.Apply(ctx, runtimeFirewall); err != nil {
 				s.logWarn("apply firewall failed", "subscription", sub.ID, "node", node.ID, "error", err.Error())
-				_ = s.markConnectionFailed(ctx, sub.ID, node.ID, mode, fmt.Sprintf("apply firewall: %v", err))
-				return fmt.Errorf("apply firewall: %w", err)
+				return s.handleNodeSelectionFailure(ctx, sub, node, mode, opts, fmt.Sprintf("apply firewall: %v", err), fmt.Errorf("apply firewall: %w", err))
 			}
 			s.logInfo("firewall rules applied", "subscription", sub.ID, "node", node.ID)
 		} else if err := s.firewall.Disable(ctx); err != nil {
 			s.logWarn("disable firewall failed", "subscription", sub.ID, "node", node.ID, "error", err.Error())
-			_ = s.markConnectionFailed(ctx, sub.ID, node.ID, mode, fmt.Sprintf("disable firewall: %v", err))
-			return fmt.Errorf("disable firewall: %w", err)
+			return s.handleNodeSelectionFailure(ctx, sub, node, mode, opts, fmt.Sprintf("disable firewall: %v", err), fmt.Errorf("disable firewall: %w", err))
 		} else {
 			s.logInfo("firewall rules disabled", "subscription", sub.ID, "node", node.ID)
 		}
@@ -1980,6 +2316,61 @@ func (s *Service) applyNodeSelection(ctx context.Context, sub domain.Subscriptio
 	return nil
 }
 
+func selectionOptionsForState(state domain.RuntimeState) applyNodeSelectionOptions {
+	options := applyNodeSelectionOptions{persistFailure: true}
+	if state.Connected && strings.TrimSpace(state.ActiveSubscriptionID) != "" && strings.TrimSpace(state.ActiveNodeID) != "" {
+		options.rollbackOnVerificationFail = true
+		options.preservedState = state
+	}
+	return options
+}
+
+func (s *Service) handleNodeSelectionFailure(ctx context.Context, sub domain.Subscription, node domain.Node, mode domain.SelectionMode, opts applyNodeSelectionOptions, reason string, err error) error {
+	if !opts.persistFailure {
+		return err
+	}
+
+	if persistErr := s.markConnectionFailed(ctx, sub.ID, node.ID, mode, reason); persistErr != nil {
+		return fmt.Errorf("%s: %w", reason, persistErr)
+	}
+
+	return err
+}
+
+func (s *Service) handlePostApplyVerificationFailure(ctx context.Context, sub domain.Subscription, node domain.Node, mode domain.SelectionMode, opts applyNodeSelectionOptions, rollbackSnapshot backend.RollbackSnapshot, reason string, err error) error {
+	if opts.rollbackOnVerificationFail && rollbackSnapshot.Available {
+		recoveredReason := "candidate verify failed: " + reason
+		s.logWarn("candidate verify failed", "subscription", sub.ID, "node", node.ID, "mode", mode, "reason", reason)
+		if rollbackErr := s.backend.RollbackConfig(ctx, rollbackSnapshot); rollbackErr == nil {
+			s.logInfo("rollback succeeded", "subscription", sub.ID, "node", node.ID, "mode", mode)
+			if persistErr := s.persistPreservedConnection(opts.preservedState, recoveredReason); persistErr != nil {
+				return fmt.Errorf("%s: %w", recoveredReason, persistErr)
+			}
+			return errors.New(recoveredReason)
+		} else {
+			s.logWarn("rollback failed", "subscription", sub.ID, "node", node.ID, "mode", mode, "error", rollbackErr.Error())
+			reason = fmt.Sprintf("%s; rollback failed: %v", recoveredReason, rollbackErr)
+			err = errors.New(reason)
+		}
+	}
+
+	return s.handleNodeSelectionFailure(ctx, sub, node, mode, opts, reason, err)
+}
+
+func (s *Service) persistPreservedConnection(state domain.RuntimeState, reason string) error {
+	if strings.TrimSpace(state.ActiveSubscriptionID) == "" || strings.TrimSpace(state.ActiveNodeID) == "" {
+		return fmt.Errorf("preserved runtime state is incomplete")
+	}
+
+	state.Connected = true
+	state.LastFailureReason = reason
+	if err := s.saveState(state); err != nil {
+		return fmt.Errorf("save preserved state: %w", err)
+	}
+
+	return nil
+}
+
 func (s *Service) resolveNodeAddress(ctx context.Context, node domain.Node) (domain.Node, error) {
 	if net.ParseIP(strings.TrimSpace(node.Address)) != nil {
 		return node, nil
@@ -1994,11 +2385,15 @@ func (s *Service) resolveNodeAddress(ctx context.Context, node domain.Node) (dom
 		return node, nil
 	}
 
+	ipv4Addrs := make([]net.IP, 0, len(addrs))
 	for _, addr := range addrs {
 		if ipv4 := addr.IP.To4(); ipv4 != nil {
-			node.Address = ipv4.String()
-			return node, nil
+			ipv4Addrs = append(ipv4Addrs, ipv4)
 		}
+	}
+	if len(ipv4Addrs) > 0 {
+		node.Address = s.selectReachableResolvedIPv4(ctx, node, ipv4Addrs).String()
+		return node, nil
 	}
 	if len(addrs) == 0 {
 		s.logger.Debug("resolve node address returned no addresses", "host", node.Address)
@@ -2009,11 +2404,40 @@ func (s *Service) resolveNodeAddress(ctx context.Context, node domain.Node) (dom
 	return node, nil
 }
 
-func (s *Service) probeSubscription(ctx context.Context, sub domain.Subscription, health map[string]domain.NodeHealth) []probe.Result {
+func (s *Service) selectReachableResolvedIPv4(ctx context.Context, node domain.Node, candidates []net.IP) net.IP {
+	if len(candidates) == 0 {
+		return nil
+	}
+	if len(candidates) == 1 || s.dialContext == nil || s.nodeDialProbeTimeout <= 0 || node.Port <= 0 {
+		return candidates[0]
+	}
+
+	for _, candidate := range candidates {
+		probeCtx, cancel := context.WithTimeout(ctx, s.nodeDialProbeTimeout)
+		conn, err := s.dialContext(probeCtx, "tcp", net.JoinHostPort(candidate.String(), strconv.Itoa(node.Port)))
+		cancel()
+		if err != nil {
+			s.logger.Debug(
+				"resolved node endpoint probe failed",
+				"host", node.Address,
+				"candidate", candidate.String(),
+				"port", node.Port,
+				"error", err,
+			)
+			continue
+		}
+		_ = conn.Close()
+		return candidate
+	}
+
+	return candidates[0]
+}
+
+func (s *Service) probeSubscription(ctx context.Context, sub domain.Subscription, health map[string]domain.NodeHealth, failureThreshold int) []probe.Result {
 	results := make([]probe.Result, 0, len(sub.Nodes))
 	for _, node := range sub.Nodes {
 		result := s.checker.Check(ctx, node)
-		updated := probe.UpdateHealth(health[node.ID], result.Healthy, result.Latency, result.Checked, errString(result.Err))
+		updated := probe.UpdateHealth(health[node.ID], result.Healthy, result.Latency, result.Checked, errString(result.Err), failureThreshold)
 		updated.NodeID = node.ID
 		updated.Score = probe.CalculateScore(updated, probe.DefaultScoreConfig()).Score
 		health[node.ID] = updated
@@ -2392,23 +2816,23 @@ func (s *Service) reapplyCurrentConnection(ctx context.Context) error {
 		return fmt.Errorf("node %q not found in subscription %q", state.ActiveNodeID, state.ActiveSubscriptionID)
 	}
 
-	return s.applyNodeSelection(ctx, sub, node, state.Mode)
+	return s.applyNodeSelection(ctx, sub, node, state.Mode, applyNodeSelectionOptions{})
 }
 
-func (s *Service) ensureBackendRunning(ctx context.Context, subscriptionID, nodeID string, mode domain.SelectionMode) error {
+func (s *Service) ensureBackendRunning(ctx context.Context, subscriptionID, nodeID string, mode domain.SelectionMode) (string, error) {
 	if s.backend == nil {
-		return nil
+		return "", nil
 	}
 
 	status, err := s.waitForBackendRunning(ctx, subscriptionID, nodeID, mode)
 	if err != nil {
 		s.logWarn("backend status check failed", "subscription", subscriptionID, "node", nodeID, "mode", mode, "error", err.Error())
-		_ = s.markConnectionFailed(ctx, subscriptionID, nodeID, mode, fmt.Sprintf("backend status check failed: %v", err))
-		return fmt.Errorf("check backend status: %w", err)
+		reason := fmt.Sprintf("backend status check failed: %v", err)
+		return reason, fmt.Errorf("check backend status: %w", err)
 	}
 	if status.Running {
 		s.logInfo("backend running confirmed", "subscription", subscriptionID, "node", nodeID, "mode", mode, "service_state", status.ServiceState)
-		return nil
+		return "", nil
 	}
 
 	reason := "backend is not running"
@@ -2416,8 +2840,58 @@ func (s *Service) ensureBackendRunning(ctx context.Context, subscriptionID, node
 		reason = fmt.Sprintf("backend is not running (%s)", status.ServiceState)
 	}
 	s.logWarn("backend reported not running", "subscription", subscriptionID, "node", nodeID, "mode", mode, "service_state", status.ServiceState)
-	_ = s.markConnectionFailed(ctx, subscriptionID, nodeID, mode, reason)
-	return errors.New(reason)
+	return reason, errors.New(reason)
+}
+
+func (s *Service) ensureBackendEgress(ctx context.Context, settings domain.Settings, subscriptionID, nodeID string, mode domain.SelectionMode) (string, error) {
+	if s.backend == nil || s.backendEgressProbe == nil {
+		return "", nil
+	}
+
+	timeout := s.backendEgressTimeout
+	if timeout <= 0 {
+		timeout = backendEgressProbeTimeout
+	}
+
+	retryDelay := s.backendEgressRetryDelay
+	if retryDelay <= 0 {
+		retryDelay = backendEgressProbeRetryDelay
+	}
+
+	probeCtx, cancel := context.WithTimeout(ctx, timeout)
+	defer cancel()
+
+	attempt := 0
+	var lastErr error
+	for {
+		attempt++
+		err := s.backendEgressProbe(probeCtx)
+		if err == nil {
+			s.logInfo("backend egress confirmed", "subscription", subscriptionID, "node", nodeID, "mode", mode, "attempt", attempt)
+			return "", nil
+		}
+
+		lastErr = err
+		if probeCtx.Err() != nil {
+			break
+		}
+
+		s.logDebug("backend egress probe retry", "subscription", subscriptionID, "node", nodeID, "mode", mode, "attempt", attempt, "error", err.Error())
+		if err := sleepWithContext(probeCtx, retryDelay); err != nil {
+			break
+		}
+	}
+
+	if lastErr == nil {
+		lastErr = probeCtx.Err()
+	}
+
+	reason := fmt.Sprintf("backend egress probe failed: %v", lastErr)
+	s.logWarn("backend egress probe failed", "subscription", subscriptionID, "node", nodeID, "mode", mode, "attempts", attempt, "error", errString(lastErr))
+	if domain.FirewallRoutingEnabled(settings.Firewall) && s.firewall != nil {
+		s.logWarn("firewall fail-open scheduled after failed backend egress probe", "subscription", subscriptionID, "node", nodeID, "mode", mode)
+	}
+	return reason, fmt.Errorf("check backend egress: %w", lastErr)
 }
 
 func (s *Service) waitForBackendRunning(ctx context.Context, subscriptionID, nodeID string, mode domain.SelectionMode) (backend.RuntimeStatus, error) {
@@ -2457,6 +2931,58 @@ func (s *Service) waitForBackendRunning(ctx context.Context, subscriptionID, nod
 	return last, nil
 }
 
+func (s *Service) defaultBackendEgressProbe(ctx context.Context) error {
+	timeout := s.backendEgressTimeout
+	if timeout <= 0 {
+		timeout = backendEgressProbeTimeout
+	}
+
+	probeCtx, cancel := context.WithTimeout(ctx, timeout)
+	defer cancel()
+
+	proxyURL, err := url.Parse("http://127.0.0.1:10809")
+	if err != nil {
+		return err
+	}
+
+	client := ensureSubscriptionHTTPClient(s.httpClient)
+	transport, ok := cloneSubscriptionTransportWithProxy(client.Transport, proxyURL)
+	if !ok {
+		return fmt.Errorf("unsupported HTTP transport %T", client.Transport)
+	}
+
+	clientCopy := *client
+	clientCopy.Transport = transport
+	clientCopy.Timeout = timeout
+
+	var lastErr error
+	for _, rawURL := range backendEgressProbeURLs {
+		req, err := http.NewRequestWithContext(probeCtx, http.MethodGet, rawURL, nil)
+		if err != nil {
+			return err
+		}
+
+		resp, err := clientCopy.Do(req)
+		if err != nil {
+			lastErr = err
+			continue
+		}
+
+		_, _ = io.Copy(io.Discard, io.LimitReader(resp.Body, 1024))
+		_ = resp.Body.Close()
+		if resp.StatusCode >= http.StatusOK && resp.StatusCode < http.StatusInternalServerError {
+			return nil
+		}
+		lastErr = fmt.Errorf("%s returned status %d", rawURL, resp.StatusCode)
+	}
+
+	if lastErr == nil {
+		lastErr = errors.New("no egress probe endpoints configured")
+	}
+
+	return lastErr
+}
+
 func backendStateMayStillBeStarting(serviceState string) bool {
 	normalized := strings.ToLower(strings.TrimSpace(serviceState))
 	switch {
@@ -2485,6 +3011,39 @@ func sleepWithContext(ctx context.Context, d time.Duration) error {
 	case <-timer.C:
 		return nil
 	}
+}
+
+func (s *Service) ensureManagedIPv6State(ctx context.Context, settings domain.Settings) error {
+	if s == nil || s.ipv6Manager == nil || !settings.Firewall.DisableIPv6 {
+		return nil
+	}
+
+	if err := s.ipv6Manager.Apply(ctx, true); err != nil {
+		return fmt.Errorf("apply ipv6 setting: %w", err)
+	}
+
+	return nil
+}
+
+func (s *Service) touchRefreshAttempt(subscriptionID string, at time.Time) error {
+	if s == nil || s.store == nil || strings.TrimSpace(subscriptionID) == "" {
+		return nil
+	}
+
+	return runStoreWriteLocked(s, func() error {
+		state, err := s.store.LoadState()
+		if err != nil {
+			return fmt.Errorf("load state: %w", err)
+		}
+		if state.LastRefreshAt == nil {
+			state.LastRefreshAt = make(map[string]time.Time)
+		}
+		state.LastRefreshAt[subscriptionID] = at.UTC()
+		if err := s.saveState(state); err != nil {
+			return fmt.Errorf("save state: %w", err)
+		}
+		return nil
+	})
 }
 
 func (s *Service) markConnectionFailed(ctx context.Context, subscriptionID, nodeID string, mode domain.SelectionMode, reason string) error {
@@ -2525,25 +3084,13 @@ func (s *Service) persistRestoreFailure(ctx context.Context, reason string) erro
 		return fmt.Errorf("load state after restore failure: %w", err)
 	}
 
-	state.ActiveSubscriptionID = ""
-	state.ActiveNodeID = ""
-	state.Mode = domain.SelectionModeDisconnected
 	state.Connected = false
 	state.LastFailureReason = reason
 	if err := s.saveState(state); err != nil {
 		return fmt.Errorf("save state after restore failure: %w", err)
 	}
 
-	settings, err := s.store.LoadSettings()
-	if err == nil {
-		settings.AutoMode = false
-		settings.Mode = domain.SelectionModeDisconnected
-		if saveErr := s.store.SaveSettings(settings); saveErr != nil {
-			return fmt.Errorf("save settings after restore failure: %w", saveErr)
-		}
-	}
-
-	s.logWarn("restore failure persisted", "reason", reason)
+	s.logWarn("restore degraded", "reason", reason)
 	return nil
 }
 

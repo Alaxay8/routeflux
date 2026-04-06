@@ -37,7 +37,8 @@ func TestConnectManualLogsRuntimeEvents(t *testing.T) {
 		},
 	}
 	store.settings.Firewall.Enabled = true
-	store.settings.Firewall.TargetCIDRs = []string{"1.1.1.1"}
+	store.settings.Firewall.Mode = domain.FirewallModeTargets
+	store.settings.Firewall.Targets = domain.FirewallSelectorSet{CIDRs: []string{"1.1.1.1"}}
 
 	service := NewService(Dependencies{
 		Store:      store,
@@ -159,7 +160,7 @@ func TestRestoreRuntimeLogsFailure(t *testing.T) {
 	for _, want := range []string{
 		"restore runtime start",
 		"restore runtime failed",
-		"restore failure persisted",
+		"restore degraded",
 	} {
 		if !strings.Contains(logs.String(), want) {
 			t.Fatalf("expected logs to contain %q, got %q", want, logs.String())

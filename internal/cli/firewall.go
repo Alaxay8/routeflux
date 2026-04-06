@@ -21,7 +21,7 @@ Firewall controls which traffic RouteFlux redirects into the transparent proxy.
 Think of it like this:
 - mode answers "what do you want to match?"
 - targets means selected services, domains, or destination IPv4 targets go through RouteFlux
-- anti-target means selected services, domains, or destination IPv4 targets stay direct while everything else from LAN clients goes through RouteFlux
+- bypass means everything goes through RouteFlux except selected direct resources and excluded LAN devices
 - hosts means all traffic from selected LAN clients goes through RouteFlux
 `),
 		Example: strings.TrimSpace(`
@@ -31,10 +31,12 @@ routeflux firewall set hosts 192.168.1.150
 routeflux firewall set hosts 192.168.1.0/24
 routeflux firewall set hosts all
 routeflux firewall set targets youtube instagram 1.1.1.1
-routeflux firewall set anti-target gosuslugi.ru sberbank.ru
+routeflux firewall set bypass gosuslugi.ru --exclude-host 192.168.1.50
+routeflux firewall set split --proxy youtube --bypass gosuslugi.ru --exclude-host 192.168.1.50
 routeflux firewall set port 12345
 routeflux firewall set block-quic true
 routeflux firewall draft targets youtube instagram
+routeflux firewall draft bypass gosuslugi.ru --exclude-host 192.168.1.50
 routeflux firewall draft hosts all
 routeflux firewall disable
 `),
@@ -90,13 +92,19 @@ Firewall modes:
   Use gemini-mobile or notebooklm-mobile for the Android or iOS apps when the web preset is too narrow.
   Gemini and NotebookLM mobile presets are broader and still best-effort because Google apps can use extra shared infrastructure and direct IPv4 endpoints.
   Command: routeflux firewall set targets youtube telegram discord 1.1.1.1
-- anti-target: Send all other LAN traffic through RouteFlux, but keep selected services, domains, or destination IPv4 targets direct.
-  Example: routeflux firewall set anti-target gosuslugi.ru sberbank.ru means "everything except those resources".
-  This mode is best for LAN clients and does not redirect router-originated traffic.
-  Command: routeflux firewall set anti-target gosuslugi.ru sberbank.ru
+- bypass: Send all other traffic through RouteFlux while keeping selected resources direct and optionally excluding whole LAN devices.
+  Example: routeflux firewall set bypass gosuslugi.ru vk.com --exclude-host 192.168.1.50.
+  Bypass selectors use the same parser as targets. Excluded devices accept IPv4, CIDR, ranges, or all.
+  Command: routeflux firewall set bypass gosuslugi.ru vk.com --exclude-host 192.168.1.50
 - hosts: Send all traffic from selected LAN devices through RouteFlux.
   Example: route one TV, phone, or laptop through the proxy.
   Command: routeflux firewall set hosts 192.168.1.150
+
+Legacy compatibility:
+- anti-target: deprecated alias for bypass.
+  Command: routeflux firewall set anti-target gosuslugi.ru sberbank.ru
+- split: advanced CLI-only mode for explicit proxy, bypass, and excluded-device lists.
+  Command: routeflux firewall set split --proxy youtube --bypass gosuslugi.ru --exclude-host 192.168.1.50
 
 Hosts selectors:
 - one device: 192.168.1.150
@@ -106,7 +114,8 @@ Hosts selectors:
 
 Other options:
 - port: port used for transparent redirect
-- block-quic: legacy compatibility flag for older TCP-only setups; current LAN transparent routing already intercepts QUIC directly
+- block-quic: when true, RouteFlux blocks proxied QUIC/UDP traffic so clients fall back to TCP; when false, QUIC is proxied normally
+- ipv6: when disabled in RouteFlux, the router turns off IPv6 because transparent routing is IPv4-only and otherwise IPv6 can bypass the proxy
 `, firewallPresetSummary())))
 		},
 	}
@@ -118,6 +127,9 @@ func firewallPresetSummary() string {
 
 func newFirewallSetCmd(opts *rootOptions) *cobra.Command {
 	var port int
+	var splitProxy []string
+	var splitBypass []string
+	var splitExcludedHosts []string
 
 	cmd := &cobra.Command{
 		Use:   "set <option> <value...>",
@@ -125,14 +137,13 @@ func newFirewallSetCmd(opts *rootOptions) *cobra.Command {
 		Long: strings.TrimSpace(`
 Firewall options:
 - targets: selected service presets, domains, IPv4 addresses, CIDRs, or ranges
-- anti-target: selected service presets, domains, IPv4 addresses, CIDRs, or ranges that should bypass the proxy
+- bypass: proxy everything except selected direct resources and excluded devices
+- split: advanced CLI-only explicit proxy, bypass, and excluded-device lists
+- anti-target: deprecated alias for bypass
 - hosts: LAN clients whose traffic should go through RouteFlux
 - port: transparent redirect port
 - block-quic: true or false
-
-Legacy compatibility:
-- routeflux firewall set youtube.com 1.1.1.1 8.8.8.8/32
-  still works and is treated as routeflux firewall set targets ...
+- ipv6: disable or enable router IPv6 handling managed by RouteFlux
 `),
 		Example: strings.TrimSpace(`
 routeflux firewall set hosts 192.168.1.150
@@ -140,9 +151,12 @@ routeflux firewall set hosts 192.168.1.0/24
 routeflux firewall set hosts 192.168.1.150-192.168.1.159
 routeflux firewall set hosts all
 routeflux firewall set targets youtube instagram 1.1.1.1
+routeflux firewall set bypass gosuslugi.ru --exclude-host 192.168.1.50
+routeflux firewall set split --proxy youtube --bypass gosuslugi.ru --exclude-host 192.168.1.50
 routeflux firewall set anti-target gosuslugi.ru sberbank.ru
 routeflux firewall set port 12345
 routeflux firewall set block-quic true
+routeflux firewall set ipv6 disable
 routeflux firewall set youtube.com 1.1.1.1
 `),
 		Args: cobra.MinimumNArgs(1),
@@ -167,7 +181,44 @@ routeflux firewall set youtube.com 1.1.1.1
 				if err != nil {
 					return err
 				}
-				return printOutput(cmd, opts.jsonOutput, updated, fmt.Sprintf("Firewall targets set to %s", firewallTargetsSummary(updated)))
+				return printOutput(cmd, opts.jsonOutput, updated, fmt.Sprintf("Firewall targets set to %s", firewallSelectorSummary(updated.Targets)))
+			case "split":
+				settings, err := opts.service.GetFirewallSettings()
+				if err != nil {
+					return err
+				}
+				targetPort := settings.TransparentPort
+				if cmd.Flags().Changed("port") {
+					targetPort = port
+				}
+
+				if len(values) > 0 {
+					return fmt.Errorf("firewall split uses --proxy, --bypass, and --exclude-host flags instead of positional selectors")
+				}
+
+				updated, err := opts.service.ConfigureFirewallSplit(context.Background(), splitProxy, splitBypass, splitExcludedHosts, true, targetPort)
+				if err != nil {
+					return err
+				}
+				return printOutput(cmd, opts.jsonOutput, updated, fmt.Sprintf("Firewall split set to %s", firewallSplitSummary(updated.Split)))
+			case "bypass":
+				settings, err := opts.service.GetFirewallSettings()
+				if err != nil {
+					return err
+				}
+				targetPort := settings.TransparentPort
+				if cmd.Flags().Changed("port") {
+					targetPort = port
+				}
+				if len(splitProxy) > 0 || len(splitBypass) > 0 {
+					return fmt.Errorf("firewall bypass uses positional selectors and --exclude-host instead of --proxy or --bypass")
+				}
+
+				updated, err := opts.service.ConfigureFirewallBypass(context.Background(), values, splitExcludedHosts, true, targetPort)
+				if err != nil {
+					return err
+				}
+				return printOutput(cmd, opts.jsonOutput, updated, fmt.Sprintf("Firewall bypass set to %s", firewallBypassSummary(updated.Split)))
 			case "anti-target":
 				settings, err := opts.service.GetFirewallSettings()
 				if err != nil {
@@ -182,7 +233,7 @@ routeflux firewall set youtube.com 1.1.1.1
 				if err != nil {
 					return err
 				}
-				return printOutput(cmd, opts.jsonOutput, updated, fmt.Sprintf("Firewall anti-targets set to %s", firewallTargetsSummary(updated)))
+				return printOutput(cmd, opts.jsonOutput, updated, fmt.Sprintf("Firewall anti-targets set to %s (deprecated: use routeflux firewall set bypass ...)", firewallSelectorSummary(updated.Split.Bypass)))
 			case "hosts":
 				settings, err := opts.service.GetFirewallSettings()
 				if err != nil {
@@ -197,7 +248,7 @@ routeflux firewall set youtube.com 1.1.1.1
 				if err != nil {
 					return err
 				}
-				return printOutput(cmd, opts.jsonOutput, updated, fmt.Sprintf("Firewall hosts set to %s", strings.Join(updated.SourceCIDRs, ", ")))
+				return printOutput(cmd, opts.jsonOutput, updated, fmt.Sprintf("Firewall hosts set to %s", strings.Join(updated.Hosts, ", ")))
 			case "port":
 				if len(values) != 1 {
 					return fmt.Errorf("firewall port expects exactly one value")
@@ -224,6 +275,23 @@ routeflux firewall set youtube.com 1.1.1.1
 					return err
 				}
 				return printOutput(cmd, opts.jsonOutput, updated, fmt.Sprintf("Firewall block-quic set to %t", updated.BlockQUIC))
+			case "ipv6":
+				if len(values) != 1 {
+					return fmt.Errorf("firewall ipv6 expects exactly one value")
+				}
+				disabled, err := parseFirewallIPv6State(values[0])
+				if err != nil {
+					return err
+				}
+				updated, err := opts.service.UpdateFirewallDisableIPv6(context.Background(), disabled)
+				if err != nil {
+					return err
+				}
+				stateLabel := "enabled"
+				if updated.DisableIPv6 {
+					stateLabel = "disabled"
+				}
+				return printOutput(cmd, opts.jsonOutput, updated, fmt.Sprintf("Firewall IPv6 protection set to %s", stateLabel))
 			default:
 				return fmt.Errorf("unsupported firewall option %q", option)
 			}
@@ -231,29 +299,35 @@ routeflux firewall set youtube.com 1.1.1.1
 	}
 
 	cmd.Flags().IntVar(&port, "port", 0, "Override transparent redirect port for hosts or targets")
+	cmd.Flags().StringSliceVar(&splitProxy, "proxy", nil, "Split selectors that should go through RouteFlux")
+	cmd.Flags().StringSliceVar(&splitBypass, "bypass", nil, "Split selectors that should stay direct")
+	cmd.Flags().StringSliceVar(&splitExcludedHosts, "exclude-host", nil, "LAN hosts that should never be intercepted by bypass or split mode")
 	return cmd
 }
 
 func newFirewallDraftCmd(opts *rootOptions) *cobra.Command {
-	return &cobra.Command{
-		Use:   "draft <hosts|targets|anti-target> [selector...]",
+	var splitProxy []string
+	var splitBypass []string
+	var splitExcludedHosts []string
+
+	cmd := &cobra.Command{
+		Use:   "draft <hosts|targets|bypass|split> [selector...]",
 		Short: "Store or clear saved LuCI selectors for one firewall mode",
 		Long: strings.TrimSpace(`
 Draft slots are saved selector sets for the LuCI Firewall page.
 
 - routeflux firewall draft targets youtube instagram stores the targets draft
 - routeflux firewall draft hosts all stores the hosts draft
-- routeflux firewall draft anti-target gosuslugi.ru stores the anti-target draft
+- routeflux firewall draft bypass gosuslugi.ru --exclude-host 192.168.1.50 stores the bypass draft
+- routeflux firewall draft split --proxy youtube --bypass gosuslugi.ru stores the split draft
 - routeflux firewall draft targets clears the targets draft
 `),
 		Args: cobra.MinimumNArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			mode := strings.TrimSpace(strings.ToLower(args[0]))
-			if mode == "anti-targets" {
-				mode = "anti-target"
-			}
+			hasSplitDraftValues := len(splitProxy) > 0 || len(splitBypass) > 0 || len(splitExcludedHosts) > 0
 
-			if len(args) == 1 {
+			if mode != "split" && mode != "bypass" && len(args) == 1 {
 				settings, err := opts.service.ClearFirewallModeDraft(context.Background(), mode)
 				if err != nil {
 					return err
@@ -261,13 +335,42 @@ Draft slots are saved selector sets for the LuCI Firewall page.
 				return printOutput(cmd, opts.jsonOutput, settings, fmt.Sprintf("Firewall draft %s cleared", mode))
 			}
 
-			settings, err := opts.service.UpdateFirewallModeDraft(context.Background(), mode, args[1:])
+			var (
+				settings domain.FirewallSettings
+				err      error
+			)
+			if mode == "split" {
+				if len(args) > 1 {
+					return fmt.Errorf("firewall draft split uses --proxy, --bypass, and --exclude-host flags instead of positional selectors")
+				}
+				if !hasSplitDraftValues {
+					settings, err = opts.service.ClearFirewallModeDraft(context.Background(), mode)
+				} else {
+					settings, err = opts.service.UpdateFirewallSplitDraft(context.Background(), splitProxy, splitBypass, splitExcludedHosts)
+				}
+			} else if mode == "bypass" {
+				if len(splitProxy) > 0 || len(splitBypass) > 0 {
+					return fmt.Errorf("firewall draft bypass uses positional selectors and --exclude-host instead of --proxy or --bypass")
+				}
+				if len(args) == 1 && !hasSplitDraftValues {
+					settings, err = opts.service.ClearFirewallModeDraft(context.Background(), mode)
+				} else {
+					settings, err = opts.service.UpdateFirewallBypassDraft(context.Background(), args[1:], splitExcludedHosts)
+				}
+			} else {
+				settings, err = opts.service.UpdateFirewallModeDraft(context.Background(), mode, args[1:])
+			}
 			if err != nil {
 				return err
 			}
 			return printOutput(cmd, opts.jsonOutput, settings, fmt.Sprintf("Firewall draft %s updated", mode))
 		},
 	}
+
+	cmd.Flags().StringSliceVar(&splitProxy, "proxy", nil, "Split draft selectors that should go through RouteFlux")
+	cmd.Flags().StringSliceVar(&splitBypass, "bypass", nil, "Split draft selectors that should stay direct")
+	cmd.Flags().StringSliceVar(&splitExcludedHosts, "exclude-host", nil, "Bypass or split draft LAN hosts that should never be intercepted")
+	return cmd
 }
 
 func newFirewallHostCmd(opts *rootOptions) *cobra.Command {
@@ -309,7 +412,7 @@ routeflux firewall host *
 				return err
 			}
 
-			return printOutput(cmd, opts.jsonOutput, updated, fmt.Sprintf("Host routing enabled for %s", strings.Join(updated.SourceCIDRs, ", ")))
+			return printOutput(cmd, opts.jsonOutput, updated, fmt.Sprintf("Host routing enabled for %s", strings.Join(updated.Hosts, ", ")))
 		},
 	}
 
@@ -338,7 +441,7 @@ func parseFirewallSetArgs(args []string) (string, []string, error) {
 	}
 
 	switch strings.TrimSpace(strings.ToLower(args[0])) {
-	case "targets", "anti-target", "anti-targets", "hosts", "port", "block-quic":
+	case "targets", "bypass", "anti-target", "anti-targets", "hosts", "port", "block-quic", "ipv6":
 		if len(args) < 2 {
 			return "", nil, fmt.Errorf("firewall %s expects at least one value", args[0])
 		}
@@ -347,42 +450,55 @@ func parseFirewallSetArgs(args []string) (string, []string, error) {
 			option = "anti-target"
 		}
 		return option, args[1:], nil
+	case "split":
+		return "split", args[1:], nil
 	default:
 		return "targets", args, nil
 	}
 }
 
 func renderFirewallSettingsText(settings domain.FirewallSettings) string {
-	return strings.Join([]string{
+	lines := []string{
 		fmt.Sprintf("enabled=%t", settings.Enabled),
 		fmt.Sprintf("mode=%s", firewallMode(settings)),
 		fmt.Sprintf("mode-help=%s", firewallModeHelp(settings)),
 		fmt.Sprintf("transparent-port=%d", settings.TransparentPort),
-		fmt.Sprintf("target-mode=%s", domain.NormalizeFirewallTargetMode(settings.TargetMode)),
-		fmt.Sprintf("targets=%s", firewallTargetsSummary(settings)),
-		fmt.Sprintf("target-services=%s", strings.Join(settings.TargetServices, ", ")),
-		fmt.Sprintf("target-domains=%s", strings.Join(settings.TargetDomains, ", ")),
-		fmt.Sprintf("target-ips=%s", strings.Join(settings.TargetCIDRs, ", ")),
-		fmt.Sprintf("hosts=%s", strings.Join(settings.SourceCIDRs, ", ")),
+		fmt.Sprintf("default-action=%s", domain.NormalizeFirewallDefaultAction(settings.Split.DefaultAction)),
+		fmt.Sprintf("targets=%s", firewallSelectorSummary(settings.Targets)),
+		fmt.Sprintf("target-services=%s", strings.Join(settings.Targets.Services, ", ")),
+		fmt.Sprintf("target-domains=%s", strings.Join(settings.Targets.Domains, ", ")),
+		fmt.Sprintf("target-ips=%s", strings.Join(settings.Targets.CIDRs, ", ")),
+		fmt.Sprintf("split-proxy=%s", firewallSelectorSummary(settings.Split.Proxy)),
+		fmt.Sprintf("split-bypass=%s", firewallSelectorSummary(settings.Split.Bypass)),
+		fmt.Sprintf("split-excluded-sources=%s", strings.Join(settings.Split.ExcludedSources, ", ")),
+		fmt.Sprintf("hosts=%s", strings.Join(settings.Hosts, ", ")),
 		fmt.Sprintf("block-quic=%t", settings.BlockQUIC),
-	}, "\n")
+		fmt.Sprintf("disable-ipv6=%t", settings.DisableIPv6),
+	}
+	return strings.Join(lines, "\n")
+}
+
+func parseFirewallIPv6State(raw string) (bool, error) {
+	switch strings.ToLower(strings.TrimSpace(raw)) {
+	case "disable", "disabled", "off", "true", "1":
+		return true, nil
+	case "enable", "enabled", "on", "false", "0":
+		return false, nil
+	default:
+		return false, fmt.Errorf("unsupported firewall ipv6 value %q: use disable or enable", raw)
+	}
 }
 
 func firewallMode(settings domain.FirewallSettings) string {
-	targetMode := domain.NormalizeFirewallTargetMode(settings.TargetMode)
-	switch {
-	case !settings.Enabled || (len(settings.TargetServices) == 0 && len(settings.TargetCIDRs) == 0 && len(settings.TargetDomains) == 0 && len(settings.SourceCIDRs) == 0):
+	if !settings.Enabled {
 		return "disabled"
-	case (len(settings.TargetServices) > 0 || len(settings.TargetCIDRs) > 0 || len(settings.TargetDomains) > 0) && len(settings.SourceCIDRs) == 0:
-		if targetMode == domain.FirewallTargetModeBypass {
-			return "anti-target"
-		}
-		return "targets"
-	case len(settings.SourceCIDRs) > 0 && len(settings.TargetServices) == 0 && len(settings.TargetCIDRs) == 0 && len(settings.TargetDomains) == 0:
-		return "hosts"
-	default:
-		return "mixed"
 	}
+
+	if firewallLooksLikeBypass(settings) {
+		return "bypass"
+	}
+
+	return string(domain.NormalizeFirewallMode(settings.Mode))
 }
 
 func firewallModeHelp(settings domain.FirewallSettings) string {
@@ -391,19 +507,59 @@ func firewallModeHelp(settings domain.FirewallSettings) string {
 		return "No traffic is being redirected through RouteFlux."
 	case "targets":
 		return "Only traffic to selected services, domains, or destination IPv4 targets goes through RouteFlux."
-	case "anti-target":
-		return "Selected services, domains, or destination IPv4 targets stay direct while all other LAN traffic goes through RouteFlux."
+	case "bypass":
+		return "All traffic goes through RouteFlux except selected direct resources and excluded LAN devices."
+	case "split":
+		return "Advanced split tunnelling uses explicit proxy, bypass, and excluded-device lists."
 	case "hosts":
 		return "All traffic from selected LAN devices goes through RouteFlux."
 	default:
-		return "Both destination targets and source hosts are active."
+		return "No traffic is being redirected through RouteFlux."
 	}
 }
 
-func firewallTargetsSummary(settings domain.FirewallSettings) string {
-	values := make([]string, 0, len(settings.TargetServices)+len(settings.TargetDomains)+len(settings.TargetCIDRs))
-	values = append(values, settings.TargetServices...)
-	values = append(values, settings.TargetDomains...)
-	values = append(values, settings.TargetCIDRs...)
+func firewallSelectorSummary(selectors domain.FirewallSelectorSet) string {
+	values := make([]string, 0, len(selectors.Services)+len(selectors.Domains)+len(selectors.CIDRs))
+	values = append(values, selectors.Services...)
+	values = append(values, selectors.Domains...)
+	values = append(values, selectors.CIDRs...)
 	return strings.Join(values, ", ")
+}
+
+func firewallSplitSummary(split domain.FirewallSplitSettings) string {
+	parts := make([]string, 0, 4)
+	if summary := firewallSelectorSummary(split.Proxy); summary != "" {
+		parts = append(parts, fmt.Sprintf("proxy=[%s]", summary))
+	}
+	if summary := firewallSelectorSummary(split.Bypass); summary != "" {
+		parts = append(parts, fmt.Sprintf("bypass=[%s]", summary))
+	}
+	if len(split.ExcludedSources) > 0 {
+		parts = append(parts, fmt.Sprintf("excluded=[%s]", strings.Join(split.ExcludedSources, ", ")))
+	}
+	parts = append(parts, fmt.Sprintf("default-action=%s", domain.NormalizeFirewallDefaultAction(split.DefaultAction)))
+	return strings.Join(parts, "; ")
+}
+
+func firewallBypassSummary(split domain.FirewallSplitSettings) string {
+	parts := make([]string, 0, 3)
+	if summary := firewallSelectorSummary(split.Bypass); summary != "" {
+		parts = append(parts, fmt.Sprintf("bypass=[%s]", summary))
+	}
+	if len(split.ExcludedSources) > 0 {
+		parts = append(parts, fmt.Sprintf("excluded=[%s]", strings.Join(split.ExcludedSources, ", ")))
+	}
+	parts = append(parts, fmt.Sprintf("default-action=%s", domain.NormalizeFirewallDefaultAction(split.DefaultAction)))
+	return strings.Join(parts, "; ")
+}
+
+func firewallLooksLikeBypass(settings domain.FirewallSettings) bool {
+	if !settings.Enabled {
+		return false
+	}
+	if domain.CanonicalFirewallMode(settings) != domain.FirewallModeSplit {
+		return false
+	}
+	return domain.NormalizeFirewallDefaultAction(settings.Split.DefaultAction) == domain.FirewallDefaultActionProxy &&
+		!domain.FirewallSelectorSetHasEntries(settings.Split.Proxy)
 }

@@ -31,7 +31,7 @@ func newSettingsCmd(opts *rootOptions) *cobra.Command {
 				}
 
 				text := fmt.Sprintf(
-					"refresh-interval=%s\nhealth-check-interval=%s\nswitch-cooldown=%s\nlatency-threshold=%s\nauto-mode=%t\nmode=%s\nlog-level=%s\nfirewall-enabled=%t\nfirewall-port=%d\nfirewall-target-mode=%s\nfirewall-targets=%s\nfirewall-target-services=%s\nfirewall-target-domains=%s\nfirewall-target-cidrs=%s\nfirewall-hosts=%s\nfirewall-block-quic=%t",
+					"refresh-interval=%s\nhealth-check-interval=%s\nswitch-cooldown=%s\nlatency-threshold=%s\nauto-mode=%t\nmode=%s\nlog-level=%s\nfirewall-enabled=%t\nfirewall-mode=%s\nfirewall-port=%d\nfirewall-default-action=%s\nfirewall-targets=%s\nfirewall-target-services=%s\nfirewall-target-domains=%s\nfirewall-target-cidrs=%s\nfirewall-split-proxy=%s\nfirewall-split-bypass=%s\nfirewall-split-excluded-sources=%s\nfirewall-hosts=%s\nfirewall-block-quic=%t\nfirewall-disable-ipv6=%t",
 					settings.RefreshInterval,
 					settings.HealthCheckInterval,
 					settings.SwitchCooldown,
@@ -40,14 +40,19 @@ func newSettingsCmd(opts *rootOptions) *cobra.Command {
 					settings.Mode,
 					settings.LogLevel,
 					settings.Firewall.Enabled,
+					domain.NormalizeFirewallMode(settings.Firewall.Mode),
 					settings.Firewall.TransparentPort,
-					domain.NormalizeFirewallTargetMode(settings.Firewall.TargetMode),
-					firewallTargetsSummary(settings.Firewall),
-					strings.Join(settings.Firewall.TargetServices, ", "),
-					strings.Join(settings.Firewall.TargetDomains, ", "),
-					strings.Join(settings.Firewall.TargetCIDRs, ", "),
-					strings.Join(settings.Firewall.SourceCIDRs, ", "),
+					domain.NormalizeFirewallDefaultAction(settings.Firewall.Split.DefaultAction),
+					firewallSelectorSummary(settings.Firewall.Targets),
+					strings.Join(settings.Firewall.Targets.Services, ", "),
+					strings.Join(settings.Firewall.Targets.Domains, ", "),
+					strings.Join(settings.Firewall.Targets.CIDRs, ", "),
+					firewallSelectorSummary(settings.Firewall.Split.Proxy),
+					firewallSelectorSummary(settings.Firewall.Split.Bypass),
+					strings.Join(settings.Firewall.Split.ExcludedSources, ", "),
+					strings.Join(settings.Firewall.Hosts, ", "),
 					settings.Firewall.BlockQUIC,
+					settings.Firewall.DisableIPv6,
 				)
 				return printOutput(cmd, false, nil, text)
 			},

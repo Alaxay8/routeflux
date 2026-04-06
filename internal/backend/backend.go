@@ -8,18 +8,28 @@ import (
 
 // ConfigRequest defines the inputs required to build a backend config.
 type ConfigRequest struct {
-	Mode                     domain.SelectionMode
-	Nodes                    []domain.Node
-	SelectedNodeID           string
-	LogLevel                 string
-	DNS                      domain.DNSSettings
-	SOCKSPort                int
-	HTTPPort                 int
-	TransparentProxy         bool
-	TransparentPort          int
-	TransparentTargetMode    domain.FirewallTargetMode
-	TransparentTargetDomains []string
-	TransparentTargetCIDRs   []string
+	Mode                        domain.SelectionMode
+	Nodes                       []domain.Node
+	SelectedNodeID              string
+	LogLevel                    string
+	DNS                         domain.DNSSettings
+	SOCKSPort                   int
+	HTTPPort                    int
+	TransparentProxy            bool
+	TransparentSelectiveCapture bool
+	TransparentBlockQUIC        bool
+	TransparentPort             int
+	TransparentDefaultAction    domain.FirewallDefaultAction
+	TransparentProxyDomains     []string
+	TransparentProxyCIDRs       []string
+	TransparentBypassDomains    []string
+	TransparentBypassCIDRs      []string
+}
+
+// RollbackSnapshot stores an opaque backend-specific runtime snapshot.
+type RollbackSnapshot struct {
+	Available bool
+	Config    []byte
 }
 
 // RuntimeStatus describes backend runtime state.
@@ -41,6 +51,8 @@ type ServiceController interface {
 type Backend interface {
 	GenerateConfig(req ConfigRequest) ([]byte, error)
 	ApplyConfig(ctx context.Context, req ConfigRequest) error
+	CaptureRollback() (RollbackSnapshot, error)
+	RollbackConfig(ctx context.Context, snapshot RollbackSnapshot) error
 	Start(ctx context.Context) error
 	Stop(ctx context.Context) error
 	Reload(ctx context.Context) error

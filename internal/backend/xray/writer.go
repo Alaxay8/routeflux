@@ -108,6 +108,39 @@ func (b RuntimeBackend) ApplyConfig(ctx context.Context, req backend.ConfigReque
 	return nil
 }
 
+// CaptureRollback returns the last-known-good config available before a runtime switch.
+func (b RuntimeBackend) CaptureRollback() (backend.RollbackSnapshot, error) {
+	data, hasRollback, err := b.rollbackData()
+	if err != nil {
+		return backend.RollbackSnapshot{}, err
+	}
+	if !hasRollback {
+		return backend.RollbackSnapshot{}, nil
+	}
+
+	return backend.RollbackSnapshot{
+		Available: true,
+		Config:    append([]byte(nil), data...),
+	}, nil
+}
+
+// RollbackConfig restores a previously captured runtime snapshot.
+func (b RuntimeBackend) RollbackConfig(ctx context.Context, snapshot backend.RollbackSnapshot) error {
+	if !snapshot.Available {
+		return errors.New("xray rollback snapshot is unavailable")
+	}
+	if err := writeRawConfig(b.writer.Path, snapshot.Config); err != nil {
+		return fmt.Errorf("restore xray config: %w", err)
+	}
+	if b.controller == nil {
+		return nil
+	}
+	if err := b.controller.Reload(ctx); err != nil {
+		return fmt.Errorf("reload xray service: %w", err)
+	}
+	return nil
+}
+
 // Start starts the Xray runtime.
 func (b RuntimeBackend) Start(ctx context.Context) error {
 	if b.controller == nil {

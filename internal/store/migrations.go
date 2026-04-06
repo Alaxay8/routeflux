@@ -23,6 +23,19 @@ func decodeSettings(data []byte, path string) (domain.Settings, error) {
 		DirectDomains *[]string            `json:"direct_domains"`
 	}
 
+	type rawFirewallSelectorSet struct {
+		Services *[]string `json:"services"`
+		Domains  *[]string `json:"domains"`
+		CIDRs    *[]string `json:"cidrs"`
+	}
+
+	type rawFirewallSplitSettings struct {
+		Proxy           *rawFirewallSelectorSet       `json:"proxy"`
+		Bypass          *rawFirewallSelectorSet       `json:"bypass"`
+		ExcludedSources *[]string                     `json:"excluded_sources"`
+		DefaultAction   *domain.FirewallDefaultAction `json:"default_action"`
+	}
+
 	type rawFirewallModeDraft struct {
 		TargetServices *[]string `json:"target_services"`
 		TargetCIDRs    *[]string `json:"target_cidrs"`
@@ -30,23 +43,35 @@ func decodeSettings(data []byte, path string) (domain.Settings, error) {
 		SourceCIDRs    *[]string `json:"source_cidrs"`
 	}
 
+	type rawFirewallSplitDraft struct {
+		Proxy           *rawFirewallSelectorSet `json:"proxy"`
+		Bypass          *rawFirewallSelectorSet `json:"bypass"`
+		ExcludedSources *[]string               `json:"excluded_sources"`
+	}
+
 	type rawFirewallModeDrafts struct {
-		Hosts      *rawFirewallModeDraft `json:"hosts"`
-		Targets    *rawFirewallModeDraft `json:"targets"`
-		AntiTarget *rawFirewallModeDraft `json:"anti_target"`
+		Hosts      *rawFirewallModeDraft  `json:"hosts"`
+		Targets    *rawFirewallModeDraft  `json:"targets"`
+		Split      *rawFirewallSplitDraft `json:"split"`
+		AntiTarget *rawFirewallModeDraft  `json:"anti_target"`
 	}
 
 	type rawFirewallSettings struct {
 		Enabled              *bool                                       `json:"enabled"`
 		TransparentPort      *int                                        `json:"transparent_port"`
-		TargetMode           *domain.FirewallTargetMode                  `json:"target_mode"`
-		TargetServices       *[]string                                   `json:"target_services"`
+		Mode                 *domain.FirewallMode                        `json:"mode"`
+		DisableIPv6          *bool                                       `json:"disable_ipv6"`
+		Hosts                *[]string                                   `json:"hosts"`
+		Targets              *rawFirewallSelectorSet                     `json:"targets"`
+		Split                *rawFirewallSplitSettings                   `json:"split"`
 		TargetServiceCatalog *map[string]domain.FirewallTargetDefinition `json:"target_service_catalog"`
-		TargetCIDRs          *[]string                                   `json:"target_cidrs"`
-		TargetDomains        *[]string                                   `json:"target_domains"`
-		SourceCIDRs          *[]string                                   `json:"source_cidrs"`
 		ModeDrafts           *rawFirewallModeDrafts                      `json:"mode_drafts"`
 		BlockQUIC            *bool                                       `json:"block_quic"`
+		LegacyTargetMode     *domain.FirewallTargetMode                  `json:"target_mode"`
+		LegacyTargetServices *[]string                                   `json:"target_services"`
+		LegacyTargetCIDRs    *[]string                                   `json:"target_cidrs"`
+		LegacyTargetDomains  *[]string                                   `json:"target_domains"`
+		LegacySourceCIDRs    *[]string                                   `json:"source_cidrs"`
 	}
 
 	type rawSettings struct {
@@ -117,29 +142,51 @@ func decodeSettings(data []byte, path string) (domain.Settings, error) {
 	}
 
 	if raw.Firewall != nil {
+		decodeSelectorSet := func(dst *domain.FirewallSelectorSet, rawSet *rawFirewallSelectorSet) {
+			if rawSet == nil {
+				return
+			}
+			if rawSet.Services != nil {
+				dst.Services = append([]string(nil), (*rawSet.Services)...)
+			}
+			if rawSet.Domains != nil {
+				dst.Domains = append([]string(nil), (*rawSet.Domains)...)
+			}
+			if rawSet.CIDRs != nil {
+				dst.CIDRs = append([]string(nil), (*rawSet.CIDRs)...)
+			}
+		}
+
 		if raw.Firewall.Enabled != nil {
 			settings.Firewall.Enabled = *raw.Firewall.Enabled
 		}
 		if raw.Firewall.TransparentPort != nil {
 			settings.Firewall.TransparentPort = *raw.Firewall.TransparentPort
 		}
-		if raw.Firewall.TargetMode != nil {
-			settings.Firewall.TargetMode = domain.NormalizeFirewallTargetMode(*raw.Firewall.TargetMode)
+		if raw.Firewall.Mode != nil {
+			settings.Firewall.Mode = domain.NormalizeFirewallMode(*raw.Firewall.Mode)
 		}
-		if raw.Firewall.TargetServices != nil {
-			settings.Firewall.TargetServices = append([]string(nil), (*raw.Firewall.TargetServices)...)
+		if raw.Firewall.DisableIPv6 != nil {
+			settings.Firewall.DisableIPv6 = *raw.Firewall.DisableIPv6
+		}
+		if raw.Firewall.Hosts != nil {
+			settings.Firewall.Hosts = append([]string(nil), (*raw.Firewall.Hosts)...)
+		}
+		if raw.Firewall.Targets != nil {
+			decodeSelectorSet(&settings.Firewall.Targets, raw.Firewall.Targets)
+		}
+		if raw.Firewall.Split != nil {
+			decodeSelectorSet(&settings.Firewall.Split.Proxy, raw.Firewall.Split.Proxy)
+			decodeSelectorSet(&settings.Firewall.Split.Bypass, raw.Firewall.Split.Bypass)
+			if raw.Firewall.Split.ExcludedSources != nil {
+				settings.Firewall.Split.ExcludedSources = append([]string(nil), (*raw.Firewall.Split.ExcludedSources)...)
+			}
+			if raw.Firewall.Split.DefaultAction != nil {
+				settings.Firewall.Split.DefaultAction = domain.NormalizeFirewallDefaultAction(*raw.Firewall.Split.DefaultAction)
+			}
 		}
 		if raw.Firewall.TargetServiceCatalog != nil {
 			settings.Firewall.TargetServiceCatalog = domain.CloneFirewallTargetCatalog(*raw.Firewall.TargetServiceCatalog)
-		}
-		if raw.Firewall.TargetCIDRs != nil {
-			settings.Firewall.TargetCIDRs = append([]string(nil), (*raw.Firewall.TargetCIDRs)...)
-		}
-		if raw.Firewall.TargetDomains != nil {
-			settings.Firewall.TargetDomains = append([]string(nil), (*raw.Firewall.TargetDomains)...)
-		}
-		if raw.Firewall.SourceCIDRs != nil {
-			settings.Firewall.SourceCIDRs = append([]string(nil), (*raw.Firewall.SourceCIDRs)...)
 		}
 		if raw.Firewall.ModeDrafts != nil {
 			if raw.Firewall.ModeDrafts.Hosts != nil {
@@ -170,22 +217,62 @@ func decodeSettings(data []byte, path string) (domain.Settings, error) {
 					settings.Firewall.ModeDrafts.Targets.SourceCIDRs = append([]string(nil), (*raw.Firewall.ModeDrafts.Targets.SourceCIDRs)...)
 				}
 			}
-			if raw.Firewall.ModeDrafts.AntiTarget != nil {
+			if raw.Firewall.ModeDrafts.Split != nil {
+				decodeSelectorSet(&settings.Firewall.ModeDrafts.Split.Proxy, raw.Firewall.ModeDrafts.Split.Proxy)
+				decodeSelectorSet(&settings.Firewall.ModeDrafts.Split.Bypass, raw.Firewall.ModeDrafts.Split.Bypass)
+				if raw.Firewall.ModeDrafts.Split.ExcludedSources != nil {
+					settings.Firewall.ModeDrafts.Split.ExcludedSources = append([]string(nil), (*raw.Firewall.ModeDrafts.Split.ExcludedSources)...)
+				}
+			} else if raw.Firewall.ModeDrafts.AntiTarget != nil {
 				if raw.Firewall.ModeDrafts.AntiTarget.TargetServices != nil {
-					settings.Firewall.ModeDrafts.AntiTarget.TargetServices = append([]string(nil), (*raw.Firewall.ModeDrafts.AntiTarget.TargetServices)...)
+					settings.Firewall.ModeDrafts.Split.Bypass.Services = append([]string(nil), (*raw.Firewall.ModeDrafts.AntiTarget.TargetServices)...)
 				}
 				if raw.Firewall.ModeDrafts.AntiTarget.TargetCIDRs != nil {
-					settings.Firewall.ModeDrafts.AntiTarget.TargetCIDRs = append([]string(nil), (*raw.Firewall.ModeDrafts.AntiTarget.TargetCIDRs)...)
+					settings.Firewall.ModeDrafts.Split.Bypass.CIDRs = append([]string(nil), (*raw.Firewall.ModeDrafts.AntiTarget.TargetCIDRs)...)
 				}
 				if raw.Firewall.ModeDrafts.AntiTarget.TargetDomains != nil {
-					settings.Firewall.ModeDrafts.AntiTarget.TargetDomains = append([]string(nil), (*raw.Firewall.ModeDrafts.AntiTarget.TargetDomains)...)
-				}
-				if raw.Firewall.ModeDrafts.AntiTarget.SourceCIDRs != nil {
-					settings.Firewall.ModeDrafts.AntiTarget.SourceCIDRs = append([]string(nil), (*raw.Firewall.ModeDrafts.AntiTarget.SourceCIDRs)...)
+					settings.Firewall.ModeDrafts.Split.Bypass.Domains = append([]string(nil), (*raw.Firewall.ModeDrafts.AntiTarget.TargetDomains)...)
 				}
 			}
 		}
-		if raw.Firewall.BlockQUIC != nil {
+
+		if raw.Firewall.Mode == nil {
+			legacyTargets := domain.FirewallSelectorSet{}
+			if raw.Firewall.LegacyTargetServices != nil {
+				legacyTargets.Services = append([]string(nil), (*raw.Firewall.LegacyTargetServices)...)
+			}
+			if raw.Firewall.LegacyTargetDomains != nil {
+				legacyTargets.Domains = append([]string(nil), (*raw.Firewall.LegacyTargetDomains)...)
+			}
+			if raw.Firewall.LegacyTargetCIDRs != nil {
+				legacyTargets.CIDRs = append([]string(nil), (*raw.Firewall.LegacyTargetCIDRs)...)
+			}
+			if raw.Firewall.LegacySourceCIDRs != nil {
+				settings.Firewall.Hosts = append([]string(nil), (*raw.Firewall.LegacySourceCIDRs)...)
+			}
+
+			switch {
+			case len(settings.Firewall.Hosts) > 0:
+				settings.Firewall.Mode = domain.FirewallModeHosts
+			case domain.FirewallSelectorSetHasEntries(legacyTargets):
+				if raw.Firewall.LegacyTargetMode != nil && *raw.Firewall.LegacyTargetMode == domain.FirewallTargetModeBypass {
+					settings.Firewall.Mode = domain.FirewallModeSplit
+					settings.Firewall.Split = domain.DefaultFirewallSplitSettings()
+					settings.Firewall.Split.Bypass = legacyTargets
+					settings.Firewall.Split.DefaultAction = domain.FirewallDefaultActionProxy
+				} else {
+					settings.Firewall.Mode = domain.FirewallModeTargets
+					settings.Firewall.Targets = legacyTargets
+				}
+			default:
+				settings.Firewall.Mode = domain.FirewallModeDisabled
+			}
+		}
+
+		// Schema 7 made block_quic effective in the generated Xray config.
+		// Older persisted values were effectively no-ops, so migrate legacy
+		// installs to the new safe default unless the user re-saves the setting.
+		if raw.Firewall.BlockQUIC != nil && schemaVersion >= 7 {
 			settings.Firewall.BlockQUIC = *raw.Firewall.BlockQUIC
 		}
 	}

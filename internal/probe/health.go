@@ -7,10 +7,13 @@ import (
 )
 
 // UpdateHealth folds a probe result into the rolling health state.
-func UpdateHealth(previous domain.NodeHealth, success bool, latency time.Duration, checkedAt time.Time, failureReason string) domain.NodeHealth {
+func UpdateHealth(previous domain.NodeHealth, success bool, latency time.Duration, checkedAt time.Time, failureReason string, failureThreshold int) domain.NodeHealth {
 	updated := previous
 	updated.LastCheckedAt = checkedAt
 	updated.LastLatency = domain.NewDuration(latency)
+	if failureThreshold < 1 {
+		failureThreshold = 1
+	}
 
 	if success {
 		updated.Healthy = true
@@ -34,6 +37,10 @@ func UpdateHealth(previous domain.NodeHealth, success bool, latency time.Duratio
 	updated.LastFailureReason = failureReason
 	if updated.AverageLatency.Duration() == 0 {
 		updated.AverageLatency = domain.NewDuration(latency)
+	}
+	if updated.SuccessCount > 0 && updated.ConsecutiveFailures < failureThreshold {
+		updated.Healthy = true
+		return updated
 	}
 
 	return updated

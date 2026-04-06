@@ -12,32 +12,21 @@ func TestSubscriptionsViewKeepsSafeGeneratedXrayPreview(t *testing.T) {
 
 	source := readSubscriptionsViewSource(t)
 
-	for _, want := range []string{
+	for _, forbidden := range []string{
 		"handleInspectPreview",
 		"showInspectPreviewModal",
-		"Loading generated Xray JSON preview...",
 		"'inspect', 'xray-safe'",
-		"Sensitive values are redacted. DNS and DoH settings remain visible in this preview.",
 		"Export JSON",
 		"copyTextToClipboard",
+		"handleSpeedTest",
+		"'inspect', 'speed'",
+		"Speed Test",
+		"Sort by last availability",
+		"routeflux.subscriptions.sort_by_last_availability",
 	} {
-		if !strings.Contains(source, want) {
-			t.Fatalf("subscriptions view must expose safe Xray preview marker %q", want)
+		if strings.Contains(source, forbidden) {
+			t.Fatalf("subscriptions view must not keep advanced action marker %q", forbidden)
 		}
-	}
-
-	if strings.Contains(source, "'inspect', 'xray'") {
-		t.Fatal("subscriptions view must not call raw inspect xray")
-	}
-}
-
-func TestSubscriptionsViewKeepsSpeedTestAction(t *testing.T) {
-	t.Parallel()
-
-	source := readSubscriptionsViewSource(t)
-
-	if !strings.Contains(source, "'inspect', 'speed'") {
-		t.Fatal("subscriptions view must keep speed test action")
 	}
 }
 
@@ -58,22 +47,49 @@ func TestSubscriptionsViewShowsExpirationDateAndRemoveAction(t *testing.T) {
 	}
 }
 
-func TestSubscriptionsViewKeepsRemoveActionVisibleWhenButtonsWrap(t *testing.T) {
+func TestSubscriptionsViewShowsRemainingTrafficMeter(t *testing.T) {
 	t.Parallel()
 
 	source := readSubscriptionsViewSource(t)
 
 	for _, want := range []string{
-		".routeflux-subscription-controls { display:grid; gap:8px; justify-items:end; min-width:0; max-width:100%; }",
-		".routeflux-subscription-actions { display:flex; flex-wrap:wrap; justify-content:flex-end; gap:8px; align-items:flex-start; max-width:100%; }",
+		"Remaining traffic",
+		"renderTrafficSummary",
+		"routeflux-traffic-meter",
+		"routeflux-traffic-meter-fill",
+		"Unlimited",
 	} {
 		if !strings.Contains(source, want) {
-			t.Fatalf("subscriptions view missing responsive action layout marker %q", want)
+			t.Fatalf("subscriptions view missing traffic marker %q", want)
 		}
 	}
+}
 
-	if strings.Contains(source, ".routeflux-subscription-card { margin-bottom:16px; overflow:hidden; }") {
-		t.Fatal("subscriptions view must not clip subscription actions with overflow:hidden")
+func TestSubscriptionsViewKeepsOverviewSummaryAndCoreActions(t *testing.T) {
+	t.Parallel()
+
+	source := readSubscriptionsViewSource(t)
+
+	for _, want := range []string{
+		"RouteFlux - Subscriptions",
+		"RouteFlux status, the active connection, and the basic subscription actions you need every day.",
+		"Refresh Active",
+		"Disconnect",
+		"Active Provider",
+		"Active Profile",
+		"Active Node",
+		"handleDisconnect",
+		"handleRefreshActive",
+		"handleConnectAuto",
+		"handleConnectNode",
+		"handleAdd",
+		"handleRefreshSubscription",
+		"handleRemoveSubscription",
+		"handleRemoveAll",
+	} {
+		if !strings.Contains(source, want) {
+			t.Fatalf("subscriptions view missing summary/core action marker %q", want)
+		}
 	}
 }
 

@@ -1,6 +1,7 @@
 'use strict';
 'require view';
 'require fs';
+'require dom';
 'require ui';
 'require routeflux.ui as routefluxUI';
 
@@ -123,7 +124,6 @@ function inferRegionCodeFromAddress(value) {
 		return '';
 
 	var labels = host.split('.').filter(Boolean);
-
 	if (labels.length === 0)
 		return '';
 
@@ -230,8 +230,8 @@ function buildSubscriptionPresentation(subscriptions) {
 
 		group.count += 1;
 		byId[trim(sub.id)] = {
-			provider_title: title,
-			profile_label: _('Profile %d').format(group.count)
+			'provider_title': title,
+			'profile_label': _('Profile %d').format(group.count)
 		};
 	}
 
@@ -297,127 +297,391 @@ function parseList(raw) {
 	return out;
 }
 
-function hasItems(values) {
-	return Array.isArray(values) && values.length > 0;
-}
+function cleanList(values) {
+	var seen = {};
+	var out = [];
+	var list = Array.isArray(values) ? values : [];
 
-function targetMode(settings) {
-	return trim(settings.target_mode) === 'bypass' ? 'bypass' : 'proxy';
-}
+	for (var i = 0; i < list.length; i++) {
+		var value = trim(list[i]);
 
-function firewallMode(settings) {
-	var hasSources = hasItems(settings.source_cidrs);
-	var hasTargets = hasItems(settings.target_services) || hasItems(settings.target_cidrs) || hasItems(settings.target_domains);
+		if (value === '' || seen[value])
+			continue;
 
-	if (settings.enabled !== true || (!hasSources && !hasTargets))
-		return 'disabled';
-
-	if (hasSources && !hasTargets)
-		return 'hosts';
-
-	if (hasTargets && !hasSources)
-		return targetMode(settings) === 'bypass' ? 'anti-target' : 'targets';
-
-	return 'mixed';
-}
-
-function formMode(settings) {
-	var mode = firewallMode(settings);
-
-	if (mode === 'mixed')
-		return 'hosts';
-
-	return mode;
-}
-
-function selectorsForMode(settings, mode) {
-	if (mode === 'hosts' && hasItems(settings.source_cidrs))
-		return settings.source_cidrs.join('\n');
-
-	if (mode === 'targets' || mode === 'anti-target') {
-		var values = [];
-
-		if (hasItems(settings.target_services))
-			values = values.concat(settings.target_services);
-		if (hasItems(settings.target_domains))
-			values = values.concat(settings.target_domains);
-		if (hasItems(settings.target_cidrs))
-			values = values.concat(settings.target_cidrs);
-
-		return values.join('\n');
+		seen[value] = true;
+		out.push(value);
 	}
 
-	return '';
+	return out;
 }
 
-function selectorsForDraft(draft, mode) {
-	if (!draft)
-		return '';
+function sameList(left, right) {
+	var leftList = cleanList(left || []);
+	var rightList = cleanList(right || []);
 
-	if (mode === 'hosts' && hasItems(draft.source_cidrs))
-		return draft.source_cidrs.join('\n');
+	if (leftList.length !== rightList.length)
+		return false;
 
-	if (mode === 'targets' || mode === 'anti-target') {
-		var values = [];
-
-		if (hasItems(draft.target_services))
-			values = values.concat(draft.target_services);
-		if (hasItems(draft.target_domains))
-			values = values.concat(draft.target_domains);
-		if (hasItems(draft.target_cidrs))
-			values = values.concat(draft.target_cidrs);
-
-		return values.join('\n');
+	for (var i = 0; i < leftList.length; i++) {
+		if (leftList[i] !== rightList[i])
+			return false;
 	}
 
-	return '';
+	return true;
 }
 
-function selectorsModeDrafts(settings, currentMode, selectedMode) {
-	var drafts = ((settings || {}).mode_drafts) || {};
-	var values = {
-		'hosts': selectorsForDraft(drafts.hosts || {}, 'hosts'),
-		'targets': selectorsForDraft(drafts.targets || {}, 'targets'),
-		'anti-target': selectorsForDraft(drafts.anti_target || {}, 'anti-target')
+function emptySelectorSet() {
+	return {
+		'services': [],
+		'domains': [],
+		'cidrs': []
 	};
-
-	if (currentMode === 'hosts' || currentMode === 'targets' || currentMode === 'anti-target')
-		values[currentMode] = selectorsForMode(settings, currentMode);
-	else if (currentMode === 'mixed' && (selectedMode === 'hosts' || selectedMode === 'targets' || selectedMode === 'anti-target'))
-		values[selectedMode] = selectorsForMode(settings, selectedMode);
-
-	return values;
 }
 
-function modeSummary(mode) {
-	switch (mode) {
-	case 'hosts':
-		return _('Hosts');
-	case 'targets':
-		return _('Targets');
-	case 'anti-target':
-		return _('Anti-target');
-	case 'mixed':
-		return _('Mixed');
-	default:
-		return _('Disabled');
+function cloneSelectorSet(value) {
+	var selectors = value || {};
+
+	return {
+		'services': cleanList(selectors.services || []),
+		'domains': cleanList(selectors.domains || []),
+		'cidrs': cleanList(selectors.cidrs || [])
+	};
+}
+
+function selectorSetHasEntries(value) {
+	var selectors = cloneSelectorSet(value);
+
+	return selectors.services.length > 0 || selectors.domains.length > 0 || selectors.cidrs.length > 0;
+}
+
+function selectorValues(value) {
+	var selectors = cloneSelectorSet(value);
+
+	return selectors.services.concat(selectors.domains).concat(selectors.cidrs);
+}
+
+function sameSelectorSet(left, right) {
+	var leftValue = cloneSelectorSet(left);
+	var rightValue = cloneSelectorSet(right);
+
+	return sameList(leftValue.services, rightValue.services) &&
+		sameList(leftValue.domains, rightValue.domains) &&
+		sameList(leftValue.cidrs, rightValue.cidrs);
+}
+
+function selectorEditorFromSet(value) {
+	var selectors = cloneSelectorSet(value);
+
+	return {
+		'services': selectors.services,
+		'domains': selectors.domains,
+		'cidrs': selectors.cidrs,
+		'serviceChoice': '',
+		'selectorInput': ''
+	};
+}
+
+function selectorSetFromEditor(editor) {
+	return {
+		'services': cleanList((editor || {}).services || []),
+		'domains': cleanList((editor || {}).domains || []),
+		'cidrs': cleanList((editor || {}).cidrs || [])
+	};
+}
+
+function listEditorFromEntries(entries) {
+	return {
+		'entries': cleanList(entries || []),
+		'input': ''
+	};
+}
+
+function listValues(editor) {
+	return cleanList((editor || {}).entries || []);
+}
+
+function isIPv4Selector(value) {
+	var normalized = trim(value);
+
+	return /^(\d{1,3}\.){3}\d{1,3}$/.test(normalized) ||
+		/^(\d{1,3}\.){3}\d{1,3}\/\d{1,2}$/.test(normalized) ||
+		/^(\d{1,3}\.){3}\d{1,3}\s*-\s*(\d{1,3}\.){3}\d{1,3}$/.test(normalized);
+}
+
+function normalizeDomainSelector(value) {
+	return trim(value).toLowerCase();
+}
+
+function normalizeSourceSelector(value) {
+	var normalized = trim(value).toLowerCase();
+
+	if (normalized === '*')
+		return 'all';
+
+	return normalized;
+}
+
+function appendStringSliceFlags(argv, flag, values) {
+	var list = cleanList(values || []);
+
+	for (var i = 0; i < list.length; i++) {
+		argv.push(flag);
+		argv.push(list[i]);
 	}
+
+	return argv;
+}
+
+function normalizedSelectorSet(raw, legacy) {
+	return {
+		'services': cleanList((raw && raw.services) || (legacy && legacy.target_services) || []),
+		'domains': cleanList((raw && raw.domains) || (legacy && legacy.target_domains) || []),
+		'cidrs': cleanList((raw && raw.cidrs) || (legacy && legacy.target_cidrs) || [])
+	};
+}
+
+function inferFirewallMode(raw) {
+	var mode = trim(raw && raw.mode);
+	var split = raw && raw.split ? raw.split : {};
+	var targets = raw && raw.targets ? raw.targets : {};
+	var hasDeviceSelectors = cleanList((raw && raw.hosts) || (raw && raw.source_cidrs) || []).length > 0;
+	var hasDestinationSelectors = selectorSetHasEntries(targets) ||
+		cleanList(raw && raw.target_services).length > 0 ||
+		cleanList(raw && raw.target_domains).length > 0 ||
+		cleanList(raw && raw.target_cidrs).length > 0;
+	var hasSplit = selectorSetHasEntries(split.proxy) || selectorSetHasEntries(split.bypass) ||
+		cleanList(split.excluded_sources).length > 0;
+
+	if (mode === 'hosts' || mode === 'targets' || mode === 'split' || mode === 'disabled')
+		return mode;
+	if (hasDeviceSelectors)
+		return 'hosts';
+	if (hasSplit)
+		return 'split';
+	if (hasDestinationSelectors)
+		return 'targets';
+
+	return 'disabled';
+}
+
+function normalizedSplitSettings(raw) {
+	var split = raw && raw.split ? raw.split : {};
+	var explicitBypass = selectorSetHasEntries(split.bypass);
+	var explicitProxy = selectorSetHasEntries(split.proxy);
+	var legacyBypass = trim(raw && raw.target_mode) === 'bypass';
+	var useLegacyBypass = !explicitBypass && !explicitProxy && legacyBypass;
+
+	return {
+		'proxy': normalizedSelectorSet(split.proxy || {}, null),
+		'bypass': useLegacyBypass ? normalizedSelectorSet(null, raw) : normalizedSelectorSet(split.bypass || {}, null),
+		'excluded_sources': cleanList(split.excluded_sources || []),
+		'default_action': trim(split.default_action) !== '' ? trim(split.default_action) : (useLegacyBypass ? 'proxy' : 'direct')
+	};
+}
+
+function splitLooksLikeBypass(split) {
+	return trim((split || {}).default_action) === 'proxy' && !selectorSetHasEntries((split || {}).proxy);
+}
+
+function describeActiveRoutingMode(value) {
+	switch (trim(value)) {
+	case 'bypass':
+		return _('Bypass');
+	case 'disabled':
+		return _('Off');
+	case 'targets':
+		return _('Destination-only routing');
+	case 'hosts':
+		return _('Device-based routing');
+	case 'split':
+		return _('Advanced split routing');
+	default:
+		return _('Unknown');
+	}
+}
+
+function summarizeSelectors(selectors) {
+	var values = selectorValues(selectors);
+
+	return values.length > 0 ? values.join(', ') : '-';
+}
+
+function canonicalFirewall(firewall) {
+	var raw = firewall || {};
+	var enabled = raw.enabled === true;
+	var mode = inferFirewallMode(raw);
+	var split = normalizedSplitSettings(raw);
+	var drafts = raw.mode_drafts || {};
+	var draftSplit = drafts.split || {};
+	var bypassDraft = {
+		'selectors': cloneSelectorSet(draftSplit.bypass || {}),
+		'excluded_sources': cleanList(draftSplit.excluded_sources || [])
+	};
+	var currentMode = 'disabled';
+	var supported = true;
+	var warning = '';
+	var activeBypass = {
+		'selectors': emptySelectorSet(),
+		'excluded_sources': []
+	};
+	var summaryLines = [];
+
+	if (enabled === true) {
+		if (mode === 'split' && splitLooksLikeBypass(split)) {
+			currentMode = 'bypass';
+			activeBypass = {
+				'selectors': cloneSelectorSet(split.bypass),
+				'excluded_sources': cleanList(split.excluded_sources || [])
+			};
+		}
+		else if (mode === 'disabled') {
+			currentMode = 'disabled';
+		}
+		else {
+			supported = false;
+			currentMode = mode;
+			warning = _('The current routing config was created outside this simplified LuCI flow. Switch to Off or Bypass and save to replace it from LuCI.');
+		}
+	}
+
+	summaryLines.push(_('Current mode: %s').format(describeActiveRoutingMode(currentMode)));
+	if (currentMode === 'bypass') {
+		summaryLines.push(_('Keep direct: %s').format(summarizeSelectors(activeBypass.selectors)));
+		summaryLines.push(_('Excluded devices: %s').format(cleanList(activeBypass.excluded_sources).join(', ') || '-'));
+	}
+	else if (currentMode === 'targets') {
+		summaryLines.push(_('Destination-only selectors: %s').format(summarizeSelectors(normalizedSelectorSet(raw.targets || {}, raw))));
+	}
+	else if (currentMode === 'hosts') {
+		summaryLines.push(_('Device-based selectors: %s').format(cleanList(raw.hosts || raw.source_cidrs || []).join(', ') || '-'));
+	}
+	else if (currentMode === 'split') {
+		summaryLines.push(_('Proxy selectors: %s').format(summarizeSelectors(split.proxy)));
+		summaryLines.push(_('Direct selectors: %s').format(summarizeSelectors(split.bypass)));
+		summaryLines.push(_('Excluded devices: %s').format(cleanList(split.excluded_sources).join(', ') || '-'));
+	}
+
+	return {
+		'enabled': enabled,
+		'current_mode': currentMode,
+		'supported': supported,
+		'warning': warning,
+		'bypass': activeBypass,
+		'bypass_draft': bypassDraft,
+		'summary_lines': summaryLines
+	};
+}
+
+var defaultDNSServers = [ '1.1.1.1', '1.0.0.1' ];
+var defaultDNSDirectDomains = [ 'domain:lan', 'full:router.lan' ];
+
+function canonicalDNS(dns) {
+	var raw = dns || {};
+	var normalized = {
+		'mode': trim(raw.mode).toLowerCase(),
+		'transport': trim(raw.transport).toLowerCase(),
+		'servers': cleanList(raw.servers || []),
+		'bootstrap': cleanList(raw.bootstrap || []),
+		'direct_domains': cleanList(raw.direct_domains || [])
+	};
+	var isDefault = normalized.mode === 'split' &&
+		normalized.transport === 'doh' &&
+		sameList(normalized.servers, defaultDNSServers) &&
+		sameList(normalized.bootstrap, []) &&
+		sameList(normalized.direct_domains, defaultDNSDirectDomains);
+	var supported = normalized.mode === 'system' || isDefault;
+	var choice = '';
+
+	if (normalized.mode === 'system')
+		choice = 'system';
+	else if (isDefault)
+		choice = 'default';
+
+	return {
+		'supported': supported,
+		'choice': supported ? choice : '',
+		'warning': supported ? '' : _('The current DNS profile was created outside this simplified LuCI flow. Choose System DNS or RouteFlux Recommended DNS and save to replace it.'),
+		'summary_lines': [
+			_('Mode: %s').format(normalized.mode || '-'),
+			_('Transport: %s').format(normalized.transport || '-'),
+			_('Servers: %s').format(normalized.servers.join(', ') || '-'),
+			_('Bootstrap: %s').format(normalized.bootstrap.join(', ') || '-'),
+			_('Direct domains: %s').format(normalized.direct_domains.join(', ') || '-')
+		]
+	};
+}
+
+function buildFormState(firewall, dns) {
+	var routing = canonicalFirewall(firewall);
+	var dnsState = canonicalDNS(dns);
+	var selectorSet = routing.current_mode === 'bypass'
+		? routing.bypass.selectors
+		: routing.bypass_draft.selectors;
+	var excludedSources = routing.current_mode === 'bypass'
+		? routing.bypass.excluded_sources
+		: routing.bypass_draft.excluded_sources;
+
+	return {
+		'mode': routing.supported ? routing.current_mode : '',
+		'dns_choice': dnsState.supported ? dnsState.choice : '',
+		'bypass': {
+			'selectors': selectorEditorFromSet(selectorSet),
+			'excluded': listEditorFromEntries(excludedSources)
+		}
+	};
+}
+
+function modeSummary(value) {
+	switch (trim(value)) {
+	case 'bypass':
+		return _('Bypass');
+	case 'disabled':
+		return _('Off');
+	case 'targets':
+		return _('Destination-only routing');
+	case 'hosts':
+		return _('Device-based routing');
+	case 'split':
+		return _('Advanced split routing');
+	default:
+		return _('Off');
+	}
+}
+
+function dnsChoiceSummary(value) {
+	switch (trim(value)) {
+	case 'system':
+		return _('System DNS');
+	case 'default':
+		return _('RouteFlux Recommended DNS');
+	default:
+		return _('Custom DNS');
+	}
+}
+
+function choiceClass(selected) {
+	return selected === true
+		? 'routeflux-routing-choice routeflux-routing-choice-selected'
+		: 'routeflux-routing-choice';
 }
 
 return view.extend({
 	load: function() {
 		return Promise.all([
 			this.execJSON([ '--json', 'status' ]).catch(function(err) {
-				return { __error__: err.message || String(err) };
+				return { '__error__': err.message || String(err) };
 			}),
 			this.execJSON([ '--json', 'firewall', 'get' ]).catch(function(err) {
-				return { __error__: err.message || String(err) };
+				return { '__error__': err.message || String(err) };
 			}),
 			this.execJSON([ '--json', 'list', 'subscriptions' ]).catch(function(err) {
-				return { __error__: err.message || String(err) };
+				return { '__error__': err.message || String(err) };
 			}),
-			this.execText([ 'firewall', 'explain' ]).catch(function(err) {
-				return { __error__: err.message || String(err) };
+			this.execJSON([ '--json', 'services', 'list' ]).catch(function(err) {
+				return { '__error__': err.message || String(err) };
+			}),
+			this.execJSON([ '--json', 'dns', 'get' ]).catch(function(err) {
+				return { '__error__': err.message || String(err) };
 			})
 		]);
 	},
@@ -493,177 +757,345 @@ return view.extend({
 		return routefluxUI.renderSummaryCard(label, value, options);
 	},
 
-	saveCurrentDraftText: function(mode) {
-		var textarea = document.querySelector('#routeflux-firewall-selectors');
+	initializePageState: function(data) {
+		var status = data[0] || {};
+		var firewallPayload = data[1] && !data[1].__error__
+			? data[1]
+			: ((status.settings || {}).firewall || {});
+		var dnsPayload = data[4] && !data[4].__error__
+			? data[4]
+			: ((status.settings || {}).dns || {});
+		var servicesPayload = Array.isArray(data[3]) ? data[3] : [];
 
-		if (!this.selectorDrafts || !textarea)
-			return;
-		if (mode !== 'hosts' && mode !== 'targets' && mode !== 'anti-target')
-			return;
-
-		this.selectorDrafts[mode] = textarea.value;
+		this.pageData = {
+			'status': status,
+			'firewall': canonicalFirewall(firewallPayload),
+			'dns': canonicalDNS(dnsPayload),
+			'subscriptions': Array.isArray(data[2]) ? data[2] : [],
+			'services': servicesPayload
+		};
+		this.formState = buildFormState(firewallPayload, dnsPayload);
+		this.rootErrors = {
+			'status': trim(data[0] && data[0].__error__),
+			'firewall': trim(data[1] && data[1].__error__),
+			'subscriptions': trim(data[2] && data[2].__error__),
+			'services': trim(data[3] && data[3].__error__),
+			'dns': trim(data[4] && data[4].__error__)
+		};
 	},
 
-	restoreDraftText: function(mode) {
-		var textarea = document.querySelector('#routeflux-firewall-selectors');
+	renderIntoRoot: function() {
+		var root = document.querySelector('#routeflux-routing-root');
 
-		if (!textarea)
-			return;
-
-		if (mode === 'hosts' || mode === 'targets' || mode === 'anti-target')
-			textarea.value = (this.selectorDrafts && this.selectorDrafts[mode]) || '';
-		else
-			textarea.value = '';
-	},
-
-	draftCommands: function() {
-		var commands = [];
-		var modes = [ 'hosts', 'targets', 'anti-target' ];
-
-		if (!this.selectorDrafts)
-			return commands;
-
-		for (var i = 0; i < modes.length; i++) {
-			var mode = modes[i];
-			var selectors = parseList(this.selectorDrafts[mode]);
-
-			commands.push([ 'firewall', 'draft', mode ].concat(selectors));
-		}
-
-		return commands;
-	},
-
-	updateModeUI: function(mode) {
-		var row = document.querySelector('#routeflux-firewall-selectors-row');
-		var label = document.querySelector('#routeflux-firewall-selectors-label');
-		var textarea = document.querySelector('#routeflux-firewall-selectors');
-		var help = document.querySelector('#routeflux-firewall-selectors-help');
-		var blockHelp = document.querySelector('#routeflux-firewall-block-quic-help');
-
-		if (!row || !label || !textarea || !help || !blockHelp)
-			return;
-
-		if (mode === 'hosts') {
-			label.textContent = _('Hosts');
-			textarea.placeholder = _('Examples: 192.168.1.150 192.168.1.0/24 192.168.1.150-192.168.1.159 all');
-			textarea.disabled = false;
-			row.style.opacity = '1';
-			help.textContent = _('Route selected LAN clients through RouteFlux. Separate values with spaces, commas, or new lines.');
-			blockHelp.textContent = _('Legacy compatibility flag for older TCP-only setups. Current LAN transparent routing already intercepts QUIC directly.');
-			return;
-		}
-
-		if (mode === 'targets') {
-			label.textContent = _('Targets');
-			textarea.placeholder = _('Examples: youtube instagram openai discord 1.1.1.1 203.0.113.10-203.0.113.20');
-			textarea.disabled = false;
-			row.style.opacity = '1';
-			help.textContent = _('Route only selected services, domains, or destination IPv4 targets through RouteFlux. Built-in presets: discord, facetime, gemini, gemini-mobile, instagram, netflix, notebooklm, notebooklm-mobile, telegram, telegram-web, twitter, whatsapp, youtube. Create any custom alias on the Services tab, then use it here like openai or work-chat. Popular root domains like youtube.com, instagram.com, netflix.com, x.com, gemini.google.com, and notebooklm.google.com still auto-expand to the domain families they need. Use gemini-mobile or notebooklm-mobile for the Android or iOS apps when the web preset is too narrow. The mobile presets are broader and may also catch shared Google infrastructure and direct IPv4 endpoints. Domains match subdomains and work best when clients use the router DNS.');
-			blockHelp.textContent = _('Legacy compatibility flag for older TCP-only setups. Current LAN transparent routing already intercepts QUIC directly.');
-			return;
-		}
-
-		if (mode === 'anti-target') {
-			label.textContent = _('Anti-target');
-			textarea.placeholder = _('Examples: gosuslugi.ru sberbank.ru openai 1.1.1.1 203.0.113.10-203.0.113.20');
-			textarea.disabled = false;
-			row.style.opacity = '1';
-			help.textContent = _('Keep selected services, domains, or destination IPv4 targets direct, and send all other LAN traffic through RouteFlux. This mode works best for LAN clients and does not redirect router-originated traffic. Domains match subdomains and work from Xray sniffing, so dnsmasq nftset support is not required here.');
-			blockHelp.textContent = _('Legacy compatibility flag for older TCP-only setups. Current LAN transparent routing already intercepts QUIC directly.');
-			return;
-		}
-
-		label.textContent = _('Selectors');
-		textarea.placeholder = _('No selectors are required while the firewall is disabled.');
-		textarea.disabled = true;
-		row.style.opacity = '0.65';
-		help.textContent = _('Save disabled mode to keep the saved settings but stop redirecting traffic.');
-		blockHelp.textContent = _('This value is saved even while the firewall is disabled.');
+		if (root)
+			dom.content(root, this.renderPageContent());
 	},
 
 	handleModeChange: function(ev) {
-		var nextMode = trim(ev.currentTarget.value);
+		this.formState.mode = trim(ev.currentTarget.value);
+	},
 
-		this.saveCurrentDraftText(this.currentFormMode);
-		this.currentFormMode = nextMode;
-		this.updateModeUI(nextMode);
-		this.restoreDraftText(nextMode);
+	handleDNSChoiceChange: function(ev) {
+		this.formState.dns_choice = trim(ev.currentTarget.value);
+	},
+
+	handleServiceChoiceChange: function(ev) {
+		this.formState.bypass.selectors.serviceChoice = trim(ev.currentTarget.value);
+	},
+
+	handleSelectorInputChange: function(ev) {
+		this.formState.bypass.selectors.selectorInput = ev.currentTarget.value;
+	},
+
+	handleExcludedInputChange: function(ev) {
+		this.formState.bypass.excluded.input = ev.currentTarget.value;
+	},
+
+	handleAddService: function(ev) {
+		var editor;
+		var value;
+
+		if (ev && typeof ev.preventDefault === 'function')
+			ev.preventDefault();
+
+		editor = this.formState.bypass.selectors;
+		value = trim(editor.serviceChoice).toLowerCase();
+		if (value === '')
+			return;
+
+		editor.services = cleanList(editor.services.concat([ value ]));
+		editor.serviceChoice = '';
+		this.renderIntoRoot();
+	},
+
+	handleAddSelector: function(ev) {
+		var editor;
+		var parts;
+		var i;
+		var value;
+
+		if (ev && typeof ev.preventDefault === 'function')
+			ev.preventDefault();
+
+		editor = this.formState.bypass.selectors;
+		parts = parseList(editor.selectorInput);
+		for (i = 0; i < parts.length; i++) {
+			value = trim(parts[i]);
+			if (value === '')
+				continue;
+
+			if (isIPv4Selector(value))
+				editor.cidrs = cleanList(editor.cidrs.concat([ value ]));
+			else
+				editor.domains = cleanList(editor.domains.concat([ normalizeDomainSelector(value) ]));
+		}
+
+		editor.selectorInput = '';
+		this.renderIntoRoot();
+	},
+
+	handleAddExcluded: function(ev) {
+		var list;
+		var parts;
+		var i;
+		var value;
+
+		if (ev && typeof ev.preventDefault === 'function')
+			ev.preventDefault();
+
+		list = this.formState.bypass.excluded;
+		parts = parseList(list.input);
+		for (i = 0; i < parts.length; i++) {
+			value = normalizeSourceSelector(parts[i]);
+			if (value === '')
+				continue;
+
+			list.entries = cleanList(list.entries.concat([ value ]));
+		}
+
+		list.input = '';
+		this.renderIntoRoot();
+	},
+
+	handleRemoveSelector: function(field, value, ev) {
+		var editor;
+
+		if (ev && typeof ev.preventDefault === 'function')
+			ev.preventDefault();
+
+		editor = this.formState.bypass.selectors;
+		if (!Array.isArray(editor[field]))
+			return;
+
+		editor[field] = cleanList(editor[field].filter(function(entry) {
+			return entry !== value;
+		}));
+		this.renderIntoRoot();
+	},
+
+	handleRemoveExcluded: function(value, ev) {
+		var list;
+
+		if (ev && typeof ev.preventDefault === 'function')
+			ev.preventDefault();
+
+		list = this.formState.bypass.excluded;
+		list.entries = cleanList(list.entries.filter(function(entry) {
+			return entry !== value;
+		}));
+		this.renderIntoRoot();
 	},
 
 	handleSaveSettings: function(ev) {
-		var modeElement = document.querySelector('#routeflux-firewall-mode');
-		var selectorsElement = document.querySelector('#routeflux-firewall-selectors');
-		var portElement = document.querySelector('#routeflux-firewall-port');
-		var blockQUICElement = document.querySelector('#routeflux-firewall-block-quic');
-		var mode = trim(modeElement && modeElement.value);
-		var selectors = parseList(selectorsElement && selectorsElement.value);
-		var portRaw = trim(portElement && portElement.value);
-		var port = parseInt(portRaw, 10);
-		var blockQUIC = !!(blockQUICElement && blockQUICElement.checked);
+		var routing = this.pageData.firewall || canonicalFirewall({});
+		var dnsState = this.pageData.dns || canonicalDNS({});
+		var mode = trim(this.formState.mode);
+		var dnsChoice = trim(this.formState.dns_choice);
+		var desiredSelectors = selectorSetFromEditor(this.formState.bypass.selectors);
+		var desiredExcluded = listValues(this.formState.bypass.excluded);
+		var desiredSelectorValues = selectorValues(desiredSelectors);
 		var commands = [];
+		var draftCommand = [ 'firewall', 'draft', 'bypass' ];
+		var bypassCommand = [ 'firewall', 'set', 'bypass' ];
+		var draftChanged;
+		var routingChanged;
+		var dnsChanged;
 
-		this.saveCurrentDraftText(mode);
+		if (ev && typeof ev.preventDefault === 'function')
+			ev.preventDefault();
 
-		if (!/^\d+$/.test(portRaw) || isNaN(port) || port <= 0) {
-			ui.addNotification(null, notificationParagraph(_('Transparent port must be a positive integer.')));
+		if (!routing.supported && mode === '') {
+			ui.addNotification(null, notificationParagraph(_('Choose Off or Bypass to replace the current advanced routing setup.')));
 			return Promise.resolve();
 		}
 
-		if (mode === 'hosts' || mode === 'targets' || mode === 'anti-target') {
-			if (selectors.length === 0) {
-				ui.addNotification(null, notificationParagraph(
-					mode === 'hosts'
-						? _('Enter at least one LAN host, CIDR, range, or all.')
-						: mode === 'anti-target'
-							? _('Enter at least one service preset, domain, IPv4 address, CIDR, or range that should bypass the proxy.')
-							: _('Enter at least one service preset, domain, IPv4 address, CIDR, or range.')
-				));
-				return Promise.resolve();
+		if (mode === 'bypass' && desiredSelectorValues.length === 0) {
+			ui.addNotification(null, notificationParagraph(_('Bypass needs at least one Keep Direct selector.')));
+			return Promise.resolve();
+		}
+
+		if (!dnsState.supported && dnsChoice === '') {
+			ui.addNotification(null, notificationParagraph(_('Choose System DNS or RouteFlux Recommended DNS to replace the current custom DNS profile.')));
+			return Promise.resolve();
+		}
+
+		draftChanged = !sameSelectorSet(desiredSelectors, routing.bypass_draft.selectors) ||
+			!sameList(desiredExcluded, routing.bypass_draft.excluded_sources);
+		if (draftChanged) {
+			if (selectorSetHasEntries(desiredSelectors) || desiredExcluded.length > 0) {
+				appendStringSliceFlags(draftCommand, '--exclude-host', desiredExcluded);
+				commands.push(draftCommand.concat(desiredSelectorValues));
 			}
-
-			commands = commands.concat(this.draftCommands());
-			commands.push([ 'firewall', 'set', 'block-quic', blockQUIC ? 'true' : 'false' ]);
-			commands.push([ 'firewall', 'set', '--port', String(port), mode ].concat(selectors));
-
-			return this.runCommands(commands, _('Firewall settings saved.'));
+			else {
+				commands.push([ 'firewall', 'draft', 'bypass' ]);
+			}
 		}
 
-		commands = commands.concat(this.draftCommands());
-		commands.push([ 'firewall', 'set', 'block-quic', blockQUIC ? 'true' : 'false' ]);
-		commands.push([ 'firewall', 'set', 'port', String(port) ]);
-		commands.push([ 'firewall', 'disable' ]);
+		if (mode === 'bypass') {
+			routingChanged = !routing.supported ||
+				routing.current_mode !== 'bypass' ||
+				!sameSelectorSet(desiredSelectors, routing.bypass.selectors) ||
+				!sameList(desiredExcluded, routing.bypass.excluded_sources);
+			if (routingChanged) {
+				appendStringSliceFlags(bypassCommand, '--exclude-host', desiredExcluded);
+				commands.push(bypassCommand.concat(desiredSelectorValues));
+			}
+		}
+		else if (mode === 'disabled') {
+			routingChanged = !routing.supported || routing.current_mode !== 'disabled' || routing.enabled === true;
+			if (routingChanged)
+				commands.push([ 'firewall', 'disable' ]);
+		}
 
-		return this.runCommands(commands, _('Firewall settings saved and routing disabled.'));
-	},
+		if (dnsChoice !== '') {
+			dnsChanged = !dnsState.supported || dnsState.choice !== dnsChoice;
+			if (dnsChanged) {
+				if (dnsChoice === 'system')
+					commands.push([ 'dns', 'set', 'mode', 'system' ]);
+				else if (dnsChoice === 'default')
+					commands.push([ 'dns', 'set', 'default' ]);
+			}
+		}
 
-	handleDisable: function(ev) {
-		var commands = [];
-
-		if (!window.confirm(_('Disable transparent routing?')))
+		if (commands.length === 0) {
+			ui.addNotification(null, notificationParagraph(_('No routing changes to save.')), 'info');
 			return Promise.resolve();
+		}
 
-		this.saveCurrentDraftText(this.currentFormMode);
-		commands = commands.concat(this.draftCommands());
-		commands.push([ 'firewall', 'disable' ]);
-
-		return this.runCommands(commands, _('Firewall disabled.'));
+		return this.runCommands(commands, _('Routing settings saved.'));
 	},
 
-	render: function(data) {
-		var status = data[0] || {};
-		var firewall = data[1] && !data[1].__error__
-			? data[1]
-			: ((status.settings || {}).firewall || {});
-		var subscriptions = Array.isArray(data[2]) ? data[2] : [];
+	renderServiceOptions: function(selectedValue) {
+		var services = Array.isArray(this.pageData.services) ? this.pageData.services : [];
+		var options = [
+			E('option', { 'value': '', 'selected': trim(selectedValue) === '' ? 'selected' : null }, [ _('Choose a service preset') ])
+		];
+
+		for (var i = 0; i < services.length; i++) {
+			var entry = services[i];
+			var suffix = entry.readonly === true ? _('Built-in') : _('Custom');
+			var label = trim(entry.name) + ' · ' + suffix;
+
+			options.push(E('option', {
+				'value': trim(entry.name),
+				'selected': trim(selectedValue) === trim(entry.name) ? 'selected' : null
+			}, [ label ]));
+		}
+
+		return options;
+	},
+
+	renderSelectorItems: function(editor) {
+		var rows = [];
+		var selectors = selectorSetFromEditor(editor);
+		var i;
+
+		for (i = 0; i < selectors.services.length; i++) {
+			rows.push(E('div', { 'class': 'routeflux-routing-item' }, [
+				E('span', { 'class': 'routeflux-routing-badge' }, [ _('Preset') ]),
+				E('span', { 'class': 'routeflux-routing-item-value' }, [ selectors.services[i] ]),
+				E('button', {
+					'class': 'cbi-button cbi-button-remove',
+					'type': 'button',
+					'click': ui.createHandlerFn(this, 'handleRemoveSelector', 'services', selectors.services[i])
+				}, [ _('Remove') ])
+			]));
+		}
+
+		for (i = 0; i < selectors.domains.length; i++) {
+			rows.push(E('div', { 'class': 'routeflux-routing-item' }, [
+				E('span', { 'class': 'routeflux-routing-badge routeflux-routing-badge-domain' }, [ _('Domain') ]),
+				E('span', { 'class': 'routeflux-routing-item-value' }, [ selectors.domains[i] ]),
+				E('button', {
+					'class': 'cbi-button cbi-button-remove',
+					'type': 'button',
+					'click': ui.createHandlerFn(this, 'handleRemoveSelector', 'domains', selectors.domains[i])
+				}, [ _('Remove') ])
+			]));
+		}
+
+		for (i = 0; i < selectors.cidrs.length; i++) {
+			rows.push(E('div', { 'class': 'routeflux-routing-item' }, [
+				E('span', { 'class': 'routeflux-routing-badge routeflux-routing-badge-ip' }, [ _('IPv4') ]),
+				E('span', { 'class': 'routeflux-routing-item-value' }, [ selectors.cidrs[i] ]),
+				E('button', {
+					'class': 'cbi-button cbi-button-remove',
+					'type': 'button',
+					'click': ui.createHandlerFn(this, 'handleRemoveSelector', 'cidrs', selectors.cidrs[i])
+				}, [ _('Remove') ])
+			]));
+		}
+
+		if (rows.length === 0)
+			return E('div', { 'class': 'routeflux-routing-empty' }, [ _('Nothing added yet.') ]);
+
+		return E('div', { 'class': 'routeflux-routing-list' }, rows);
+	},
+
+	renderExcludedItems: function(list) {
+		var values = listValues(list);
+		var rows = [];
+
+		for (var i = 0; i < values.length; i++) {
+			rows.push(E('div', { 'class': 'routeflux-routing-item' }, [
+				E('span', { 'class': 'routeflux-routing-badge routeflux-routing-badge-host' }, [ _('Host') ]),
+				E('span', { 'class': 'routeflux-routing-item-value' }, [ values[i] ]),
+				E('button', {
+					'class': 'cbi-button cbi-button-remove',
+					'type': 'button',
+					'click': ui.createHandlerFn(this, 'handleRemoveExcluded', values[i])
+				}, [ _('Remove') ])
+			]));
+		}
+
+		if (rows.length === 0)
+			return E('div', { 'class': 'routeflux-routing-empty' }, [ _('No excluded devices added.') ]);
+
+		return E('div', { 'class': 'routeflux-routing-list' }, rows);
+	},
+
+	renderSummaryShell: function(title, lines) {
+		var items = Array.isArray(lines) ? lines : [];
+
+		return E('div', { 'class': 'cbi-section' }, [
+			E('div', { 'class': 'routeflux-routing-summary-shell' }, [
+				E('h3', {}, [ title ]),
+				E('ul', { 'class': 'routeflux-routing-summary-list' }, items.map(function(line) {
+					return E('li', {}, [ line ]);
+				}))
+			])
+		]);
+	},
+
+	renderPageContent: function() {
+		var status = this.pageData.status || {};
+		var routing = this.pageData.firewall || canonicalFirewall({});
+		var dnsState = this.pageData.dns || canonicalDNS({});
+		var subscriptions = this.pageData.subscriptions || [];
 		var presentation = buildSubscriptionPresentation(subscriptions);
-		var explainText = data[3] && data[3].__error__ ? '' : trim(data[3]);
 		var connected = !!(status.state && status.state.connected === true);
 		var activeSubscription = status.active_subscription || {};
 		var activeNode = status.active_node || {};
-		var currentMode = firewallMode(firewall);
-		var selectedMode = formMode(firewall);
-		var selectorsDrafts = selectorsModeDrafts(firewall, currentMode, selectedMode);
-		var selectorsText = selectorsDrafts[selectedMode] || '';
 		var activeEntry = presentationForSubscription(activeSubscription, presentation);
 		var activeProvider = trim(activeSubscription.id) !== ''
 			? (activeEntry ? activeEntry.provider_title : providerTitle(activeSubscription))
@@ -672,34 +1104,69 @@ return view.extend({
 			? (activeEntry ? activeEntry.profile_label : _('Profile 1'))
 			: _('Not selected');
 		var activeNodeName = nodeDisplayName(activeNode, _('Not selected'));
+		var currentDNSLabel = dnsChoiceSummary(dnsState.choice);
 		var content = [];
 
-		if (data[0] && data[0].__error__)
-			ui.addNotification(null, notificationParagraph(_('Status error: %s').format(data[0].__error__)));
-
-		if (data[1] && data[1].__error__)
-			ui.addNotification(null, notificationParagraph(_('Firewall error: %s').format(data[1].__error__)));
-
-		if (data[2] && data[2].__error__)
-			ui.addNotification(null, notificationParagraph(_('Subscriptions error: %s').format(data[2].__error__)));
-
-		if (data[3] && data[3].__error__)
-			ui.addNotification(null, notificationParagraph(_('Firewall help error: %s').format(data[3].__error__)));
-
-		this.selectorDrafts = selectorsDrafts;
-		this.currentFormMode = selectedMode;
+		if (this.rootErrors.status !== '')
+			ui.addNotification(null, notificationParagraph(_('Status error: %s').format(this.rootErrors.status)));
+		if (this.rootErrors.firewall !== '')
+			ui.addNotification(null, notificationParagraph(_('Routing error: %s').format(this.rootErrors.firewall)));
+		if (this.rootErrors.subscriptions !== '')
+			ui.addNotification(null, notificationParagraph(_('Subscriptions error: %s').format(this.rootErrors.subscriptions)));
+		if (this.rootErrors.services !== '')
+			ui.addNotification(null, notificationParagraph(_('Services error: %s').format(this.rootErrors.services)));
+		if (this.rootErrors.dns !== '')
+			ui.addNotification(null, notificationParagraph(_('DNS error: %s').format(this.rootErrors.dns)));
 
 		content.push(routefluxUI.renderSharedStyles());
 		content.push(E('style', { 'type': 'text/css' }, [
-			'.routeflux-firewall-grid { display:grid; grid-template-columns:repeat(auto-fit, minmax(260px, 1fr)); gap:12px; margin-bottom:12px; }',
-			'.routeflux-firewall-grid textarea { min-height:140px; width:100%; }',
-			'.routeflux-firewall-actions { display:flex; flex-wrap:wrap; gap:10px; }',
-			'.routeflux-firewall-help { white-space:pre-wrap; margin:0; }'
+			'#routeflux-routing-root { --routeflux-routing-ink:#10263f; --routeflux-routing-ink-muted:#44566b; --routeflux-routing-ink-soft:#62758a; --routeflux-routing-panel-bg:linear-gradient(160deg, rgba(243, 248, 255, 0.98) 0%, rgba(230, 239, 249, 0.98) 56%, rgba(220, 232, 245, 0.98) 100%); --routeflux-routing-surface-bg:linear-gradient(180deg, rgba(255, 255, 255, 0.97) 0%, rgba(246, 250, 254, 0.97) 100%); --routeflux-routing-surface-strong:linear-gradient(180deg, #17324d 0%, #10243a 100%); }',
+			'.routeflux-routing-layout { display:grid; gap:14px; color:var(--routeflux-routing-ink); }',
+			'.routeflux-routing-grid { display:grid; grid-template-columns:repeat(auto-fit, minmax(240px, 1fr)); gap:12px; }',
+			'.routeflux-routing-panel { position:relative; overflow:hidden; isolation:isolate; border:1px solid rgba(120, 141, 167, 0.42); border-radius:22px; padding:20px; background:var(--routeflux-routing-panel-bg); box-shadow:0 20px 44px rgba(3, 15, 32, 0.22), inset 0 1px 0 rgba(255, 255, 255, 0.78); }',
+			'.routeflux-routing-panel::before { content:""; position:absolute; inset:0; background:radial-gradient(circle at top left, rgba(125, 211, 252, 0.22), transparent 34%), radial-gradient(circle at bottom right, rgba(59, 130, 246, 0.12), transparent 40%); pointer-events:none; }',
+			'.routeflux-routing-panel > * { position:relative; z-index:1; }',
+			'.routeflux-routing-panel h3 { margin:0; color:var(--routeflux-routing-ink); font-size:clamp(24px, 1.1vw + 18px, 34px); line-height:1.12; letter-spacing:-0.03em; }',
+			'.routeflux-routing-mode-grid, .routeflux-routing-dns-grid { display:grid; gap:14px; }',
+			'.routeflux-routing-choice { display:flex; gap:12px; align-items:flex-start; padding:16px 18px; border:1px solid rgba(120, 141, 167, 0.34); border-radius:18px; background:var(--routeflux-routing-surface-bg); box-shadow:0 14px 30px rgba(15, 23, 42, 0.08), inset 0 1px 0 rgba(255, 255, 255, 0.9); transition:transform .18s ease, border-color .18s ease, box-shadow .18s ease, background .18s ease; }',
+			'.routeflux-routing-choice:hover { transform:translateY(-1px); border-color:rgba(29, 118, 216, 0.42); box-shadow:0 16px 32px rgba(15, 23, 42, 0.12), inset 0 1px 0 rgba(255, 255, 255, 0.94); }',
+			'.routeflux-routing-choice-selected { border-color:rgba(29, 118, 216, 0.58); background:linear-gradient(180deg, rgba(255, 255, 255, 0.99) 0%, rgba(236, 245, 255, 0.99) 100%); box-shadow:0 18px 34px rgba(14, 116, 144, 0.16), inset 0 1px 0 rgba(255, 255, 255, 0.96); }',
+			'.routeflux-routing-choice input { margin-top:4px; accent-color:#0f6bdc; }',
+			'.routeflux-routing-choice-title { display:block; font-weight:800; font-size:clamp(18px, 0.55vw + 15px, 24px); color:var(--routeflux-routing-ink); letter-spacing:-0.02em; }',
+			'.routeflux-routing-choice-description { display:block; margin-top:6px; color:var(--routeflux-routing-ink-muted); line-height:1.55; font-size:15px; }',
+			'.routeflux-routing-editor-head { display:grid; gap:10px; margin-bottom:16px; }',
+			'.routeflux-routing-editor-head .cbi-section-descr { margin:0; color:var(--routeflux-routing-ink-muted); line-height:1.6; max-width:72ch; }',
+			'.routeflux-routing-editor-kicker { display:inline-flex; align-items:center; width:max-content; max-width:100%; padding:5px 11px; border-radius:999px; background:rgba(14, 165, 233, 0.14); color:#075985; font-size:12px; font-weight:800; letter-spacing:.08em; text-transform:uppercase; }',
+			'.routeflux-routing-panel .cbi-value-title { display:inline-block; margin-bottom:8px; color:var(--routeflux-routing-ink); font-weight:800; }',
+			'.routeflux-routing-editor-grid { display:grid; grid-template-columns:repeat(auto-fit, minmax(280px, 1fr)); gap:14px; margin-bottom:14px; }',
+			'.routeflux-routing-inline { display:flex; gap:10px; align-items:stretch; }',
+			'.routeflux-routing-inline > .cbi-input-text, .routeflux-routing-inline > .cbi-input-select { flex:1 1 auto; min-width:0; min-height:52px; padding:0 14px; border:1px solid rgba(71, 85, 105, 0.38); border-radius:15px; background:linear-gradient(180deg, rgba(255, 255, 255, 0.99) 0%, rgba(244, 248, 252, 0.99) 100%); color:var(--routeflux-routing-ink); box-shadow:inset 0 1px 0 rgba(255, 255, 255, 0.92), 0 10px 24px rgba(15, 23, 42, 0.08); }',
+			'.routeflux-routing-inline > .cbi-input-select { padding-right:44px; }',
+			'.routeflux-routing-inline .cbi-input-text::placeholder { color:rgba(68, 86, 107, 0.88); opacity:1; }',
+			'.routeflux-routing-inline > .cbi-input-text:focus, .routeflux-routing-inline > .cbi-input-select:focus { border-color:rgba(14, 165, 233, 0.72); box-shadow:0 0 0 1px rgba(14, 165, 233, 0.24), 0 16px 30px rgba(14, 165, 233, 0.16); }',
+			'.routeflux-routing-inline > .cbi-button-action { min-width:132px; min-height:52px; padding:0 18px; border:1px solid rgba(56, 189, 248, 0.44); border-radius:15px; background:var(--routeflux-routing-surface-strong); color:#eef8ff; font-weight:800; text-shadow:0 1px 0 rgba(0, 0, 0, 0.22); box-shadow:0 16px 28px rgba(3, 15, 32, 0.22); }',
+			'.routeflux-routing-inline > .cbi-button-action:hover, .routeflux-routing-actions .cbi-button:hover { border-color:rgba(96, 165, 250, 0.66); background:linear-gradient(180deg, #214365 0%, #16304a 100%); color:#ffffff; }',
+			'.routeflux-routing-list { display:grid; gap:8px; }',
+			'.routeflux-routing-item { display:flex; gap:12px; align-items:center; padding:12px 14px; border-radius:15px; background:rgba(255, 255, 255, 0.93); border:1px solid rgba(125, 145, 168, 0.28); box-shadow:0 10px 22px rgba(15, 23, 42, 0.08); }',
+			'.routeflux-routing-item-value { flex:1 1 auto; min-width:0; word-break:break-word; font-weight:700; color:var(--routeflux-routing-ink); }',
+			'.routeflux-routing-badge { display:inline-flex; align-items:center; justify-content:center; min-width:58px; padding:4px 8px; border-radius:999px; background:rgba(37, 99, 235, 0.13); color:#1d4ed8; font-size:11px; font-weight:800; letter-spacing:.05em; text-transform:uppercase; }',
+			'.routeflux-routing-badge-domain { background:rgba(16, 185, 129, 0.14); color:#047857; }',
+			'.routeflux-routing-badge-ip { background:rgba(249, 115, 22, 0.14); color:#c2410c; }',
+			'.routeflux-routing-badge-host { background:rgba(99, 102, 241, 0.14); color:#4338ca; }',
+			'.routeflux-routing-empty { padding:14px; border-radius:14px; background:rgba(255, 255, 255, 0.82); border:1px dashed rgba(125, 145, 168, 0.42); color:var(--routeflux-routing-ink-muted); }',
+			'.routeflux-routing-actions { display:flex; flex-wrap:wrap; gap:10px; }',
+			'.routeflux-routing-actions .cbi-button { min-height:48px; padding:0 18px; border:1px solid rgba(56, 189, 248, 0.38); border-radius:15px; background:var(--routeflux-routing-surface-strong); color:#eef8ff; font-weight:800; text-shadow:0 1px 0 rgba(0, 0, 0, 0.22); box-shadow:0 16px 30px rgba(3, 15, 32, 0.18); }',
+			'.routeflux-routing-summary-shell { padding:16px 18px; border:1px solid rgba(125, 145, 168, 0.34); border-radius:16px; background:rgba(255, 255, 255, 0.84); box-shadow:0 10px 22px rgba(15, 23, 42, 0.08); }',
+			'.routeflux-routing-summary-shell h3 { margin-top:0; margin-bottom:10px; color:var(--routeflux-routing-ink); font-size:20px; letter-spacing:-0.02em; }',
+			'.routeflux-routing-summary-list { margin:0; padding-left:18px; color:var(--routeflux-routing-ink-muted); line-height:1.55; }',
+			'.routeflux-routing-optional summary { cursor:pointer; font-weight:800; color:var(--routeflux-routing-ink); }',
+			'.routeflux-routing-optional-shell { margin-top:12px; }',
+			'@media (max-width: 720px) { .routeflux-routing-inline { flex-direction:column; } .routeflux-routing-inline > .cbi-button-action, .routeflux-routing-actions .cbi-button { width:100%; } }'
 		]));
 
-		content.push(E('h2', {}, [ _('RouteFlux - Firewall') ]));
+		content.push(E('h2', {}, [ _('RouteFlux - Routing') ]));
 		content.push(E('p', { 'class': 'cbi-section-descr' }, [
-			_('Manage transparent routing for selected LAN hosts, explicit proxy targets, or anti-target bypass lists without leaving LuCI. Use the Services tab to create custom target aliases for any service.')
+			_('RouteFlux status, the active connection, and the basic routing actions you need every day.')
 		]));
 
 		content.push(E('div', { 'class': 'routeflux-overview-grid' }, [
@@ -707,127 +1174,197 @@ return view.extend({
 				'tone': routefluxUI.statusTone(connected),
 				'primary': true
 			}),
-			this.renderCard(_('Mode'), modeSummary(currentMode)),
-			this.renderCard(_('Transparent Port'), String(firewall.transparent_port || 12345)),
-			this.renderCard(_('Block QUIC'), firewall.block_quic === true ? _('Enabled') : _('Disabled')),
+			this.renderCard(_('Routing Mode'), modeSummary(routing.current_mode)),
+			this.renderCard(_('DNS Profile'), currentDNSLabel),
 			this.renderCard(_('Active Provider'), activeProvider),
 			this.renderCard(_('Active Profile'), activeProfile),
 			this.renderCard(_('Active Node'), activeNodeName)
 		]));
 
-		if (currentMode === 'mixed') {
+		if (routing.warning !== '') {
 			content.push(E('div', { 'class': 'cbi-section' }, [
-				E('div', { 'class': 'alert-message warning' }, [
-					_('A mixed firewall state was detected with both hosts and targets configured. This page edits one mode at a time; saving will normalize the configuration.')
-				])
+				E('div', { 'class': 'alert-message warning' }, [ routing.warning ])
 			]));
-		} else if (currentMode !== 'disabled' && !connected) {
-			content.push(E('div', { 'class': 'cbi-section' }, [
-				E('div', { 'class': 'alert-message' }, [
-					_('Transparent routing settings are saved, but RouteFlux is currently disconnected. Connect a node to apply the nftables rules.')
-				])
-			]));
+			content.push(this.renderSummaryShell(_('Current Routing Summary'), routing.summary_lines));
 		}
 
-		content.push(E('div', { 'class': 'cbi-section' }, [
-			E('h3', {}, [ _('Configuration') ]),
-			E('div', { 'class': 'routeflux-firewall-grid' }, [
-				E('div', { 'class': 'cbi-value' }, [
-					E('label', { 'class': 'cbi-value-title', 'for': 'routeflux-firewall-mode' }, [ _('Mode') ]),
-					E('div', { 'class': 'cbi-value-field' }, [
-						E('select', {
-							'id': 'routeflux-firewall-mode',
-							'change': ui.createHandlerFn(this, 'handleModeChange')
-						}, [
-							E('option', { 'value': 'disabled', 'selected': selectedMode === 'disabled' ? 'selected' : null }, [ _('Disabled') ]),
-							E('option', { 'value': 'hosts', 'selected': selectedMode === 'hosts' ? 'selected' : null }, [ _('Hosts') ]),
-							E('option', { 'value': 'targets', 'selected': selectedMode === 'targets' ? 'selected' : null }, [ _('Targets') ]),
-							E('option', { 'value': 'anti-target', 'selected': selectedMode === 'anti-target' ? 'selected' : null }, [ _('Anti-target') ])
-						])
-					]),
-					E('div', { 'class': 'cbi-value-description' }, [
-						_('Hosts routes all traffic from selected LAN clients. Targets proxies only selected resources. Anti-target keeps selected resources direct and proxies everything else from LAN clients.')
-					])
-				]),
-				E('div', { 'class': 'cbi-value' }, [
-					E('label', { 'class': 'cbi-value-title', 'for': 'routeflux-firewall-port' }, [ _('Transparent Port') ]),
-					E('div', { 'class': 'cbi-value-field' }, [
-						E('input', {
-							'id': 'routeflux-firewall-port',
-							'class': 'cbi-input-text',
-							'type': 'number',
-							'min': '1',
-							'value': String(firewall.transparent_port || 12345)
-						})
-					]),
-					E('div', { 'class': 'cbi-value-description' }, [
-						_('Transparent redirect port used by nftables and the generated Xray runtime config.')
-					])
-				]),
-				E('div', {
-					'id': 'routeflux-firewall-selectors-row',
-					'class': 'cbi-value',
-					'style': 'grid-column:1 / -1'
-				}, [
-					E('label', { 'id': 'routeflux-firewall-selectors-label', 'class': 'cbi-value-title', 'for': 'routeflux-firewall-selectors' }, [ _('Selectors') ]),
-					E('div', { 'class': 'cbi-value-field' }, [
-						E('textarea', {
-							'id': 'routeflux-firewall-selectors',
-							'class': 'cbi-input-textarea'
-						}, [ selectorsText ])
-					]),
-					E('div', { 'id': 'routeflux-firewall-selectors-help', 'class': 'cbi-value-description' }, [
-						'\u00a0'
-					])
-				]),
-				E('div', {
-					'class': 'cbi-value',
-					'style': 'grid-column:1 / -1'
-				}, [
-					E('label', { 'class': 'cbi-value-title', 'for': 'routeflux-firewall-block-quic' }, [ _('Block QUIC') ]),
-					E('div', { 'class': 'cbi-value-field' }, [
-						E('label', { 'style': 'display:flex; gap:8px; align-items:center;' }, [
+		if (dnsState.warning !== '') {
+			content.push(E('div', { 'class': 'cbi-section' }, [
+				E('div', { 'class': 'alert-message warning' }, [ dnsState.warning ])
+			]));
+			content.push(this.renderSummaryShell(_('Current DNS Summary'), dnsState.summary_lines));
+		}
+
+		content.push(E('div', { 'class': 'cbi-section routeflux-routing-layout' }, [
+			E('div', { 'class': 'routeflux-routing-grid' }, [
+				E('div', { 'class': 'routeflux-routing-panel' }, [
+					E('h3', {}, [ _('Routing') ]),
+					E('div', { 'class': 'routeflux-routing-mode-grid' }, [
+						E('label', { 'class': choiceClass(this.formState.mode === 'disabled') }, [
 							E('input', {
-								'id': 'routeflux-firewall-block-quic',
-								'type': 'checkbox',
-								'checked': firewall.block_quic === true ? 'checked' : null
+								'type': 'radio',
+								'name': 'routeflux-routing-mode',
+								'value': 'disabled',
+								'checked': this.formState.mode === 'disabled' ? 'checked' : null,
+								'change': L.bind(function(ev) {
+									this.handleModeChange(ev);
+								}, this)
 							}),
-							_('Keep a legacy QUIC-compatibility flag for older TCP-only routing setups.')
+							E('span', {}, [
+								E('span', { 'class': 'routeflux-routing-choice-title' }, [ _('Off') ]),
+								E('span', { 'class': 'routeflux-routing-choice-description' }, [
+									_('Keep RouteFlux connected if you want, but do not intercept router traffic from LuCI.')
+								])
+							])
+						]),
+						E('label', { 'class': choiceClass(this.formState.mode === 'bypass') }, [
+							E('input', {
+								'type': 'radio',
+								'name': 'routeflux-routing-mode',
+								'value': 'bypass',
+								'checked': this.formState.mode === 'bypass' ? 'checked' : null,
+								'change': L.bind(function(ev) {
+									this.handleModeChange(ev);
+								}, this)
+							}),
+							E('span', {}, [
+								E('span', { 'class': 'routeflux-routing-choice-title' }, [ _('Bypass') ]),
+								E('span', { 'class': 'routeflux-routing-choice-description' }, [
+									_('Proxy everything except the services, domains, IPv4 targets, and optional device exclusions listed below.')
+								])
+							])
 						])
-					]),
-					E('div', { 'id': 'routeflux-firewall-block-quic-help', 'class': 'cbi-value-description' }, [
-						'\u00a0'
+					])
+				]),
+				E('div', { 'class': 'routeflux-routing-panel' }, [
+					E('h3', {}, [ _('DNS') ]),
+					E('div', { 'class': 'routeflux-routing-dns-grid' }, [
+						E('label', { 'class': choiceClass(this.formState.dns_choice === 'system') }, [
+							E('input', {
+								'type': 'radio',
+								'name': 'routeflux-routing-dns',
+								'value': 'system',
+								'checked': this.formState.dns_choice === 'system' ? 'checked' : null,
+								'change': L.bind(function(ev) {
+									this.handleDNSChoiceChange(ev);
+								}, this)
+							}),
+							E('span', {}, [
+								E('span', { 'class': 'routeflux-routing-choice-title' }, [ _('System DNS') ]),
+								E('span', { 'class': 'routeflux-routing-choice-description' }, [
+									_('Leave DNS exactly as the router already handles it.')
+								])
+							])
+						]),
+						E('label', { 'class': choiceClass(this.formState.dns_choice === 'default') }, [
+							E('input', {
+								'type': 'radio',
+								'name': 'routeflux-routing-dns',
+								'value': 'default',
+								'checked': this.formState.dns_choice === 'default' ? 'checked' : null,
+								'change': L.bind(function(ev) {
+									this.handleDNSChoiceChange(ev);
+								}, this)
+							}),
+							E('span', {}, [
+								E('span', { 'class': 'routeflux-routing-choice-title' }, [ _('RouteFlux Recommended DNS') ]),
+								E('span', { 'class': 'routeflux-routing-choice-description' }, [
+									_('Use the everyday RouteFlux DNS profile: encrypted public DNS with local names kept on the router.')
+								])
+							])
+						])
 					])
 				])
 			]),
-			E('div', { 'class': 'routeflux-firewall-actions' }, [
-				E('button', {
-					'class': 'cbi-button cbi-button-apply',
-					'click': ui.createHandlerFn(this, 'handleSaveSettings')
-				}, [ _('Save') ]),
-				E('button', {
-					'class': 'cbi-button cbi-button-reset',
-					'click': ui.createHandlerFn(this, 'handleDisable'),
-					'disabled': currentMode === 'disabled' ? 'disabled' : null
-				}, [ _('Disable Routing') ])
-			])
-		]));
-
-		content.push(E('div', { 'class': 'cbi-section' }, [
-			E('details', { 'open': 'open' }, [
-				E('summary', {}, [ _('Help') ]),
-				E('pre', { 'class': 'routeflux-firewall-help' }, [
-					explainText || _('No firewall help text is available.')
+			E('div', { 'class': 'routeflux-routing-panel' }, [
+				E('div', { 'class': 'routeflux-routing-editor-head' }, [
+					E('span', { 'class': 'routeflux-routing-editor-kicker' }, [ _('Bypass') ]),
+					E('h3', {}, [ _('Keep Direct') ]),
+					E('p', { 'class': 'cbi-section-descr' }, [
+						_('Add built-in presets, custom aliases, domains, or IPv4 ranges that should stay direct while bypass mode is active.')
+					])
+				]),
+				E('div', { 'class': 'routeflux-routing-editor-grid' }, [
+					E('div', { 'class': 'cbi-value' }, [
+						E('label', { 'class': 'cbi-value-title' }, [ _('Service Preset') ]),
+						E('div', { 'class': 'routeflux-routing-inline' }, [
+							E('select', {
+								'class': 'cbi-input-select',
+								'change': L.bind(function(ev) {
+									this.handleServiceChoiceChange(ev);
+								}, this)
+							}, this.renderServiceOptions(this.formState.bypass.selectors.serviceChoice)),
+							E('button', {
+								'class': 'cbi-button cbi-button-action',
+								'type': 'button',
+								'click': ui.createHandlerFn(this, 'handleAddService')
+							}, [ _('Add Preset') ])
+						])
+					]),
+					E('div', { 'class': 'cbi-value' }, [
+						E('label', { 'class': 'cbi-value-title' }, [ _('Extra Domain or IPv4') ]),
+						E('div', { 'class': 'routeflux-routing-inline' }, [
+							E('input', {
+								'class': 'cbi-input-text',
+								'type': 'text',
+								'placeholder': _('Examples: gosuslugi.ru 203.0.113.10 203.0.113.10-203.0.113.20'),
+								'value': this.formState.bypass.selectors.selectorInput,
+								'input': L.bind(function(ev) {
+									this.handleSelectorInputChange(ev);
+								}, this)
+							}),
+							E('button', {
+								'class': 'cbi-button cbi-button-action',
+								'type': 'button',
+								'click': ui.createHandlerFn(this, 'handleAddSelector')
+							}, [ _('Add Selector') ])
+						])
+					])
+				]),
+				this.renderSelectorItems(this.formState.bypass.selectors),
+				E('div', { 'class': 'routeflux-routing-optional-shell' }, [
+					E('details', { 'class': 'routeflux-routing-optional' }, [
+						E('summary', {}, [ _('Excluded Devices') ]),
+						E('div', { 'class': 'routeflux-routing-editor-grid', 'style': 'margin-top:12px;' }, [
+							E('div', { 'class': 'cbi-value' }, [
+								E('label', { 'class': 'cbi-value-title' }, [ _('Excluded Devices') ]),
+								E('div', { 'class': 'routeflux-routing-inline' }, [
+									E('input', {
+										'class': 'cbi-input-text',
+										'type': 'text',
+										'placeholder': _('Examples: 192.168.1.50 192.168.1.0/24 192.168.1.10-192.168.1.20 all'),
+										'value': this.formState.bypass.excluded.input,
+										'input': L.bind(function(ev) {
+											this.handleExcludedInputChange(ev);
+										}, this)
+									}),
+									E('button', {
+										'class': 'cbi-button cbi-button-action',
+										'type': 'button',
+										'click': ui.createHandlerFn(this, 'handleAddExcluded')
+									}, [ _('Add') ])
+								])
+							])
+						]),
+						this.renderExcludedItems(this.formState.bypass.excluded)
+					])
+				]),
+				E('div', { 'class': 'routeflux-routing-actions' }, [
+					E('button', {
+						'class': 'cbi-button cbi-button-apply',
+						'type': 'button',
+						'click': ui.createHandlerFn(this, 'handleSaveSettings')
+					}, [ _('Save') ])
 				])
 			])
 		]));
 
-		window.setTimeout(L.bind(function() {
-			this.updateModeUI(selectedMode);
-			this.restoreDraftText(selectedMode);
-		}, this), 0);
+		return content;
+	},
 
-		return E(content);
+	render: function(data) {
+		this.initializePageState(data);
+		return E('div', { 'id': 'routeflux-routing-root' }, this.renderPageContent());
 	},
 
 	handleSave: null,

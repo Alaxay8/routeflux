@@ -58,6 +58,9 @@ func TestLoadSettingsMigratesMissingSchemaVersion(t *testing.T) {
 	if settings.Firewall.TransparentPort != domain.DefaultSettings().Firewall.TransparentPort {
 		t.Fatalf("expected default firewall port, got %d", settings.Firewall.TransparentPort)
 	}
+	if settings.Firewall.BlockQUIC {
+		t.Fatal("expected legacy settings to migrate to QUIC proxying by default")
+	}
 }
 
 func TestLoadSettingsPreservesLegacyFirewallTargetsWithoutDomains(t *testing.T) {
@@ -82,14 +85,17 @@ func TestLoadSettingsPreservesLegacyFirewallTargetsWithoutDomains(t *testing.T) 
 		t.Fatalf("load settings: %v", err)
 	}
 
-	if !reflect.DeepEqual(settings.Firewall.TargetCIDRs, []string{"1.1.1.1", "8.8.8.8/32"}) {
-		t.Fatalf("unexpected target cidrs: %+v", settings.Firewall.TargetCIDRs)
+	if settings.Firewall.Mode != domain.FirewallModeTargets {
+		t.Fatalf("unexpected firewall mode: %q", settings.Firewall.Mode)
 	}
-	if len(settings.Firewall.TargetServices) != 0 {
-		t.Fatalf("expected no target services, got %+v", settings.Firewall.TargetServices)
+	if !reflect.DeepEqual(settings.Firewall.Targets.CIDRs, []string{"1.1.1.1", "8.8.8.8/32"}) {
+		t.Fatalf("unexpected target cidrs: %+v", settings.Firewall.Targets.CIDRs)
 	}
-	if len(settings.Firewall.TargetDomains) != 0 {
-		t.Fatalf("expected no target domains, got %+v", settings.Firewall.TargetDomains)
+	if len(settings.Firewall.Targets.Services) != 0 {
+		t.Fatalf("expected no target services, got %+v", settings.Firewall.Targets.Services)
+	}
+	if len(settings.Firewall.Targets.Domains) != 0 {
+		t.Fatalf("expected no target domains, got %+v", settings.Firewall.Targets.Domains)
 	}
 }
 
@@ -116,11 +122,14 @@ func TestLoadSettingsDecodesTargetServices(t *testing.T) {
 		t.Fatalf("load settings: %v", err)
 	}
 
-	if !reflect.DeepEqual(settings.Firewall.TargetServices, []string{"youtube", "telegram"}) {
-		t.Fatalf("unexpected target services: %+v", settings.Firewall.TargetServices)
+	if settings.Firewall.Mode != domain.FirewallModeTargets {
+		t.Fatalf("unexpected firewall mode: %q", settings.Firewall.Mode)
 	}
-	if !reflect.DeepEqual(settings.Firewall.TargetDomains, []string{"example.com"}) {
-		t.Fatalf("unexpected target domains: %+v", settings.Firewall.TargetDomains)
+	if !reflect.DeepEqual(settings.Firewall.Targets.Services, []string{"youtube", "telegram"}) {
+		t.Fatalf("unexpected target services: %+v", settings.Firewall.Targets.Services)
+	}
+	if !reflect.DeepEqual(settings.Firewall.Targets.Domains, []string{"example.com"}) {
+		t.Fatalf("unexpected target domains: %+v", settings.Firewall.Targets.Domains)
 	}
 }
 
@@ -161,7 +170,7 @@ func TestLoadSettingsDecodesTargetServiceCatalog(t *testing.T) {
 	}
 }
 
-func TestLoadSettingsDecodesFirewallTargetMode(t *testing.T) {
+func TestLoadSettingsMigratesLegacyAntiTargetModeToSplit(t *testing.T) {
 	t.Parallel()
 
 	root := t.TempDir()
@@ -183,8 +192,14 @@ func TestLoadSettingsDecodesFirewallTargetMode(t *testing.T) {
 		t.Fatalf("load settings: %v", err)
 	}
 
-	if settings.Firewall.TargetMode != domain.FirewallTargetModeBypass {
-		t.Fatalf("unexpected firewall target mode: %q", settings.Firewall.TargetMode)
+	if settings.Firewall.Mode != domain.FirewallModeSplit {
+		t.Fatalf("unexpected firewall mode: %q", settings.Firewall.Mode)
+	}
+	if settings.Firewall.Split.DefaultAction != domain.FirewallDefaultActionProxy {
+		t.Fatalf("unexpected split default action: %q", settings.Firewall.Split.DefaultAction)
+	}
+	if !reflect.DeepEqual(settings.Firewall.Split.Bypass.Domains, []string{"example.com"}) {
+		t.Fatalf("unexpected split bypass domains: %+v", settings.Firewall.Split.Bypass.Domains)
 	}
 	if !reflect.DeepEqual(settings.Firewall.ModeDrafts, domain.FirewallModeDrafts{}) {
 		t.Fatalf("expected empty mode drafts for schema 5, got %+v", settings.Firewall.ModeDrafts)
@@ -239,8 +254,14 @@ func TestLoadSettingsDecodesFirewallModeDraftsAndCompositeCatalog(t *testing.T) 
 	if want := []string{"daily"}; !reflect.DeepEqual(settings.Firewall.ModeDrafts.Targets.TargetServices, want) {
 		t.Fatalf("unexpected targets draft services: %+v", settings.Firewall.ModeDrafts.Targets.TargetServices)
 	}
-	if want := []string{"banking"}; !reflect.DeepEqual(settings.Firewall.ModeDrafts.AntiTarget.TargetServices, want) {
-		t.Fatalf("unexpected anti-target draft services: %+v", settings.Firewall.ModeDrafts.AntiTarget.TargetServices)
+	if want := []string{"banking"}; !reflect.DeepEqual(settings.Firewall.ModeDrafts.Split.Bypass.Services, want) {
+		t.Fatalf("unexpected split bypass draft services: %+v", settings.Firewall.ModeDrafts.Split.Bypass.Services)
+	}
+	if want := []string{"bank.example"}; !reflect.DeepEqual(settings.Firewall.ModeDrafts.Split.Bypass.Domains, want) {
+		t.Fatalf("unexpected split bypass draft domains: %+v", settings.Firewall.ModeDrafts.Split.Bypass.Domains)
+	}
+	if want := []string{"203.0.113.10"}; !reflect.DeepEqual(settings.Firewall.ModeDrafts.Split.Bypass.CIDRs, want) {
+		t.Fatalf("unexpected split bypass draft cidrs: %+v", settings.Firewall.ModeDrafts.Split.Bypass.CIDRs)
 	}
 	if want := map[string]domain.FirewallTargetDefinition{
 		"daily": {
@@ -250,6 +271,100 @@ func TestLoadSettingsDecodesFirewallModeDraftsAndCompositeCatalog(t *testing.T) 
 		},
 	}; !reflect.DeepEqual(settings.Firewall.TargetServiceCatalog, want) {
 		t.Fatalf("unexpected target service catalog:\nwant: %+v\n got: %+v", want, settings.Firewall.TargetServiceCatalog)
+	}
+}
+
+func TestLoadSettingsMigratesLegacyBlockQUICToDisabled(t *testing.T) {
+	t.Parallel()
+
+	root := t.TempDir()
+	fileStore := store.NewFileStore(root)
+
+	settingsJSON := `{
+  "schema_version": 6,
+  "firewall": {
+    "enabled": true,
+    "source_cidrs": ["192.168.1.150"],
+    "block_quic": true
+  }
+}`
+	if err := os.WriteFile(filepath.Join(root, "settings.json"), []byte(settingsJSON), 0o644); err != nil {
+		t.Fatalf("write settings file: %v", err)
+	}
+
+	settings, err := fileStore.LoadSettings()
+	if err != nil {
+		t.Fatalf("load settings: %v", err)
+	}
+
+	if settings.Firewall.Mode != domain.FirewallModeHosts {
+		t.Fatalf("unexpected firewall mode: %q", settings.Firewall.Mode)
+	}
+	if !reflect.DeepEqual(settings.Firewall.Hosts, []string{"192.168.1.150"}) {
+		t.Fatalf("unexpected migrated hosts: %+v", settings.Firewall.Hosts)
+	}
+	if settings.Firewall.BlockQUIC {
+		t.Fatal("expected schema 6 settings to migrate to block_quic=false")
+	}
+}
+
+func TestLoadSettingsPreservesBlockQUICForCurrentSchema(t *testing.T) {
+	t.Parallel()
+
+	root := t.TempDir()
+	fileStore := store.NewFileStore(root)
+
+	settingsJSON := `{
+  "schema_version": 7,
+  "firewall": {
+    "enabled": true,
+    "source_cidrs": ["192.168.1.150"],
+    "block_quic": true
+  }
+}`
+	if err := os.WriteFile(filepath.Join(root, "settings.json"), []byte(settingsJSON), 0o644); err != nil {
+		t.Fatalf("write settings file: %v", err)
+	}
+
+	settings, err := fileStore.LoadSettings()
+	if err != nil {
+		t.Fatalf("load settings: %v", err)
+	}
+
+	if settings.Firewall.Mode != domain.FirewallModeHosts {
+		t.Fatalf("unexpected firewall mode: %q", settings.Firewall.Mode)
+	}
+	if !reflect.DeepEqual(settings.Firewall.Hosts, []string{"192.168.1.150"}) {
+		t.Fatalf("unexpected migrated hosts: %+v", settings.Firewall.Hosts)
+	}
+	if !settings.Firewall.BlockQUIC {
+		t.Fatal("expected current schema settings to preserve block_quic=true")
+	}
+}
+
+func TestLoadSettingsPreservesDisableIPv6ForCurrentSchema(t *testing.T) {
+	t.Parallel()
+
+	root := t.TempDir()
+	fileStore := store.NewFileStore(root)
+
+	settingsJSON := `{
+  "schema_version": 8,
+  "firewall": {
+    "disable_ipv6": true
+  }
+}`
+	if err := os.WriteFile(filepath.Join(root, "settings.json"), []byte(settingsJSON), 0o644); err != nil {
+		t.Fatalf("write settings file: %v", err)
+	}
+
+	settings, err := fileStore.LoadSettings()
+	if err != nil {
+		t.Fatalf("load settings: %v", err)
+	}
+
+	if !settings.Firewall.DisableIPv6 {
+		t.Fatal("expected current schema settings to preserve disable_ipv6=true")
 	}
 }
 

@@ -2,6 +2,7 @@ package app
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"net"
@@ -22,6 +23,17 @@ func writeResponse(w http.ResponseWriter, body string) {
 	_, _ = io.WriteString(w, body)
 }
 
+func assertSubscriptionTraffic(t *testing.T, sub domain.Subscription, upload, download, total int64) {
+	t.Helper()
+
+	if sub.Traffic == nil {
+		t.Fatal("expected subscription traffic metadata")
+	}
+	if sub.Traffic.UploadBytes != upload || sub.Traffic.DownloadBytes != download || sub.Traffic.TotalBytes != total {
+		t.Fatalf("unexpected traffic metadata: got %+v want upload=%d download=%d total=%d", sub.Traffic, upload, download, total)
+	}
+}
+
 func TestConfigureFirewallHostsClearsDestinationTargets(t *testing.T) {
 	t.Parallel()
 
@@ -29,7 +41,8 @@ func TestConfigureFirewallHostsClearsDestinationTargets(t *testing.T) {
 		settings: domain.DefaultSettings(),
 		state:    domain.DefaultRuntimeState(),
 	}
-	store.settings.Firewall.TargetCIDRs = []string{"1.1.1.1"}
+	store.settings.Firewall.Mode = domain.FirewallModeTargets
+	store.settings.Firewall.Targets = domain.FirewallSelectorSet{CIDRs: []string{"1.1.1.1"}}
 
 	service := NewService(Dependencies{Store: store})
 
@@ -44,20 +57,20 @@ func TestConfigureFirewallHostsClearsDestinationTargets(t *testing.T) {
 	if settings.TransparentPort != 23456 {
 		t.Fatalf("unexpected transparent port: %d", settings.TransparentPort)
 	}
-	if len(settings.TargetCIDRs) != 0 {
-		t.Fatalf("expected destination targets to be cleared, got %v", settings.TargetCIDRs)
+	if len(settings.Targets.CIDRs) != 0 {
+		t.Fatalf("expected destination targets to be cleared, got %v", settings.Targets.CIDRs)
 	}
-	if len(settings.TargetDomains) != 0 {
-		t.Fatalf("expected destination target domains to be cleared, got %v", settings.TargetDomains)
+	if len(settings.Targets.Domains) != 0 {
+		t.Fatalf("expected destination target domains to be cleared, got %v", settings.Targets.Domains)
 	}
-	if len(settings.TargetServices) != 0 {
-		t.Fatalf("expected destination target services to be cleared, got %v", settings.TargetServices)
+	if len(settings.Targets.Services) != 0 {
+		t.Fatalf("expected destination target services to be cleared, got %v", settings.Targets.Services)
 	}
-	if len(settings.SourceCIDRs) != 1 || settings.SourceCIDRs[0] != "192.168.1.150" {
-		t.Fatalf("unexpected source hosts: %v", settings.SourceCIDRs)
+	if len(settings.Hosts) != 1 || settings.Hosts[0] != "192.168.1.150" {
+		t.Fatalf("unexpected source hosts: %v", settings.Hosts)
 	}
-	if !settings.BlockQUIC {
-		t.Fatal("expected QUIC blocking to be enabled for host routing")
+	if settings.BlockQUIC {
+		t.Fatal("expected QUIC proxying to stay enabled for host routing by default")
 	}
 }
 
@@ -84,16 +97,16 @@ func TestConfigureFirewallParsesMixedTargetsAndValidatesBeforeSave(t *testing.T)
 	if len(firewall.validated) != 1 {
 		t.Fatalf("expected validate to be called once, got %d", len(firewall.validated))
 	}
-	if !reflect.DeepEqual(firewall.validated[0].TargetServices, []string{"youtube"}) {
-		t.Fatalf("unexpected validated target services: %+v", firewall.validated[0].TargetServices)
+	if !reflect.DeepEqual(firewall.validated[0].Targets.Services, []string{"youtube"}) {
+		t.Fatalf("unexpected validated target services: %+v", firewall.validated[0].Targets.Services)
 	}
-	if !reflect.DeepEqual(firewall.validated[0].TargetCIDRs, []string{"1.1.1.1"}) {
-		t.Fatalf("unexpected validated target cidrs: %+v", firewall.validated[0].TargetCIDRs)
+	if !reflect.DeepEqual(firewall.validated[0].Targets.CIDRs, []string{"1.1.1.1"}) {
+		t.Fatalf("unexpected validated target cidrs: %+v", firewall.validated[0].Targets.CIDRs)
 	}
-	if !reflect.DeepEqual(firewall.validated[0].TargetDomains, []string{"youtube.com"}) {
-		t.Fatalf("unexpected validated target domains: %+v", firewall.validated[0].TargetDomains)
+	if !reflect.DeepEqual(firewall.validated[0].Targets.Domains, []string{"youtube.com"}) {
+		t.Fatalf("unexpected validated target domains: %+v", firewall.validated[0].Targets.Domains)
 	}
-	if len(store.settings.Firewall.TargetServices) != 0 || len(store.settings.Firewall.TargetCIDRs) != 0 || len(store.settings.Firewall.TargetDomains) != 0 {
+	if len(store.settings.Firewall.Targets.Services) != 0 || len(store.settings.Firewall.Targets.CIDRs) != 0 || len(store.settings.Firewall.Targets.Domains) != 0 {
 		t.Fatalf("expected settings to stay unchanged on validate failure, got %+v", store.settings.Firewall)
 	}
 }
@@ -105,7 +118,8 @@ func TestConfigureFirewallClearsHostsAndStoresTargetSelectors(t *testing.T) {
 		settings: domain.DefaultSettings(),
 		state:    domain.DefaultRuntimeState(),
 	}
-	store.settings.Firewall.SourceCIDRs = []string{"192.168.1.150"}
+	store.settings.Firewall.Mode = domain.FirewallModeHosts
+	store.settings.Firewall.Hosts = []string{"192.168.1.150"}
 
 	service := NewService(Dependencies{Store: store, Firewaller: &recordingFirewaller{}})
 
@@ -114,17 +128,17 @@ func TestConfigureFirewallClearsHostsAndStoresTargetSelectors(t *testing.T) {
 		t.Fatalf("configure firewall: %v", err)
 	}
 
-	if len(settings.SourceCIDRs) != 0 {
-		t.Fatalf("expected hosts to be cleared, got %v", settings.SourceCIDRs)
+	if len(settings.Hosts) != 0 {
+		t.Fatalf("expected hosts to be cleared, got %v", settings.Hosts)
 	}
-	if !reflect.DeepEqual(settings.TargetServices, []string{"youtube"}) {
-		t.Fatalf("unexpected target services: %+v", settings.TargetServices)
+	if !reflect.DeepEqual(settings.Targets.Services, []string{"youtube"}) {
+		t.Fatalf("unexpected target services: %+v", settings.Targets.Services)
 	}
-	if !reflect.DeepEqual(settings.TargetCIDRs, []string{"1.1.1.1"}) {
-		t.Fatalf("unexpected target cidrs: %+v", settings.TargetCIDRs)
+	if !reflect.DeepEqual(settings.Targets.CIDRs, []string{"1.1.1.1"}) {
+		t.Fatalf("unexpected target cidrs: %+v", settings.Targets.CIDRs)
 	}
-	if !reflect.DeepEqual(settings.TargetDomains, []string{"youtube.com"}) {
-		t.Fatalf("unexpected target domains: %+v", settings.TargetDomains)
+	if !reflect.DeepEqual(settings.Targets.Domains, []string{"youtube.com"}) {
+		t.Fatalf("unexpected target domains: %+v", settings.Targets.Domains)
 	}
 }
 
@@ -135,7 +149,8 @@ func TestConfigureFirewallAntiTargetsClearsHostsAndStoresTargetSelectors(t *test
 		settings: domain.DefaultSettings(),
 		state:    domain.DefaultRuntimeState(),
 	}
-	store.settings.Firewall.SourceCIDRs = []string{"192.168.1.150"}
+	store.settings.Firewall.Mode = domain.FirewallModeHosts
+	store.settings.Firewall.Hosts = []string{"192.168.1.150"}
 
 	service := NewService(Dependencies{Store: store, Firewaller: &recordingFirewaller{}})
 
@@ -144,20 +159,185 @@ func TestConfigureFirewallAntiTargetsClearsHostsAndStoresTargetSelectors(t *test
 		t.Fatalf("configure firewall anti-targets: %v", err)
 	}
 
-	if len(settings.SourceCIDRs) != 0 {
-		t.Fatalf("expected hosts to be cleared, got %v", settings.SourceCIDRs)
+	if len(settings.Hosts) != 0 {
+		t.Fatalf("expected hosts to be cleared, got %v", settings.Hosts)
 	}
-	if settings.TargetMode != domain.FirewallTargetModeBypass {
-		t.Fatalf("expected target mode bypass, got %q", settings.TargetMode)
+	if settings.Mode != domain.FirewallModeSplit {
+		t.Fatalf("expected split mode, got %q", settings.Mode)
 	}
-	if !reflect.DeepEqual(settings.TargetServices, []string{"youtube"}) {
-		t.Fatalf("unexpected target services: %+v", settings.TargetServices)
+	if settings.Split.DefaultAction != domain.FirewallDefaultActionProxy {
+		t.Fatalf("expected split default action proxy, got %q", settings.Split.DefaultAction)
 	}
-	if !reflect.DeepEqual(settings.TargetCIDRs, []string{"1.1.1.1"}) {
-		t.Fatalf("unexpected target cidrs: %+v", settings.TargetCIDRs)
+	if !reflect.DeepEqual(settings.Split.Bypass.Services, []string{"youtube"}) {
+		t.Fatalf("unexpected target services: %+v", settings.Split.Bypass.Services)
 	}
-	if !reflect.DeepEqual(settings.TargetDomains, []string{"youtube.com"}) {
-		t.Fatalf("unexpected target domains: %+v", settings.TargetDomains)
+	if !reflect.DeepEqual(settings.Split.Bypass.CIDRs, []string{"1.1.1.1"}) {
+		t.Fatalf("unexpected target cidrs: %+v", settings.Split.Bypass.CIDRs)
+	}
+	if !reflect.DeepEqual(settings.Split.Bypass.Domains, []string{"youtube.com"}) {
+		t.Fatalf("unexpected target domains: %+v", settings.Split.Bypass.Domains)
+	}
+}
+
+func TestConfigureFirewallBypassStoresExcludedSources(t *testing.T) {
+	t.Parallel()
+
+	store := &memoryStore{
+		settings: domain.DefaultSettings(),
+		state:    domain.DefaultRuntimeState(),
+	}
+	store.settings.Firewall.Mode = domain.FirewallModeHosts
+	store.settings.Firewall.Hosts = []string{"192.168.1.150"}
+
+	service := NewService(Dependencies{Store: store, Firewaller: &recordingFirewaller{}})
+
+	settings, err := service.ConfigureFirewallBypass(context.Background(), []string{"vk.com", "1.1.1.1"}, []string{"192.168.1.50"}, true, 23456)
+	if err != nil {
+		t.Fatalf("configure firewall bypass: %v", err)
+	}
+
+	if settings.Mode != domain.FirewallModeSplit {
+		t.Fatalf("expected split mode, got %q", settings.Mode)
+	}
+	if settings.Split.DefaultAction != domain.FirewallDefaultActionProxy {
+		t.Fatalf("expected split default action proxy, got %q", settings.Split.DefaultAction)
+	}
+	if !reflect.DeepEqual(settings.Split.Bypass.Domains, []string{"vk.com"}) {
+		t.Fatalf("unexpected bypass domains: %+v", settings.Split.Bypass.Domains)
+	}
+	if !reflect.DeepEqual(settings.Split.Bypass.CIDRs, []string{"1.1.1.1"}) {
+		t.Fatalf("unexpected bypass cidrs: %+v", settings.Split.Bypass.CIDRs)
+	}
+	if !reflect.DeepEqual(settings.Split.ExcludedSources, []string{"192.168.1.50"}) {
+		t.Fatalf("unexpected excluded sources: %+v", settings.Split.ExcludedSources)
+	}
+}
+
+func TestUpdateFirewallBlockQUICCanonicalizesLegacyTargetsMode(t *testing.T) {
+	t.Parallel()
+
+	store := &memoryStore{
+		settings: domain.DefaultSettings(),
+		state:    domain.DefaultRuntimeState(),
+	}
+	store.settings.Firewall.Enabled = true
+	store.settings.Firewall.Mode = ""
+	store.settings.Firewall.Targets = domain.FirewallSelectorSet{
+		Services: []string{"youtube"},
+	}
+	firewall := &recordingFirewaller{}
+
+	service := NewService(Dependencies{Store: store, Firewaller: firewall})
+
+	settings, err := service.UpdateFirewallBlockQUIC(context.Background(), true)
+	if err != nil {
+		t.Fatalf("update firewall block-quic: %v", err)
+	}
+
+	if settings.Mode != domain.FirewallModeTargets {
+		t.Fatalf("expected canonical targets mode, got %q", settings.Mode)
+	}
+	if !settings.BlockQUIC {
+		t.Fatal("expected block-quic to be enabled")
+	}
+	if len(firewall.validated) != 1 {
+		t.Fatalf("expected one validation call, got %d", len(firewall.validated))
+	}
+	if firewall.validated[0].Mode != domain.FirewallModeTargets {
+		t.Fatalf("expected validated canonical targets mode, got %q", firewall.validated[0].Mode)
+	}
+}
+
+func TestUpdateFirewallDisableIPv6StoresSettingAndAppliesManager(t *testing.T) {
+	t.Parallel()
+
+	store := &memoryStore{
+		settings: domain.DefaultSettings(),
+		state:    domain.DefaultRuntimeState(),
+	}
+	ipv6 := &recordingIPv6Manager{}
+
+	service := NewService(Dependencies{
+		Store:       store,
+		IPv6Manager: ipv6,
+	})
+
+	settings, err := service.UpdateFirewallDisableIPv6(context.Background(), true)
+	if err != nil {
+		t.Fatalf("update firewall disable ipv6: %v", err)
+	}
+
+	if !settings.DisableIPv6 {
+		t.Fatal("expected disable-ipv6 to be enabled")
+	}
+	if !store.settings.Firewall.DisableIPv6 {
+		t.Fatal("expected stored firewall setting to keep disable-ipv6")
+	}
+	if !reflect.DeepEqual(ipv6.applied, []bool{true}) {
+		t.Fatalf("unexpected ipv6 apply calls: %+v", ipv6.applied)
+	}
+}
+
+func TestConnectManualReappliesManagedIPv6Disable(t *testing.T) {
+	t.Parallel()
+
+	store := &memoryStore{
+		settings: domain.DefaultSettings(),
+		state:    domain.DefaultRuntimeState(),
+		subs: []domain.Subscription{
+			{
+				ID: "sub-1",
+				Nodes: []domain.Node{
+					{
+						ID:       "node-1",
+						Name:     "Germany",
+						Protocol: domain.ProtocolVLESS,
+						Address:  "de.example.com",
+						Port:     443,
+						UUID:     "11111111-1111-1111-1111-111111111111",
+					},
+				},
+			},
+		},
+	}
+	store.settings.Firewall.DisableIPv6 = true
+
+	ipv6 := &recordingIPv6Manager{}
+	service := NewService(Dependencies{
+		Store:       store,
+		Backend:     &recordingBackend{},
+		IPv6Manager: ipv6,
+	})
+
+	if err := service.ConnectManual(context.Background(), "sub-1", "node-1"); err != nil {
+		t.Fatalf("connect manual: %v", err)
+	}
+	if !reflect.DeepEqual(ipv6.applied, []bool{true}) {
+		t.Fatalf("expected connect path to reapply managed ipv6 disable, got %+v", ipv6.applied)
+	}
+}
+
+func TestRestoreRuntimeReappliesManagedIPv6DisableWhileDisconnected(t *testing.T) {
+	t.Parallel()
+
+	store := &memoryStore{
+		settings: domain.DefaultSettings(),
+		state:    domain.DefaultRuntimeState(),
+	}
+	store.settings.Firewall.DisableIPv6 = true
+
+	ipv6 := &recordingIPv6Manager{}
+	service := NewService(Dependencies{
+		Store:       store,
+		Firewaller:  &recordingFirewaller{},
+		IPv6Manager: ipv6,
+	})
+
+	if err := service.RestoreRuntime(context.Background()); err != nil {
+		t.Fatalf("restore runtime: %v", err)
+	}
+	if !reflect.DeepEqual(ipv6.applied, []bool{true}) {
+		t.Fatalf("expected restore path to reapply managed ipv6 disable, got %+v", ipv6.applied)
 	}
 }
 
@@ -181,8 +361,8 @@ func TestConfigureFirewallSupportsCustomServiceAliases(t *testing.T) {
 		t.Fatalf("configure firewall: %v", err)
 	}
 
-	if !reflect.DeepEqual(settings.TargetServices, []string{"openai"}) {
-		t.Fatalf("unexpected target services: %+v", settings.TargetServices)
+	if !reflect.DeepEqual(settings.Targets.Services, []string{"openai"}) {
+		t.Fatalf("unexpected target services: %+v", settings.Targets.Services)
 	}
 }
 
@@ -219,7 +399,8 @@ func TestUpdateFirewallModeDraftDoesNotAffectActiveSettings(t *testing.T) {
 		state:    domain.DefaultRuntimeState(),
 	}
 	store.settings.Firewall.Enabled = true
-	store.settings.Firewall.TargetServices = []string{"youtube"}
+	store.settings.Firewall.Mode = domain.FirewallModeTargets
+	store.settings.Firewall.Targets = domain.FirewallSelectorSet{Services: []string{"youtube"}}
 
 	service := NewService(Dependencies{Store: store, Firewaller: &recordingFirewaller{}})
 
@@ -231,8 +412,8 @@ func TestUpdateFirewallModeDraftDoesNotAffectActiveSettings(t *testing.T) {
 	if want := []string{"all"}; !reflect.DeepEqual(settings.ModeDrafts.Hosts.SourceCIDRs, want) {
 		t.Fatalf("unexpected hosts draft: %+v", settings.ModeDrafts.Hosts.SourceCIDRs)
 	}
-	if want := []string{"youtube"}; !reflect.DeepEqual(settings.TargetServices, want) {
-		t.Fatalf("unexpected active target services: %+v", settings.TargetServices)
+	if want := []string{"youtube"}; !reflect.DeepEqual(settings.Targets.Services, want) {
+		t.Fatalf("unexpected active target services: %+v", settings.Targets.Services)
 	}
 
 	settings, err = service.ClearFirewallModeDraft(context.Background(), "hosts")
@@ -270,10 +451,10 @@ func TestConfigureFirewallPreservesModeDraftsAcrossModeSwitches(t *testing.T) {
 		t.Fatalf("configure firewall hosts: %v", err)
 	}
 
-	if want := []string{"192.168.1.150"}; !reflect.DeepEqual(settings.SourceCIDRs, want) {
-		t.Fatalf("unexpected active source hosts: %+v", settings.SourceCIDRs)
+	if want := []string{"192.168.1.150"}; !reflect.DeepEqual(settings.Hosts, want) {
+		t.Fatalf("unexpected active source hosts: %+v", settings.Hosts)
 	}
-	if len(settings.TargetServices) != 0 || len(settings.TargetCIDRs) != 0 || len(settings.TargetDomains) != 0 {
+	if len(settings.Targets.Services) != 0 || len(settings.Targets.CIDRs) != 0 || len(settings.Targets.Domains) != 0 {
 		t.Fatalf("expected active targets to be cleared, got %+v", settings)
 	}
 	if want := []string{"192.168.1.150"}; !reflect.DeepEqual(settings.ModeDrafts.Hosts.SourceCIDRs, want) {
@@ -295,7 +476,8 @@ func TestDisableFirewallPreservesModeDrafts(t *testing.T) {
 		state:    domain.DefaultRuntimeState(),
 	}
 	store.settings.Firewall.Enabled = true
-	store.settings.Firewall.TargetServices = []string{"daily"}
+	store.settings.Firewall.Mode = domain.FirewallModeTargets
+	store.settings.Firewall.Targets = domain.FirewallSelectorSet{Services: []string{"daily"}}
 	store.settings.Firewall.ModeDrafts.Targets = domain.FirewallModeDraft{
 		TargetServices: []string{"daily"},
 		TargetDomains:  []string{"example.com"},
@@ -311,7 +493,7 @@ func TestDisableFirewallPreservesModeDrafts(t *testing.T) {
 	if settings.Enabled {
 		t.Fatal("expected firewall to be disabled")
 	}
-	if len(settings.TargetServices) != 0 || len(settings.TargetCIDRs) != 0 || len(settings.TargetDomains) != 0 || len(settings.SourceCIDRs) != 0 {
+	if len(settings.Targets.Services) != 0 || len(settings.Targets.CIDRs) != 0 || len(settings.Targets.Domains) != 0 || len(settings.Hosts) != 0 {
 		t.Fatalf("expected active selectors to be cleared, got %+v", settings)
 	}
 	if want := []string{"daily"}; !reflect.DeepEqual(settings.ModeDrafts.Targets.TargetServices, want) {
@@ -345,7 +527,8 @@ func TestSetFirewallTargetServiceReappliesConnectedRuntime(t *testing.T) {
 		},
 	}
 	store.settings.Firewall.Enabled = true
-	store.settings.Firewall.TargetServices = []string{"openai"}
+	store.settings.Firewall.Mode = domain.FirewallModeTargets
+	store.settings.Firewall.Targets = domain.FirewallSelectorSet{Services: []string{"openai"}}
 	store.state.Connected = true
 	store.state.ActiveSubscriptionID = "sub-1"
 	store.state.ActiveNodeID = "node-1"
@@ -370,8 +553,8 @@ func TestSetFirewallTargetServiceReappliesConnectedRuntime(t *testing.T) {
 	if len(runtimeBackend.requests) != 1 {
 		t.Fatalf("expected one backend reapply, got %d", len(runtimeBackend.requests))
 	}
-	if want := []string{"openai.com", "chatgpt.com"}; !reflect.DeepEqual(runtimeBackend.requests[0].TransparentTargetDomains, want) {
-		t.Fatalf("unexpected transparent target domains:\nwant: %+v\n got: %+v", want, runtimeBackend.requests[0].TransparentTargetDomains)
+	if want := []string{"openai.com", "chatgpt.com"}; !reflect.DeepEqual(runtimeBackend.requests[0].TransparentProxyDomains, want) {
+		t.Fatalf("unexpected transparent target domains:\nwant: %+v\n got: %+v", want, runtimeBackend.requests[0].TransparentProxyDomains)
 	}
 	if len(firewall.applied) != 1 {
 		t.Fatalf("expected firewall apply once, got %d", len(firewall.applied))
@@ -385,7 +568,8 @@ func TestDeleteFirewallTargetServiceRejectsUsedAlias(t *testing.T) {
 		settings: domain.DefaultSettings(),
 		state:    domain.DefaultRuntimeState(),
 	}
-	store.settings.Firewall.TargetServices = []string{"openai"}
+	store.settings.Firewall.Mode = domain.FirewallModeTargets
+	store.settings.Firewall.Targets = domain.FirewallSelectorSet{Services: []string{"openai"}}
 	store.settings.Firewall.TargetServiceCatalog = map[string]domain.FirewallTargetDefinition{
 		"openai": {Domains: []string{"openai.com"}},
 	}
@@ -622,6 +806,42 @@ func TestAddSubscriptionReadsExpirationFromSubscriptionUserinfo(t *testing.T) {
 	if sub.ExpiresAt == nil || !sub.ExpiresAt.Equal(expireAt) {
 		t.Fatalf("unexpected expiration date: got %v want %s", sub.ExpiresAt, expireAt)
 	}
+	assertSubscriptionTraffic(t, sub, 0, 11606312440, 322122547200)
+}
+
+func TestAddSubscriptionIgnoresDDoSGuardCookieExpiry(t *testing.T) {
+	t.Parallel()
+
+	store := &memoryStore{
+		settings: domain.DefaultSettings(),
+		state:    domain.DefaultRuntimeState(),
+	}
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Server", "ddos-guard")
+		w.Header().Add("Set-Cookie", "__ddg8_=short; Expires=Wed, 01-Apr-2026 20:14:25 GMT; Path=/")
+		w.Header().Add("Set-Cookie", "__ddg1_=long; Expires=Thu, 01-Apr-2027 19:55:03 GMT; HttpOnly; Path=/")
+		w.Header().Set("Subscription-Userinfo", "upload=0; download=0; total=0; expire=0")
+		writeResponse(w, "vless://11111111-1111-1111-1111-111111111111@node1.example.com:443?encryption=none&security=reality&sni=edge.example.com&fp=chrome&pbk=public-key-1&sid=ab12cd34&type=ws&path=%2Fproxy&host=cdn.example.com#Edge%20Reality")
+	}))
+	t.Cleanup(server.Close)
+
+	service := NewService(Dependencies{
+		Store:      store,
+		HTTPClient: server.Client(),
+	})
+
+	sub, err := service.AddSubscription(context.Background(), AddSubscriptionRequest{
+		URL: server.URL,
+	})
+	if err != nil {
+		t.Fatalf("add subscription: %v", err)
+	}
+
+	if sub.ExpiresAt != nil {
+		t.Fatalf("expected DDoS-Guard cookies to be ignored, got %v", sub.ExpiresAt)
+	}
+	assertSubscriptionTraffic(t, sub, 0, 0, 0)
 }
 
 func TestAddSubscriptionFallsBackToCurlUserAgentForMetadata(t *testing.T) {
@@ -665,6 +885,7 @@ func TestAddSubscriptionFallsBackToCurlUserAgentForMetadata(t *testing.T) {
 	if sub.ExpiresAt == nil || !sub.ExpiresAt.Equal(expireAt) {
 		t.Fatalf("unexpected expiration date: got %v want %s", sub.ExpiresAt, expireAt)
 	}
+	assertSubscriptionTraffic(t, sub, 0, 11606312440, 322122547200)
 	if len(userAgents) != 2 {
 		t.Fatalf("expected two metadata fetch attempts, got %d", len(userAgents))
 	}
@@ -1338,6 +1559,85 @@ func TestRefreshSubscriptionUpdatesExpirationFromSubscriptionUserinfo(t *testing
 	if sub.ExpiresAt == nil || !sub.ExpiresAt.Equal(expireAt) {
 		t.Fatalf("unexpected expiration date: got %v want %s", sub.ExpiresAt, expireAt)
 	}
+	assertSubscriptionTraffic(t, sub, 0, 11606312440, 322122547200)
+}
+
+func TestRefreshSubscriptionKeepsExistingExpiryWhenOnlyDDoSGuardCookieIsPresent(t *testing.T) {
+	t.Parallel()
+
+	expiresAt := time.Date(2027, time.March, 25, 10, 0, 0, 0, time.UTC)
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Server", "ddos-guard")
+		w.Header().Add("Set-Cookie", "__ddg8_=short; Expires=Wed, 01-Apr-2026 20:14:25 GMT; Path=/")
+		w.Header().Add("Set-Cookie", "__ddg1_=long; Expires=Thu, 01-Apr-2027 19:55:03 GMT; HttpOnly; Path=/")
+		w.Header().Set("Subscription-Userinfo", "upload=0; download=0; total=0; expire=0")
+		writeResponse(w, `[
+		  {
+		    "outbounds": [
+		      {
+		        "protocol": "vless",
+		        "tag": "proxy",
+		        "settings": {
+		          "vnext": [
+		            {
+		              "address": "one.example.com",
+		              "port": 443,
+		              "users": [
+		                {
+		                  "id": "11111111-1111-1111-1111-111111111111",
+		                  "encryption": "none",
+		                  "flow": "xtls-rprx-vision"
+		                }
+		              ]
+		            }
+		          ]
+		        },
+		        "streamSettings": {
+		          "network": "tcp",
+		          "security": "reality",
+		          "realitySettings": {
+		            "serverName": "gateway-one.example",
+		            "publicKey": "public-key-one",
+		            "shortId": "short-one",
+		            "fingerprint": "random"
+		          }
+		        }
+		      }
+		    ]
+		  }
+		]`)
+	}))
+	defer server.Close()
+
+	store := &memoryStore{
+		settings: domain.DefaultSettings(),
+		state:    domain.DefaultRuntimeState(),
+		subs: []domain.Subscription{
+			{
+				ID:           "sub-1",
+				SourceType:   domain.SourceTypeURL,
+				Source:       server.URL,
+				ProviderName: "Demo VPN",
+				DisplayName:  "Demo VPN",
+				ExpiresAt:    &expiresAt,
+				Nodes: []domain.Node{
+					{ID: "old-node"},
+				},
+			},
+		},
+	}
+
+	service := NewService(Dependencies{Store: store, HTTPClient: server.Client()})
+
+	sub, err := service.RefreshSubscription(context.Background(), "sub-1")
+	if err != nil {
+		t.Fatalf("refresh subscription: %v", err)
+	}
+
+	if sub.ExpiresAt == nil || !sub.ExpiresAt.Equal(expiresAt) {
+		t.Fatalf("unexpected expiration date: got %v want %s", sub.ExpiresAt, expiresAt)
+	}
+	assertSubscriptionTraffic(t, sub, 0, 0, 0)
 }
 
 func TestRefreshSubscriptionFallsBackToCurlUserAgentForMetadata(t *testing.T) {
@@ -1415,6 +1715,7 @@ func TestRefreshSubscriptionFallsBackToCurlUserAgentForMetadata(t *testing.T) {
 	if sub.ExpiresAt == nil || !sub.ExpiresAt.Equal(expireAt) {
 		t.Fatalf("unexpected expiration date: got %v want %s", sub.ExpiresAt, expireAt)
 	}
+	assertSubscriptionTraffic(t, sub, 0, 11606312440, 322122547200)
 	if len(userAgents) != 2 {
 		t.Fatalf("expected two metadata fetch attempts, got %d", len(userAgents))
 	}
@@ -1622,11 +1923,11 @@ func TestConfigureFirewallHostsCanonicalizesAllAlias(t *testing.T) {
 		t.Fatalf("configure firewall hosts: %v", err)
 	}
 
-	if len(settings.SourceCIDRs) != 1 || settings.SourceCIDRs[0] != "all" {
-		t.Fatalf("unexpected source hosts: %v", settings.SourceCIDRs)
+	if len(settings.Hosts) != 1 || settings.Hosts[0] != "all" {
+		t.Fatalf("unexpected source hosts: %v", settings.Hosts)
 	}
-	if len(store.settings.Firewall.SourceCIDRs) != 1 || store.settings.Firewall.SourceCIDRs[0] != "all" {
-		t.Fatalf("unexpected persisted source hosts: %v", store.settings.Firewall.SourceCIDRs)
+	if len(store.settings.Firewall.Hosts) != 1 || store.settings.Firewall.Hosts[0] != "all" {
+		t.Fatalf("unexpected persisted source hosts: %v", store.settings.Firewall.Hosts)
 	}
 }
 
@@ -1674,8 +1975,10 @@ func TestConnectManualAppliesHostFirewallRouting(t *testing.T) {
 		},
 	}
 	store.settings.Firewall.Enabled = true
-	store.settings.Firewall.SourceCIDRs = []string{"192.168.1.150"}
+	store.settings.Firewall.Mode = domain.FirewallModeHosts
+	store.settings.Firewall.Hosts = []string{"192.168.1.150"}
 	store.settings.Firewall.TransparentPort = 12345
+	store.settings.Firewall.BlockQUIC = true
 
 	runtimeBackend := &recordingBackend{}
 	firewall := &recordingFirewaller{}
@@ -1695,12 +1998,249 @@ func TestConnectManualAppliesHostFirewallRouting(t *testing.T) {
 	if !runtimeBackend.requests[0].TransparentProxy {
 		t.Fatal("expected transparent proxy to be enabled")
 	}
+	if !runtimeBackend.requests[0].TransparentBlockQUIC {
+		t.Fatal("expected transparent QUIC blocking to be forwarded to backend")
+	}
 
 	if len(firewall.applied) != 1 {
 		t.Fatalf("expected firewall rules to be applied once, got %d", len(firewall.applied))
 	}
-	if len(firewall.applied[0].SourceCIDRs) != 1 || firewall.applied[0].SourceCIDRs[0] != "192.168.1.150" {
-		t.Fatalf("unexpected applied source hosts: %v", firewall.applied[0].SourceCIDRs)
+	if len(firewall.applied[0].Hosts) != 1 || firewall.applied[0].Hosts[0] != "192.168.1.150" {
+		t.Fatalf("unexpected applied source hosts: %v", firewall.applied[0].Hosts)
+	}
+}
+
+func TestConnectManualAutoBlocksQUICForVLESSRealityTCPNodes(t *testing.T) {
+	t.Parallel()
+
+	store := &memoryStore{
+		settings: domain.DefaultSettings(),
+		state:    domain.DefaultRuntimeState(),
+		subs: []domain.Subscription{
+			{
+				ID: "sub-1",
+				Nodes: []domain.Node{
+					{
+						ID:         "node-1",
+						Name:       "Germany",
+						Protocol:   domain.ProtocolVLESS,
+						Address:    "de.example.com",
+						Port:       443,
+						UUID:       "11111111-1111-1111-1111-111111111111",
+						Security:   "reality",
+						Transport:  "tcp",
+						Flow:       "xtls-rprx-vision",
+						ServerName: "www.google.com",
+					},
+				},
+			},
+		},
+	}
+	store.settings.Firewall.Enabled = true
+	store.settings.Firewall.Mode = domain.FirewallModeHosts
+	store.settings.Firewall.Hosts = []string{"192.168.1.150"}
+	store.settings.Firewall.TransparentPort = 12345
+	store.settings.Firewall.BlockQUIC = false
+
+	runtimeBackend := &recordingBackend{}
+	firewall := &recordingFirewaller{}
+	service := NewService(Dependencies{
+		Store:      store,
+		Backend:    runtimeBackend,
+		Firewaller: firewall,
+	})
+
+	if err := service.ConnectManual(context.Background(), "sub-1", "node-1"); err != nil {
+		t.Fatalf("connect manual: %v", err)
+	}
+
+	if len(runtimeBackend.requests) != 1 {
+		t.Fatalf("expected one backend apply, got %d", len(runtimeBackend.requests))
+	}
+	if !runtimeBackend.requests[0].TransparentBlockQUIC {
+		t.Fatal("expected incompatible node to force transparent QUIC blocking")
+	}
+	if len(firewall.applied) != 1 {
+		t.Fatalf("expected firewall rules to be applied once, got %d", len(firewall.applied))
+	}
+	if !firewall.applied[0].BlockQUIC {
+		t.Fatal("expected firewall rules to receive the effective transparent QUIC policy")
+	}
+}
+
+func TestConnectManualFailsWhenBackendEgressProbeFailsAndDisablesFirewall(t *testing.T) {
+	t.Parallel()
+
+	store := &memoryStore{
+		settings: domain.DefaultSettings(),
+		state:    domain.DefaultRuntimeState(),
+		subs: []domain.Subscription{
+			{
+				ID: "sub-1",
+				Nodes: []domain.Node{
+					{
+						ID:       "node-1",
+						Name:     "Germany",
+						Protocol: domain.ProtocolVLESS,
+						Address:  "de.example.com",
+						Port:     443,
+						UUID:     "11111111-1111-1111-1111-111111111111",
+					},
+				},
+			},
+		},
+	}
+	store.settings.Firewall.Enabled = true
+	store.settings.Firewall.Mode = domain.FirewallModeHosts
+	store.settings.Firewall.Hosts = []string{"192.168.1.150"}
+	store.settings.Firewall.TransparentPort = 12345
+
+	runtimeBackend := &recordingBackend{}
+	firewall := &recordingFirewaller{}
+	service := NewService(Dependencies{
+		Store:      store,
+		Backend:    runtimeBackend,
+		Firewaller: firewall,
+	})
+	service.backendEgressProbe = func(context.Context) error {
+		return errors.New("egress probe failed")
+	}
+	service.backendEgressTimeout = 5 * time.Millisecond
+	service.backendEgressRetryDelay = time.Millisecond
+
+	err := service.ConnectManual(context.Background(), "sub-1", "node-1")
+	if err == nil {
+		t.Fatal("expected connect manual to fail")
+	}
+	if !strings.Contains(err.Error(), "check backend egress") {
+		t.Fatalf("expected backend egress failure, got %v", err)
+	}
+
+	if len(runtimeBackend.requests) != 1 {
+		t.Fatalf("expected one backend apply, got %d", len(runtimeBackend.requests))
+	}
+	if len(firewall.applied) != 0 {
+		t.Fatalf("expected no firewall apply after failed egress probe, got %d", len(firewall.applied))
+	}
+	if firewall.disableCalls != 1 {
+		t.Fatalf("expected firewall disable once after failed egress probe, got %d", firewall.disableCalls)
+	}
+	if store.state.Connected {
+		t.Fatal("expected runtime state to remain disconnected after failed egress probe")
+	}
+	if !strings.Contains(store.state.LastFailureReason, "egress probe failed") {
+		t.Fatalf("expected failure reason to include probe error, got %q", store.state.LastFailureReason)
+	}
+}
+
+func TestConnectManualRetriesBackendEgressProbeBeforeApplyingFirewall(t *testing.T) {
+	t.Parallel()
+
+	store := &memoryStore{
+		settings: domain.DefaultSettings(),
+		state:    domain.DefaultRuntimeState(),
+		subs: []domain.Subscription{
+			{
+				ID: "sub-1",
+				Nodes: []domain.Node{
+					{
+						ID:       "node-1",
+						Name:     "Germany",
+						Protocol: domain.ProtocolVLESS,
+						Address:  "de.example.com",
+						Port:     443,
+						UUID:     "11111111-1111-1111-1111-111111111111",
+					},
+				},
+			},
+		},
+	}
+	store.settings.Firewall.Enabled = true
+	store.settings.Firewall.Mode = domain.FirewallModeHosts
+	store.settings.Firewall.Hosts = []string{"192.168.1.150"}
+	store.settings.Firewall.TransparentPort = 12345
+
+	runtimeBackend := &recordingBackend{}
+	firewall := &recordingFirewaller{}
+	service := NewService(Dependencies{
+		Store:      store,
+		Backend:    runtimeBackend,
+		Firewaller: firewall,
+	})
+	service.backendEgressTimeout = 50 * time.Millisecond
+	service.backendEgressRetryDelay = time.Millisecond
+
+	attempts := 0
+	service.backendEgressProbe = func(context.Context) error {
+		attempts++
+		if attempts < 3 {
+			return errors.New("proxy not ready yet")
+		}
+		return nil
+	}
+
+	if err := service.ConnectManual(context.Background(), "sub-1", "node-1"); err != nil {
+		t.Fatalf("connect manual: %v", err)
+	}
+	if attempts != 3 {
+		t.Fatalf("expected 3 egress probe attempts, got %d", attempts)
+	}
+	if len(firewall.applied) != 1 {
+		t.Fatalf("expected firewall apply after probe recovery, got %d", len(firewall.applied))
+	}
+	if !store.state.Connected {
+		t.Fatal("expected runtime state to be connected after probe recovery")
+	}
+}
+
+func TestConnectManualContinuesWhenBackendEgressProbeSucceeds(t *testing.T) {
+	t.Parallel()
+
+	store := &memoryStore{
+		settings: domain.DefaultSettings(),
+		state:    domain.DefaultRuntimeState(),
+		subs: []domain.Subscription{
+			{
+				ID: "sub-1",
+				Nodes: []domain.Node{
+					{
+						ID:       "node-1",
+						Name:     "Germany",
+						Protocol: domain.ProtocolVLESS,
+						Address:  "de.example.com",
+						Port:     443,
+						UUID:     "11111111-1111-1111-1111-111111111111",
+					},
+				},
+			},
+		},
+	}
+	store.settings.Firewall.Enabled = true
+	store.settings.Firewall.Mode = domain.FirewallModeHosts
+	store.settings.Firewall.Hosts = []string{"192.168.1.150"}
+	store.settings.Firewall.TransparentPort = 12345
+
+	runtimeBackend := &recordingBackend{}
+	firewall := &recordingFirewaller{}
+	service := NewService(Dependencies{
+		Store:      store,
+		Backend:    runtimeBackend,
+		Firewaller: firewall,
+	})
+	service.backendEgressProbe = func(context.Context) error { return nil }
+
+	if err := service.ConnectManual(context.Background(), "sub-1", "node-1"); err != nil {
+		t.Fatalf("connect manual: %v", err)
+	}
+
+	if len(firewall.applied) != 1 {
+		t.Fatalf("expected firewall rules to be applied once, got %d", len(firewall.applied))
+	}
+	if firewall.disableCalls != 0 {
+		t.Fatalf("expected firewall disable to stay unused on successful egress probe, got %d", firewall.disableCalls)
+	}
+	if !store.state.Connected {
+		t.Fatal("expected runtime state to stay connected after successful egress probe")
 	}
 }
 
@@ -1727,7 +2267,8 @@ func TestConnectManualPassesExpandedTargetSelectorsToBackend(t *testing.T) {
 		},
 	}
 	store.settings.Firewall.Enabled = true
-	store.settings.Firewall.TargetServices = []string{"youtube", "telegram"}
+	store.settings.Firewall.Mode = domain.FirewallModeTargets
+	store.settings.Firewall.Targets = domain.FirewallSelectorSet{Services: []string{"youtube", "telegram"}}
 	store.settings.Firewall.TransparentPort = 12345
 
 	runtimeBackend := &recordingBackend{}
@@ -1762,16 +2303,19 @@ func TestConnectManualPassesExpandedTargetSelectorsToBackend(t *testing.T) {
 		"desktop.telegram.org",
 		"core.telegram.org",
 	}
-	if !reflect.DeepEqual(runtimeBackend.requests[0].TransparentTargetDomains, wantDomains) {
-		t.Fatalf("unexpected transparent target domains:\nwant: %+v\n got: %+v", wantDomains, runtimeBackend.requests[0].TransparentTargetDomains)
+	if !reflect.DeepEqual(runtimeBackend.requests[0].TransparentProxyDomains, wantDomains) {
+		t.Fatalf("unexpected transparent target domains:\nwant: %+v\n got: %+v", wantDomains, runtimeBackend.requests[0].TransparentProxyDomains)
 	}
 
 	wantCIDRs := []string{
 		"91.108.0.0/16",
 		"149.154.0.0/16",
 	}
-	if !reflect.DeepEqual(runtimeBackend.requests[0].TransparentTargetCIDRs, wantCIDRs) {
-		t.Fatalf("unexpected transparent target cidrs:\nwant: %+v\n got: %+v", wantCIDRs, runtimeBackend.requests[0].TransparentTargetCIDRs)
+	if !reflect.DeepEqual(runtimeBackend.requests[0].TransparentProxyCIDRs, wantCIDRs) {
+		t.Fatalf("unexpected transparent target cidrs:\nwant: %+v\n got: %+v", wantCIDRs, runtimeBackend.requests[0].TransparentProxyCIDRs)
+	}
+	if !runtimeBackend.requests[0].TransparentSelectiveCapture {
+		t.Fatal("expected targets mode to use selective transparent capture")
 	}
 }
 
@@ -1798,8 +2342,11 @@ func TestConnectManualPassesExpandedAntiTargetSelectorsToBackend(t *testing.T) {
 		},
 	}
 	store.settings.Firewall.Enabled = true
-	store.settings.Firewall.TargetMode = domain.FirewallTargetModeBypass
-	store.settings.Firewall.TargetServices = []string{"youtube", "telegram"}
+	store.settings.Firewall.Mode = domain.FirewallModeSplit
+	store.settings.Firewall.Split = domain.FirewallSplitSettings{
+		Bypass:        domain.FirewallSelectorSet{Services: []string{"youtube", "telegram"}},
+		DefaultAction: domain.FirewallDefaultActionProxy,
+	}
 	store.settings.Firewall.TransparentPort = 12345
 
 	runtimeBackend := &recordingBackend{}
@@ -1817,8 +2364,8 @@ func TestConnectManualPassesExpandedAntiTargetSelectorsToBackend(t *testing.T) {
 	if len(runtimeBackend.requests) != 1 {
 		t.Fatalf("expected one backend apply, got %d", len(runtimeBackend.requests))
 	}
-	if runtimeBackend.requests[0].TransparentTargetMode != domain.FirewallTargetModeBypass {
-		t.Fatalf("unexpected transparent target mode: %q", runtimeBackend.requests[0].TransparentTargetMode)
+	if runtimeBackend.requests[0].TransparentDefaultAction != domain.FirewallDefaultActionProxy {
+		t.Fatalf("unexpected transparent default action: %q", runtimeBackend.requests[0].TransparentDefaultAction)
 	}
 
 	wantDomains := []string{
@@ -1837,16 +2384,70 @@ func TestConnectManualPassesExpandedAntiTargetSelectorsToBackend(t *testing.T) {
 		"desktop.telegram.org",
 		"core.telegram.org",
 	}
-	if !reflect.DeepEqual(runtimeBackend.requests[0].TransparentTargetDomains, wantDomains) {
-		t.Fatalf("unexpected transparent target domains:\nwant: %+v\n got: %+v", wantDomains, runtimeBackend.requests[0].TransparentTargetDomains)
+	if !reflect.DeepEqual(runtimeBackend.requests[0].TransparentBypassDomains, wantDomains) {
+		t.Fatalf("unexpected transparent target domains:\nwant: %+v\n got: %+v", wantDomains, runtimeBackend.requests[0].TransparentBypassDomains)
 	}
 
 	wantCIDRs := []string{
 		"91.108.0.0/16",
 		"149.154.0.0/16",
 	}
-	if !reflect.DeepEqual(runtimeBackend.requests[0].TransparentTargetCIDRs, wantCIDRs) {
-		t.Fatalf("unexpected transparent target cidrs:\nwant: %+v\n got: %+v", wantCIDRs, runtimeBackend.requests[0].TransparentTargetCIDRs)
+	if !reflect.DeepEqual(runtimeBackend.requests[0].TransparentBypassCIDRs, wantCIDRs) {
+		t.Fatalf("unexpected transparent target cidrs:\nwant: %+v\n got: %+v", wantCIDRs, runtimeBackend.requests[0].TransparentBypassCIDRs)
+	}
+	if runtimeBackend.requests[0].TransparentSelectiveCapture {
+		t.Fatal("expected anti-target compatibility mode to keep capture-all semantics")
+	}
+}
+
+func TestConnectManualPassesSelectiveCaptureForSplitDirect(t *testing.T) {
+	t.Parallel()
+
+	store := &memoryStore{
+		settings: domain.DefaultSettings(),
+		state:    domain.DefaultRuntimeState(),
+		subs: []domain.Subscription{
+			{
+				ID: "sub-1",
+				Nodes: []domain.Node{
+					{
+						ID:       "node-1",
+						Name:     "Germany",
+						Protocol: domain.ProtocolVLESS,
+						Address:  "de.example.com",
+						Port:     443,
+						UUID:     "11111111-1111-1111-1111-111111111111",
+					},
+				},
+			},
+		},
+	}
+	store.settings.Firewall.Enabled = true
+	store.settings.Firewall.Mode = domain.FirewallModeSplit
+	store.settings.Firewall.Split = domain.FirewallSplitSettings{
+		Proxy:         domain.FirewallSelectorSet{Services: []string{"youtube"}},
+		Bypass:        domain.FirewallSelectorSet{Domains: []string{"gosuslugi.ru"}},
+		DefaultAction: domain.FirewallDefaultActionDirect,
+	}
+	store.settings.Firewall.TransparentPort = 12345
+
+	runtimeBackend := &recordingBackend{}
+	firewall := &recordingFirewaller{}
+	service := NewService(Dependencies{
+		Store:      store,
+		Backend:    runtimeBackend,
+		Firewaller: firewall,
+	})
+
+	if err := service.ConnectManual(context.Background(), "sub-1", "node-1"); err != nil {
+		t.Fatalf("connect manual: %v", err)
+	}
+
+	if len(runtimeBackend.requests) != 1 {
+		t.Fatalf("expected one backend apply, got %d", len(runtimeBackend.requests))
+	}
+	if !runtimeBackend.requests[0].TransparentSelectiveCapture {
+		t.Fatal("expected split direct mode to use selective transparent capture")
 	}
 }
 
@@ -1928,6 +2529,128 @@ func TestConnectManualResolvesNodeAddressBeforeApplyingBackendConfig(t *testing.
 	}
 	if got := store.subs[0].Nodes[0].Address; got != "ru-sb-01.com" {
 		t.Fatalf("expected stored node address to remain unchanged, got %q", got)
+	}
+}
+
+func TestConnectManualPrefersReachableResolvedIPv4Address(t *testing.T) {
+	t.Parallel()
+
+	store := &memoryStore{
+		settings: domain.DefaultSettings(),
+		state:    domain.DefaultRuntimeState(),
+		subs: []domain.Subscription{
+			{
+				ID: "sub-1",
+				Nodes: []domain.Node{
+					{
+						ID:       "node-1",
+						Name:     "Lithuania",
+						Protocol: domain.ProtocolVLESS,
+						Address:  "lt-cherry-01.com",
+						Port:     8443,
+						UUID:     "11111111-1111-1111-1111-111111111111",
+					},
+				},
+			},
+		},
+	}
+
+	runtimeBackend := &recordingBackend{}
+	service := NewService(Dependencies{
+		Store:   store,
+		Backend: runtimeBackend,
+		Resolver: fakeResolver{
+			lookups: map[string][]net.IPAddr{
+				"lt-cherry-01.com": {
+					{IP: net.ParseIP("5.199.169.84")},
+					{IP: net.ParseIP("185.150.118.87")},
+				},
+			},
+		},
+	})
+
+	var dialAttempts []string
+	service.nodeDialProbeTimeout = time.Second
+	service.dialContext = func(_ context.Context, network, address string) (net.Conn, error) {
+		dialAttempts = append(dialAttempts, network+" "+address)
+		if address == "5.199.169.84:8443" {
+			return nil, fmt.Errorf("connection refused")
+		}
+		left, right := net.Pipe()
+		_ = right.Close()
+		return left, nil
+	}
+
+	if err := service.ConnectManual(context.Background(), "sub-1", "node-1"); err != nil {
+		t.Fatalf("connect manual: %v", err)
+	}
+
+	if len(runtimeBackend.requests) != 1 {
+		t.Fatalf("expected one backend apply, got %d", len(runtimeBackend.requests))
+	}
+	if got := runtimeBackend.requests[0].Nodes[0].Address; got != "185.150.118.87" {
+		t.Fatalf("expected reachable resolved backend address, got %q", got)
+	}
+	wantAttempts := []string{
+		"tcp 5.199.169.84:8443",
+		"tcp 185.150.118.87:8443",
+	}
+	if !reflect.DeepEqual(dialAttempts, wantAttempts) {
+		t.Fatalf("unexpected dial attempts: got %+v want %+v", dialAttempts, wantAttempts)
+	}
+}
+
+func TestConnectManualFallsBackToFirstResolvedIPv4WhenAllProbesFail(t *testing.T) {
+	t.Parallel()
+
+	store := &memoryStore{
+		settings: domain.DefaultSettings(),
+		state:    domain.DefaultRuntimeState(),
+		subs: []domain.Subscription{
+			{
+				ID: "sub-1",
+				Nodes: []domain.Node{
+					{
+						ID:       "node-1",
+						Name:     "Germany",
+						Protocol: domain.ProtocolVLESS,
+						Address:  "de-dp-01.com",
+						Port:     8443,
+						UUID:     "11111111-1111-1111-1111-111111111111",
+					},
+				},
+			},
+		},
+	}
+
+	runtimeBackend := &recordingBackend{}
+	service := NewService(Dependencies{
+		Store:   store,
+		Backend: runtimeBackend,
+		Resolver: fakeResolver{
+			lookups: map[string][]net.IPAddr{
+				"de-dp-01.com": {
+					{IP: net.ParseIP("195.181.175.155")},
+					{IP: net.ParseIP("195.181.175.159")},
+				},
+			},
+		},
+	})
+
+	service.nodeDialProbeTimeout = time.Second
+	service.dialContext = func(_ context.Context, _, address string) (net.Conn, error) {
+		return nil, fmt.Errorf("dial %s: timeout", address)
+	}
+
+	if err := service.ConnectManual(context.Background(), "sub-1", "node-1"); err != nil {
+		t.Fatalf("connect manual: %v", err)
+	}
+
+	if len(runtimeBackend.requests) != 1 {
+		t.Fatalf("expected one backend apply, got %d", len(runtimeBackend.requests))
+	}
+	if got := runtimeBackend.requests[0].Nodes[0].Address; got != "195.181.175.155" {
+		t.Fatalf("expected first resolved backend address fallback, got %q", got)
 	}
 }
 
@@ -2111,6 +2834,35 @@ func TestSetSettingAutoModeFalsePinsCurrentNode(t *testing.T) {
 	}
 	if store.state.ActiveNodeID != "node-2" {
 		t.Fatalf("expected current node to stay pinned, got %s", store.state.ActiveNodeID)
+	}
+}
+
+func TestSetSettingRefreshIntervalUpdatesStoredSubscriptions(t *testing.T) {
+	t.Parallel()
+
+	store := &memoryStore{
+		settings: domain.DefaultSettings(),
+		state:    domain.DefaultRuntimeState(),
+		subs: []domain.Subscription{
+			{ID: "sub-1", RefreshInterval: domain.NewDuration(time.Hour)},
+			{ID: "sub-2", RefreshInterval: domain.NewDuration(2 * time.Hour)},
+		},
+	}
+
+	service := NewService(Dependencies{Store: store})
+
+	settings, err := service.SetSetting("refresh-interval", "30m")
+	if err != nil {
+		t.Fatalf("set refresh interval: %v", err)
+	}
+
+	if got := settings.RefreshInterval.Duration(); got != 30*time.Minute {
+		t.Fatalf("unexpected settings refresh interval: %s", got)
+	}
+	for _, sub := range store.subs {
+		if got := sub.RefreshInterval.Duration(); got != 30*time.Minute {
+			t.Fatalf("expected propagated refresh interval for %s, got %s", sub.ID, got)
+		}
 	}
 }
 
@@ -2545,13 +3297,18 @@ func (s *memoryStore) SaveState(state domain.RuntimeState) error {
 }
 
 type recordingBackend struct {
-	requests    []backend.ConfigRequest
-	stopCalls   int
-	startCalls  int
-	status      backend.RuntimeStatus
-	statuses    []backend.RuntimeStatus
-	statusCalls int
-	statusErr   error
+	requests             []backend.ConfigRequest
+	stopCalls            int
+	startCalls           int
+	status               backend.RuntimeStatus
+	statuses             []backend.RuntimeStatus
+	statusCalls          int
+	statusErr            error
+	captureRollbackCalls int
+	rollbackCalls        int
+	rollbackErr          error
+	rollbackSnapshot     backend.RollbackSnapshot
+	lastRollbackSnapshot backend.RollbackSnapshot
 }
 
 func (b *recordingBackend) GenerateConfig(req backend.ConfigRequest) ([]byte, error) {
@@ -2561,6 +3318,23 @@ func (b *recordingBackend) GenerateConfig(req backend.ConfigRequest) ([]byte, er
 func (b *recordingBackend) ApplyConfig(_ context.Context, req backend.ConfigRequest) error {
 	b.requests = append(b.requests, req)
 	return nil
+}
+
+func (b *recordingBackend) CaptureRollback() (backend.RollbackSnapshot, error) {
+	b.captureRollbackCalls++
+	if b.rollbackSnapshot.Available || len(b.rollbackSnapshot.Config) > 0 {
+		return b.rollbackSnapshot, nil
+	}
+	return backend.RollbackSnapshot{
+		Available: true,
+		Config:    []byte("last-known-good"),
+	}, nil
+}
+
+func (b *recordingBackend) RollbackConfig(_ context.Context, snapshot backend.RollbackSnapshot) error {
+	b.rollbackCalls++
+	b.lastRollbackSnapshot = snapshot
+	return b.rollbackErr
 }
 
 func (b *recordingBackend) Start(context.Context) error {
@@ -2600,6 +3374,12 @@ type recordingFirewaller struct {
 	validateErr  error
 }
 
+type recordingIPv6Manager struct {
+	applied []bool
+	status  domain.IPv6Status
+	err     error
+}
+
 func (f *recordingFirewaller) Validate(_ context.Context, settings domain.FirewallSettings) error {
 	f.validated = append(f.validated, settings)
 	return f.validateErr
@@ -2613,6 +3393,15 @@ func (f *recordingFirewaller) Apply(_ context.Context, settings domain.FirewallS
 func (f *recordingFirewaller) Disable(context.Context) error {
 	f.disableCalls++
 	return nil
+}
+
+func (m *recordingIPv6Manager) Apply(_ context.Context, disabled bool) error {
+	m.applied = append(m.applied, disabled)
+	return m.err
+}
+
+func (m *recordingIPv6Manager) Status(context.Context) (domain.IPv6Status, error) {
+	return m.status, m.err
 }
 
 type fakeChecker struct {

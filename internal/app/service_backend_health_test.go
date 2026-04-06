@@ -32,7 +32,8 @@ func TestConnectManualDisablesFirewallWhenBackendIsNotRunning(t *testing.T) {
 		},
 	}
 	store.settings.Firewall.Enabled = true
-	store.settings.Firewall.SourceCIDRs = []string{"192.168.1.150"}
+	store.settings.Firewall.Mode = domain.FirewallModeHosts
+	store.settings.Firewall.Hosts = []string{"192.168.1.150"}
 	store.settings.Firewall.TransparentPort = 12345
 
 	runtimeBackend := &recordingBackend{

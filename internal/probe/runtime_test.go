@@ -96,7 +96,7 @@ func TestUpdateHealthSuccessClearsFailuresAndTracksAverage(t *testing.T) {
 		AverageLatency:       domain.NewDuration(200 * time.Millisecond),
 	}
 
-	updated := probe.UpdateHealth(previous, true, 100*time.Millisecond, time.Date(2026, 3, 25, 8, 0, 0, 0, time.UTC), "")
+	updated := probe.UpdateHealth(previous, true, 100*time.Millisecond, time.Date(2026, 3, 25, 8, 0, 0, 0, time.UTC), "", probe.DefaultSwitchPolicy().FailureThreshold)
 	if !updated.Healthy {
 		t.Fatal("expected node to become healthy")
 	}
@@ -114,7 +114,7 @@ func TestUpdateHealthSuccessClearsFailuresAndTracksAverage(t *testing.T) {
 	}
 }
 
-func TestUpdateHealthFailureSetsReasonAndPreservesAverage(t *testing.T) {
+func TestUpdateHealthFailurePreservesHealthyNodeUntilThreshold(t *testing.T) {
 	t.Parallel()
 
 	previous := domain.NodeHealth{
@@ -124,9 +124,9 @@ func TestUpdateHealthFailureSetsReasonAndPreservesAverage(t *testing.T) {
 		AverageLatency:       domain.NewDuration(90 * time.Millisecond),
 	}
 
-	updated := probe.UpdateHealth(previous, false, 250*time.Millisecond, time.Date(2026, 3, 25, 8, 5, 0, 0, time.UTC), "connection refused")
-	if updated.Healthy {
-		t.Fatal("expected node to become unhealthy")
+	updated := probe.UpdateHealth(previous, false, 250*time.Millisecond, time.Date(2026, 3, 25, 8, 5, 0, 0, time.UTC), "connection refused", probe.DefaultSwitchPolicy().FailureThreshold)
+	if !updated.Healthy {
+		t.Fatal("expected node to stay healthy before reaching threshold")
 	}
 	if updated.ConsecutiveSuccesses != 0 {
 		t.Fatalf("expected successes to reset, got %d", updated.ConsecutiveSuccesses)
@@ -139,6 +139,37 @@ func TestUpdateHealthFailureSetsReasonAndPreservesAverage(t *testing.T) {
 	}
 	if updated.AverageLatency.Duration() != 90*time.Millisecond {
 		t.Fatalf("expected average latency to be preserved, got %s", updated.AverageLatency.Duration())
+	}
+}
+
+func TestUpdateHealthFailureMarksNodeUnhealthyAtThreshold(t *testing.T) {
+	t.Parallel()
+
+	threshold := probe.DefaultSwitchPolicy().FailureThreshold
+	previous := domain.NodeHealth{
+		Healthy:              true,
+		SuccessCount:         2,
+		FailureCount:         2,
+		ConsecutiveFailures:  threshold - 1,
+		ConsecutiveSuccesses: 0,
+		AverageLatency:       domain.NewDuration(90 * time.Millisecond),
+	}
+
+	updated := probe.UpdateHealth(previous, false, 250*time.Millisecond, time.Date(2026, 3, 25, 8, 10, 0, 0, time.UTC), "connection refused", threshold)
+	if updated.Healthy {
+		t.Fatal("expected node to become unhealthy after threshold breach")
+	}
+	if updated.ConsecutiveFailures != threshold {
+		t.Fatalf("unexpected consecutive failures: got %d want %d", updated.ConsecutiveFailures, threshold)
+	}
+}
+
+func TestUpdateHealthFailureKeepsNewNodeUnhealthyWithoutSuccessHistory(t *testing.T) {
+	t.Parallel()
+
+	updated := probe.UpdateHealth(domain.NodeHealth{}, false, 250*time.Millisecond, time.Date(2026, 3, 25, 8, 15, 0, 0, time.UTC), "connection refused", probe.DefaultSwitchPolicy().FailureThreshold)
+	if updated.Healthy {
+		t.Fatal("expected node without success history to remain unhealthy")
 	}
 }
 

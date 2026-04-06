@@ -97,9 +97,11 @@ func (s *Scheduler) runOnce(ctx context.Context) {
 	status, statusErr := s.service.Status()
 	activeSubscriptionID := ""
 	connected := false
+	lastRefreshAt := map[string]time.Time{}
 	if statusErr == nil {
 		activeSubscriptionID = status.State.ActiveSubscriptionID
 		connected = status.State.Connected
+		lastRefreshAt = status.State.LastRefreshAt
 	}
 
 	for _, sub := range subscriptions {
@@ -107,8 +109,17 @@ func (s *Scheduler) runOnce(ctx context.Context) {
 		if interval <= 0 {
 			continue
 		}
-		if s.now().UTC().Sub(sub.LastUpdatedAt) < interval {
+
+		lastAttempt := sub.LastUpdatedAt
+		if refreshedAt, ok := lastRefreshAt[sub.ID]; ok && !refreshedAt.IsZero() {
+			lastAttempt = refreshedAt
+		}
+		now := s.now().UTC()
+		if now.Sub(lastAttempt) < interval {
 			continue
+		}
+		if err := s.service.touchRefreshAttempt(sub.ID, now); err != nil {
+			s.logWarn("record refresh attempt", "subscription", sub.ID, "error", err.Error())
 		}
 
 		if connected && sub.ID == activeSubscriptionID {

@@ -53,8 +53,10 @@ cp "${ROOT_DIR}/luci-app-routeflux/root/usr/share/rpcd/acl.d/luci-app-routeflux.
 	"${DATA_DIR}/usr/share/rpcd/acl.d/luci-app-routeflux.json"
 cp "${ROOT_DIR}/luci-app-routeflux/htdocs/luci-static/resources/routeflux/"*.js \
 	"${DATA_DIR}/www/luci-static/resources/routeflux/"
-cp "${ROOT_DIR}/luci-app-routeflux/htdocs/luci-static/resources/view/routeflux/"*.js \
-	"${DATA_DIR}/www/luci-static/resources/view/routeflux/"
+cp "${ROOT_DIR}/luci-app-routeflux/htdocs/luci-static/resources/view/routeflux/subscriptions.js" \
+	"${DATA_DIR}/www/luci-static/resources/view/routeflux/subscriptions.js"
+cp "${ROOT_DIR}/luci-app-routeflux/htdocs/luci-static/resources/view/routeflux/firewall.js" \
+	"${DATA_DIR}/www/luci-static/resources/view/routeflux/firewall.js"
 
 cat > "${CONTROL_DIR}/control" <<EOF
 Package: ${PACKAGE_NAME}
@@ -94,6 +96,15 @@ harden_secret_storage() {
 if [ -z "${IPKG_INSTROOT:-}" ]; then
 	chmod 0755 /etc/init.d/routeflux >/dev/null 2>&1 || true
 	chmod 0755 /usr/libexec/routeflux-cron >/dev/null 2>&1 || true
+	rm -f \
+		/www/luci-static/resources/view/routeflux/overview.js \
+		/www/luci-static/resources/view/routeflux/dns.js \
+		/www/luci-static/resources/view/routeflux/settings.js \
+		/www/luci-static/resources/view/routeflux/diagnostics.js \
+		/www/luci-static/resources/view/routeflux/logs.js \
+		/www/luci-static/resources/view/routeflux/services.js \
+		/www/luci-static/resources/view/routeflux/about.js \
+		>/dev/null 2>&1 || true
 	harden_secret_storage
 	/usr/libexec/routeflux-cron ensure-xray-log-retention >/dev/null 2>&1 || true
 	rm -f /tmp/luci-indexcache

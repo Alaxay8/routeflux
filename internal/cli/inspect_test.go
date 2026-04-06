@@ -275,9 +275,15 @@ func (b *cliInspectBackend) GenerateConfig(backend.ConfigRequest) ([]byte, error
 }
 
 func (b *cliInspectBackend) ApplyConfig(context.Context, backend.ConfigRequest) error { return nil }
-func (b *cliInspectBackend) Start(context.Context) error                              { return nil }
-func (b *cliInspectBackend) Stop(context.Context) error                               { return nil }
-func (b *cliInspectBackend) Reload(context.Context) error                             { return nil }
+func (b *cliInspectBackend) CaptureRollback() (backend.RollbackSnapshot, error) {
+	return backend.RollbackSnapshot{}, nil
+}
+func (b *cliInspectBackend) RollbackConfig(context.Context, backend.RollbackSnapshot) error {
+	return nil
+}
+func (b *cliInspectBackend) Start(context.Context) error  { return nil }
+func (b *cliInspectBackend) Stop(context.Context) error   { return nil }
+func (b *cliInspectBackend) Reload(context.Context) error { return nil }
 func (b *cliInspectBackend) Status(context.Context) (backend.RuntimeStatus, error) {
 	return backend.RuntimeStatus{}, nil
 }

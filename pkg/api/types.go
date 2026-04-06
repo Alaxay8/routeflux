@@ -1,6 +1,7 @@
 package api
 
 import (
+	"math"
 	"time"
 
 	"github.com/Alaxay8/routeflux/internal/app"
@@ -22,17 +23,28 @@ type NodeSummary struct {
 
 // SubscriptionSummary is the API-safe shape for a stored subscription.
 type SubscriptionSummary struct {
-	ID            string        `json:"id"`
-	ProviderName  string        `json:"provider_name"`
-	DisplayName   string        `json:"display_name"`
-	SourceType    string        `json:"source_type"`
-	LastUpdatedAt string        `json:"last_updated_at"`
-	ExpiresAt     string        `json:"expires_at"`
-	ParserStatus  string        `json:"parser_status"`
-	LastError     string        `json:"last_error"`
-	NodeCount     int           `json:"node_count"`
-	RefreshEvery  string        `json:"refresh_every"`
-	Nodes         []NodeSummary `json:"nodes,omitempty"`
+	ID            string          `json:"id"`
+	ProviderName  string          `json:"provider_name"`
+	DisplayName   string          `json:"display_name"`
+	SourceType    string          `json:"source_type"`
+	LastUpdatedAt string          `json:"last_updated_at"`
+	ExpiresAt     string          `json:"expires_at"`
+	Traffic       *TrafficSummary `json:"traffic,omitempty"`
+	ParserStatus  string          `json:"parser_status"`
+	LastError     string          `json:"last_error"`
+	NodeCount     int             `json:"node_count"`
+	RefreshEvery  string          `json:"refresh_every"`
+	Nodes         []NodeSummary   `json:"nodes,omitempty"`
+}
+
+// TrafficSummary is the API-safe shape for subscription quota counters.
+type TrafficSummary struct {
+	UploadBytes    int64 `json:"upload_bytes"`
+	DownloadBytes  int64 `json:"download_bytes"`
+	UsedBytes      int64 `json:"used_bytes"`
+	RemainingBytes int64 `json:"remaining_bytes"`
+	TotalBytes     int64 `json:"total_bytes"`
+	Unlimited      bool  `json:"unlimited"`
 }
 
 // StatusResponse is the API-safe shape for current runtime status.
@@ -81,6 +93,7 @@ func SubscriptionSummaryFromDomain(sub domain.Subscription, includeNodes bool) S
 		SourceType:    string(sub.SourceType),
 		LastUpdatedAt: formatTimestamp(sub.LastUpdatedAt),
 		ExpiresAt:     formatTimestampPointer(sub.ExpiresAt),
+		Traffic:       trafficSummaryFromDomain(sub.Traffic),
 		ParserStatus:  sub.ParserStatus,
 		LastError:     sub.LastError,
 		NodeCount:     len(sub.Nodes),
@@ -141,4 +154,33 @@ func formatTimestampPointer(value *time.Time) string {
 	}
 
 	return formatTimestamp(*value)
+}
+
+func trafficSummaryFromDomain(value *domain.SubscriptionTraffic) *TrafficSummary {
+	if value == nil {
+		return nil
+	}
+
+	usedBytes := safeSumBytes(value.UploadBytes, value.DownloadBytes)
+	remainingBytes := int64(0)
+	if value.TotalBytes > usedBytes {
+		remainingBytes = value.TotalBytes - usedBytes
+	}
+
+	return &TrafficSummary{
+		UploadBytes:    value.UploadBytes,
+		DownloadBytes:  value.DownloadBytes,
+		UsedBytes:      usedBytes,
+		RemainingBytes: remainingBytes,
+		TotalBytes:     value.TotalBytes,
+		Unlimited:      value.TotalBytes == 0,
+	}
+}
+
+func safeSumBytes(left, right int64) int64 {
+	if right > 0 && left > math.MaxInt64-right {
+		return math.MaxInt64
+	}
+
+	return left + right
 }

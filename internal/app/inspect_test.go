@@ -56,7 +56,8 @@ func TestInspectXrayConfigUsesOriginalAddressAndCurrentSettings(t *testing.T) {
 	}
 	store.settings.LogLevel = "debug"
 	store.settings.Firewall.Enabled = true
-	store.settings.Firewall.TargetCIDRs = []string{"1.1.1.1/32"}
+	store.settings.Firewall.Mode = domain.FirewallModeTargets
+	store.settings.Firewall.Targets = domain.FirewallSelectorSet{CIDRs: []string{"1.1.1.1/32"}}
 	store.settings.Firewall.TransparentPort = 23456
 
 	service := NewService(Dependencies{
@@ -175,7 +176,8 @@ func TestInspectSpeedUsesIsolatedConfigAndDoesNotMutateRuntime(t *testing.T) {
 	}
 	store.settings.LogLevel = "warning"
 	store.settings.Firewall.Enabled = true
-	store.settings.Firewall.SourceCIDRs = []string{"192.168.1.10/32"}
+	store.settings.Firewall.Mode = domain.FirewallModeHosts
+	store.settings.Firewall.Hosts = []string{"192.168.1.10/32"}
 	store.settings.Firewall.TransparentPort = 12345
 
 	backend := &inspectBackend{generatedConfig: []byte(`{"inbounds":[{"tag":"http-in"}]}`)}
@@ -316,6 +318,14 @@ func (b *inspectBackend) GenerateConfig(req backend.ConfigRequest) ([]byte, erro
 func (b *inspectBackend) ApplyConfig(context.Context, backend.ConfigRequest) error {
 	b.applyCalls++
 	return fmt.Errorf("unexpected ApplyConfig call")
+}
+
+func (b *inspectBackend) CaptureRollback() (backend.RollbackSnapshot, error) {
+	return backend.RollbackSnapshot{}, nil
+}
+
+func (b *inspectBackend) RollbackConfig(context.Context, backend.RollbackSnapshot) error {
+	return nil
 }
 
 func (b *inspectBackend) Start(context.Context) error  { return nil }

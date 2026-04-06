@@ -3,8 +3,11 @@ package app
 import (
 	"bytes"
 	"context"
+	"errors"
 	"fmt"
 	"log/slog"
+	"net/http"
+	"net/http/httptest"
 	"strings"
 	"testing"
 	"time"
@@ -125,6 +128,90 @@ func TestSchedulerRunOnceRefreshesAndReconnectsActiveSubscription(t *testing.T) 
 	}
 }
 
+func TestSchedulerRunOnceKeepsActiveSubscriptionWhenCandidateVerifyFails(t *testing.T) {
+	t.Parallel()
+
+	now := time.Date(2026, 3, 24, 12, 0, 0, 0, time.UTC)
+	activeNode := domain.Node{
+		SubscriptionID: "sub-1",
+		Name:           "Germany",
+		ProviderName:   "Demo VPN",
+		Protocol:       domain.ProtocolVLESS,
+		Address:        "de.example.com",
+		Port:           443,
+		UUID:           "11111111-1111-1111-1111-111111111111",
+		Encryption:     "none",
+		Security:       "tls",
+		ServerName:     "edge.example.com",
+		Transport:      "ws",
+		Path:           "/proxy",
+		Host:           "cdn.example.com",
+	}
+	activeNode.ID = domain.StableNodeID(activeNode)
+
+	store := &memoryStore{
+		settings: domain.DefaultSettings(),
+		state: domain.RuntimeState{
+			ActiveSubscriptionID: "sub-1",
+			ActiveNodeID:         activeNode.ID,
+			Mode:                 domain.SelectionModeManual,
+			Connected:            true,
+			LastSuccessAt:        now.Add(-10 * time.Minute),
+		},
+		subs: []domain.Subscription{
+			{
+				ID:                 "sub-1",
+				SourceType:         domain.SourceTypeRaw,
+				Source:             "vless://11111111-1111-1111-1111-111111111111@de.example.com:443?encryption=none&security=tls&sni=edge.example.com&type=ws&path=%2Fproxy&host=cdn.example.com#Germany",
+				ProviderName:       "Demo VPN",
+				DisplayName:        "Demo VPN",
+				ProviderNameSource: domain.ProviderNameSourceManual,
+				LastUpdatedAt:      now.Add(-2 * time.Hour),
+				RefreshInterval:    domain.NewDuration(time.Hour),
+				Nodes:              []domain.Node{activeNode},
+			},
+		},
+	}
+	store.settings.Firewall.Enabled = true
+	store.settings.Firewall.Mode = domain.FirewallModeHosts
+	store.settings.Firewall.Hosts = []string{"192.168.1.150"}
+
+	runtimeBackend := &recordingBackend{}
+	firewall := &recordingFirewaller{}
+	service := NewService(Dependencies{
+		Store:      store,
+		Backend:    runtimeBackend,
+		Firewaller: firewall,
+	})
+	service.backendEgressProbe = func(context.Context) error { return errors.New("proxy probe failed") }
+	service.backendEgressTimeout = 5 * time.Millisecond
+	service.backendEgressRetryDelay = time.Millisecond
+
+	scheduler := NewScheduler(service)
+	scheduler.now = func() time.Time { return now }
+
+	scheduler.RunOnce(context.Background())
+
+	if len(runtimeBackend.requests) != 1 {
+		t.Fatalf("expected one backend apply during reconnect, got %d", len(runtimeBackend.requests))
+	}
+	if runtimeBackend.captureRollbackCalls != 1 {
+		t.Fatalf("expected one rollback snapshot capture, got %d", runtimeBackend.captureRollbackCalls)
+	}
+	if runtimeBackend.rollbackCalls != 1 {
+		t.Fatalf("expected one rollback after failed verify, got %d", runtimeBackend.rollbackCalls)
+	}
+	if firewall.disableCalls != 0 {
+		t.Fatalf("expected firewall to stay enabled during recovered refresh failure, got %d disables", firewall.disableCalls)
+	}
+	if !store.state.Connected || store.state.ActiveSubscriptionID != "sub-1" || store.state.ActiveNodeID != activeNode.ID {
+		t.Fatalf("unexpected state after recovered refresh failure: %+v", store.state)
+	}
+	if !strings.Contains(store.state.LastFailureReason, "candidate verify failed: backend egress probe failed") {
+		t.Fatalf("unexpected failure reason: %q", store.state.LastFailureReason)
+	}
+}
+
 func TestSchedulerHealthLoopConfigLogsRepeatedSettingsErrorOnce(t *testing.T) {
 	t.Parallel()
 
@@ -186,5 +273,54 @@ func TestSchedulerHealthLoopConfigLogsErrorAgainAfterRecovery(t *testing.T) {
 
 	if count := strings.Count(logs.String(), "load settings for auto health loop"); count != 2 {
 		t.Fatalf("expected warning to be logged again after recovery, got %d\nlogs:\n%s", count, logs.String())
+	}
+}
+
+func TestSchedulerRunOnceUsesLastRefreshAttemptAfterFailure(t *testing.T) {
+	t.Parallel()
+
+	now := time.Date(2026, 3, 24, 12, 0, 0, 0, time.UTC)
+	attempts := 0
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		attempts++
+		http.Error(w, "upstream unavailable", http.StatusServiceUnavailable)
+	}))
+	t.Cleanup(server.Close)
+
+	store := &memoryStore{
+		settings: domain.DefaultSettings(),
+		state:    domain.DefaultRuntimeState(),
+		subs: []domain.Subscription{
+			{
+				ID:                 "sub-1",
+				SourceType:         domain.SourceTypeURL,
+				Source:             server.URL,
+				ProviderName:       "Demo VPN",
+				DisplayName:        "Demo VPN",
+				ProviderNameSource: domain.ProviderNameSourceManual,
+				LastUpdatedAt:      now.Add(-2 * time.Hour),
+				RefreshInterval:    domain.NewDuration(time.Hour),
+			},
+		},
+	}
+
+	service := NewService(Dependencies{Store: store, HTTPClient: server.Client()})
+	scheduler := NewScheduler(service)
+	scheduler.now = func() time.Time { return now }
+
+	scheduler.RunOnce(context.Background())
+
+	if attempts != subscriptionFetchMaxAttempts {
+		t.Fatalf("expected one scheduled refresh attempt with retries, got %d HTTP calls", attempts)
+	}
+	if got := store.state.LastRefreshAt["sub-1"]; !got.Equal(now) {
+		t.Fatalf("expected failed refresh to record last attempt at %s, got %s", now, got)
+	}
+
+	scheduler.now = func() time.Time { return now.Add(30 * time.Minute) }
+	scheduler.RunOnce(context.Background())
+
+	if attempts != subscriptionFetchMaxAttempts {
+		t.Fatalf("expected scheduler to skip retry before interval elapsed, got %d HTTP calls", attempts)
 	}
 }

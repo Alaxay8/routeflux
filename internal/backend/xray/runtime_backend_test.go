@@ -231,6 +231,50 @@ func TestRuntimeBackendApplyConfigReloadFailureWithoutRollbackRemovesBrokenConfi
 	}
 }
 
+func TestRuntimeBackendRollbackConfigRestoresCapturedSnapshot(t *testing.T) {
+	t.Parallel()
+
+	dir := t.TempDir()
+	livePath := filepath.Join(dir, "config.json")
+	liveConfig := []byte("{\"log\":{\"loglevel\":\"warning\"}}\n")
+	if err := os.WriteFile(livePath, liveConfig, 0o644); err != nil {
+		t.Fatalf("write live config: %v", err)
+	}
+
+	controller := &scriptedController{}
+	runtimeBackend := NewRuntimeBackend(livePath, controller)
+	runtimeBackend.tester = &recordingConfigTester{}
+
+	snapshot, err := runtimeBackend.CaptureRollback()
+	if err != nil {
+		t.Fatalf("capture rollback: %v", err)
+	}
+	if !snapshot.Available {
+		t.Fatal("expected rollback snapshot to be available")
+	}
+	if !jsonEqual(t, snapshot.Config, liveConfig) {
+		t.Fatalf("unexpected rollback snapshot\nwant:\n%s\ngot:\n%s", liveConfig, snapshot.Config)
+	}
+
+	if err := runtimeBackend.ApplyConfig(context.Background(), testConfigRequest()); err != nil {
+		t.Fatalf("apply config: %v", err)
+	}
+	if err := runtimeBackend.RollbackConfig(context.Background(), snapshot); err != nil {
+		t.Fatalf("rollback config: %v", err)
+	}
+
+	got, err := os.ReadFile(livePath)
+	if err != nil {
+		t.Fatalf("read live config: %v", err)
+	}
+	if !jsonEqual(t, got, liveConfig) {
+		t.Fatalf("expected rollback to restore captured config\nwant:\n%s\ngot:\n%s", liveConfig, got)
+	}
+	if controller.reloadCalls != 2 {
+		t.Fatalf("expected apply reload plus rollback reload, got %d", controller.reloadCalls)
+	}
+}
+
 func testConfigRequest() backend.ConfigRequest {
 	return backend.ConfigRequest{
 		Mode: domain.SelectionModeManual,
