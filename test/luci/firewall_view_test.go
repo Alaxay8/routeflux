@@ -1,154 +1,154 @@
 package luci_test
 
 import (
+	"encoding/json"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
 )
 
-func TestFirewallViewTextInputsUseDirectHandlers(t *testing.T) {
+func TestFirewallViewUsesSimplifiedRoutingCopy(t *testing.T) {
 	t.Parallel()
 
 	source := readFirewallViewSource(t)
 
 	for _, want := range []string{
-		"'input': function(ev) {\n\t\t\t\t\t\t\t\tthis.handleSelectorInputChange(key, ev);",
-		"'input': function(ev) {\n\t\t\t\t\t\t\tthis.handleListInputChange(key, ev);",
-		"'input': function(ev) {\n\t\t\t\t\t\t\t\tthis.handlePortInput(ev);",
+		"RouteFlux - Routing",
+		"System DNS",
+		"RouteFlux Recommended DNS",
+		"Keep Direct",
+		"Excluded Devices",
+		"Switch to Off or Bypass and save to replace it from LuCI.",
+		"The current DNS profile was created outside this simplified LuCI flow.",
 	} {
 		if !strings.Contains(source, want) {
-			t.Fatalf("firewall view missing direct input handler marker %q", want)
-		}
-	}
-
-	for _, forbidden := range []string{
-		"'input': ui.createHandlerFn(this, 'handleSelectorInputChange', key)",
-		"'input': ui.createHandlerFn(this, 'handleListInputChange', key)",
-		"'input': ui.createHandlerFn(this, 'handlePortInput')",
-	} {
-		if strings.Contains(source, forbidden) {
-			t.Fatalf("firewall view must not bind text input with createHandlerFn: %q", forbidden)
+			t.Fatalf("routing view missing marker %q", want)
 		}
 	}
 }
 
-func TestFirewallViewActionButtonsPreventDefault(t *testing.T) {
-	t.Parallel()
-
-	source := readFirewallViewSource(t)
-
-	for _, functionName := range []string{
-		"handleAddService",
-		"handleAddSelector",
-		"handleAddListEntry",
-		"handleRemoveSelector",
-		"handleRemoveListEntry",
-		"handleSaveSettings",
-		"handleDisable",
-	} {
-		block := extractFunctionBlock(t, source, functionName)
-		if !strings.Contains(block, "ev.preventDefault();") {
-			t.Fatalf("%s must prevent default button submission", functionName)
-		}
-	}
-}
-
-func TestFirewallViewActionButtonsUseButtonType(t *testing.T) {
-	t.Parallel()
-
-	source := readFirewallViewSource(t)
-
-	for _, handlerName := range []string{
-		"'handleRemoveSelector', key, 'services'",
-		"'handleRemoveListEntry', key",
-		"'handleAddService', key",
-		"'handleAddSelector', key",
-		"'handleAddListEntry', key",
-		"'handleSaveSettings'",
-		"'handleDisable'",
-	} {
-		block := extractButtonBlock(t, source, handlerName)
-		if !strings.Contains(block, "'type': 'button'") {
-			t.Fatalf("button bound to %s must declare type=button", handlerName)
-		}
-	}
-}
-
-func TestFirewallViewPromotesBypassModeInLuCI(t *testing.T) {
+func TestFirewallViewDefinesReadableContrastTheme(t *testing.T) {
 	t.Parallel()
 
 	source := readFirewallViewSource(t)
 
 	for _, want := range []string{
-		"E('option', { 'value': 'bypass'",
-		"_('Bypass')",
-		"_('Keep Direct')",
-		"_('Excluded Devices')",
-		"current firewall config uses advanced split tunnelling created outside LuCI",
+		"--routeflux-routing-ink",
+		"--routeflux-routing-panel-bg",
+		"routeflux-routing-choice-selected",
+		".routeflux-routing-panel .cbi-value-title",
+		".routeflux-routing-inline > .cbi-button-action",
+	} {
+		if !strings.Contains(source, want) {
+			t.Fatalf("routing view missing readability marker %q", want)
+		}
+	}
+}
+
+func TestFirewallViewRemovesAdvancedRoutingControls(t *testing.T) {
+	t.Parallel()
+
+	source := readFirewallViewSource(t)
+
+	for _, forbidden := range []string{
+		"routeflux-firewall-mode",
+		"Transparent Port",
+		"Block QUIC",
+		"Disable IPv6",
+		"routeflux-firewall-help",
+		"firewall explain",
+		"Targets",
+		"Hosts",
+	} {
+		if strings.Contains(source, forbidden) {
+			t.Fatalf("routing view must not contain %q", forbidden)
+		}
+	}
+}
+
+func TestFirewallViewPersistsOnlyOffAndBypassModes(t *testing.T) {
+	t.Parallel()
+
+	source := readFirewallViewSource(t)
+
+	for _, want := range []string{
+		"'firewall', 'set', 'bypass'",
 		"'firewall', 'draft', 'bypass'",
+		"'firewall', 'disable'",
+		"'dns', 'set', 'mode', 'system'",
+		"'dns', 'set', 'default'",
 	} {
 		if !strings.Contains(source, want) {
-			t.Fatalf("firewall view must contain %q", want)
+			t.Fatalf("routing view must contain %q", want)
 		}
+	}
+}
+
+func TestLuCIMenuKeepsOnlySubscriptionsAndRouting(t *testing.T) {
+	t.Parallel()
+
+	root, err := filepath.Abs(filepath.Join("..", ".."))
+	if err != nil {
+		t.Fatalf("resolve repo root: %v", err)
+	}
+
+	path := filepath.Join(root, "luci-app-routeflux", "root", "usr", "share", "luci", "menu.d", "luci-app-routeflux.json")
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("read %s: %v", path, err)
+	}
+
+	var payload map[string]struct {
+		Title  string `json:"title"`
+		Action struct {
+			Type string `json:"type"`
+			Path string `json:"path"`
+		} `json:"action"`
+	}
+	if err := json.Unmarshal(data, &payload); err != nil {
+		t.Fatalf("unmarshal menu json: %v", err)
+	}
+
+	if len(payload) != 3 {
+		t.Fatalf("expected root + 2 LuCI entries, got %d", len(payload))
+	}
+
+	rootEntry, ok := payload["admin/services/routeflux"]
+	if !ok {
+		t.Fatal("missing RouteFlux root menu entry")
+	}
+	if rootEntry.Action.Path != "admin/services/routeflux/subscriptions" {
+		t.Fatalf("root RouteFlux alias path mismatch: %q", rootEntry.Action.Path)
+	}
+
+	subscriptionsEntry, ok := payload["admin/services/routeflux/subscriptions"]
+	if !ok {
+		t.Fatal("missing subscriptions menu entry")
+	}
+	if subscriptionsEntry.Title != "Subscriptions" {
+		t.Fatalf("unexpected subscriptions title %q", subscriptionsEntry.Title)
+	}
+
+	routingEntry, ok := payload["admin/services/routeflux/firewall"]
+	if !ok {
+		t.Fatal("missing routing menu entry")
+	}
+	if routingEntry.Title != "Routing" {
+		t.Fatalf("unexpected routing title %q", routingEntry.Title)
 	}
 
 	for _, forbidden := range []string{
-		"E('option', { 'value': 'split'",
-		"_('Split Tunnelling')",
+		"admin/services/routeflux/overview",
+		"admin/services/routeflux/dns",
+		"admin/services/routeflux/settings",
+		"admin/services/routeflux/diagnostics",
+		"admin/services/routeflux/logs",
+		"admin/services/routeflux/services",
+		"admin/services/routeflux/about",
 	} {
-		if strings.Contains(source, forbidden) {
-			t.Fatalf("firewall view must not keep %q in main LuCI mode selector or copy", forbidden)
-		}
-	}
-}
-
-func TestFirewallViewUsesReadableBypassEditorStyling(t *testing.T) {
-	t.Parallel()
-
-	source := readFirewallViewSource(t)
-
-	for _, want := range []string{
-		"className += ' ' + trim(settings.className);",
-		"var descriptionClassName = 'cbi-value-description';",
-		"descriptionClassName += ' ' + trim(settings.descriptionClassName);",
-		"'className': 'routeflux-firewall-editor-emphasis routeflux-firewall-editor-bypass'",
-		"'className': 'routeflux-firewall-editor-emphasis routeflux-firewall-editor-bypass routeflux-firewall-editor-excluded'",
-		"'descriptionClassName': 'routeflux-firewall-editor-description-strong'",
-		"routeflux-firewall-editor-kicker",
-		".routeflux-firewall-editor-head .cbi-value-description { color:var(--text-color-medium, #4f5f70);",
-		".routeflux-firewall-editor-bypass { border-color:rgba(37, 99, 128, 0.36); background:linear-gradient(180deg, rgba(228, 238, 244, 0.98) 0%, rgba(214, 226, 235, 0.98) 100%); box-shadow:0 16px 30px rgba(22, 50, 74, 0.1), inset 0 1px 0 rgba(255, 255, 255, 0.62); }",
-		".routeflux-firewall-editor-bypass .routeflux-firewall-editor-head h4 { color:#16324a !important; }",
-		".routeflux-firewall-editor-bypass .routeflux-firewall-editor-grid .cbi-value-title { color:#284357 !important; }",
-		".routeflux-firewall-editor-description-strong { color:#16324a !important; font-weight:500; }",
-		"'class': 'routeflux-firewall-editor routeflux-firewall-editor-emphasis routeflux-firewall-editor-bypass routeflux-firewall-help-shell'",
-		".routeflux-firewall-help { white-space:pre-wrap; margin:0; padding:0; border:0; border-radius:0; background:transparent; color:#16324a; font:inherit; line-height:1.7; }",
-		"_('Use this reference while tuning bypass rules, excluded devices, and other transparent routing behavior.')",
-		".routeflux-firewall-inline .cbi-input-text::placeholder { color:rgba(71, 85, 105, 0.72); opacity:1; }",
-		".routeflux-firewall-toggle { display:flex; gap:10px; align-items:flex-start; font-weight:600; color:var(--text-color-high, #17263a); }",
-	} {
-		if !strings.Contains(source, want) {
-			t.Fatalf("firewall view must contain readable styling marker %q", want)
-		}
-	}
-}
-
-func TestFirewallViewIncludesIPv6ProtectionToggle(t *testing.T) {
-	t.Parallel()
-
-	source := readFirewallViewSource(t)
-
-	for _, want := range []string{
-		"'disable_ipv6': raw.disable_ipv6 === true",
-		"'disable_ipv6': current.disable_ipv6 === true",
-		"handleDisableIPv6Change",
-		"'firewall', 'set', 'ipv6', this.formState.disable_ipv6 ? 'disable' : 'enable'",
-		"'routeflux-firewall-disable-ipv6'",
-		"_('Disable IPv6')",
-		"_('RouteFlux transparent routing only intercepts IPv4 traffic. If IPv6 stays enabled, matching traffic can still leave the router outside the proxy.')",
-	} {
-		if !strings.Contains(source, want) {
-			t.Fatalf("firewall view must contain IPv6 toggle marker %q", want)
+		if _, exists := payload[forbidden]; exists {
+			t.Fatalf("menu must not keep removed entry %q", forbidden)
 		}
 	}
 }

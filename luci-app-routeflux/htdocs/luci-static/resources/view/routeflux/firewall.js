@@ -124,7 +124,6 @@ function inferRegionCodeFromAddress(value) {
 		return '';
 
 	var labels = host.split('.').filter(Boolean);
-
 	if (labels.length === 0)
 		return '';
 
@@ -231,8 +230,8 @@ function buildSubscriptionPresentation(subscriptions) {
 
 		group.count += 1;
 		byId[trim(sub.id)] = {
-			provider_title: title,
-			profile_label: _('Profile %d').format(group.count)
+			'provider_title': title,
+			'profile_label': _('Profile %d').format(group.count)
 		};
 	}
 
@@ -298,10 +297,6 @@ function parseList(raw) {
 	return out;
 }
 
-function hasItems(values) {
-	return Array.isArray(values) && values.length > 0;
-}
-
 function cleanList(values) {
 	var seen = {};
 	var out = [];
@@ -318,6 +313,21 @@ function cleanList(values) {
 	}
 
 	return out;
+}
+
+function sameList(left, right) {
+	var leftList = cleanList(left || []);
+	var rightList = cleanList(right || []);
+
+	if (leftList.length !== rightList.length)
+		return false;
+
+	for (var i = 0; i < leftList.length; i++) {
+		if (leftList[i] !== rightList[i])
+			return false;
+	}
+
+	return true;
 }
 
 function emptySelectorSet() {
@@ -338,26 +348,25 @@ function cloneSelectorSet(value) {
 	};
 }
 
-function selectorValues(selectors) {
-	var value = cloneSelectorSet(selectors);
+function selectorSetHasEntries(value) {
+	var selectors = cloneSelectorSet(value);
 
-	return value.services.concat(value.domains).concat(value.cidrs);
+	return selectors.services.length > 0 || selectors.domains.length > 0 || selectors.cidrs.length > 0;
 }
 
-function selectorSetHasEntries(selectors) {
-	var value = cloneSelectorSet(selectors);
+function selectorValues(value) {
+	var selectors = cloneSelectorSet(value);
 
-	return value.services.length > 0 || value.domains.length > 0 || value.cidrs.length > 0;
+	return selectors.services.concat(selectors.domains).concat(selectors.cidrs);
 }
 
-function emptySelectorEditor() {
-	return {
-		'services': [],
-		'domains': [],
-		'cidrs': [],
-		'serviceChoice': '',
-		'selectorInput': ''
-	};
+function sameSelectorSet(left, right) {
+	var leftValue = cloneSelectorSet(left);
+	var rightValue = cloneSelectorSet(right);
+
+	return sameList(leftValue.services, rightValue.services) &&
+		sameList(leftValue.domains, rightValue.domains) &&
+		sameList(leftValue.cidrs, rightValue.cidrs);
 }
 
 function selectorEditorFromSet(value) {
@@ -412,24 +421,15 @@ function normalizeSourceSelector(value) {
 	return normalized;
 }
 
-function legacyTargetMode(settings) {
-	return trim(settings.target_mode) === 'bypass' ? 'bypass' : 'proxy';
-}
+function appendStringSliceFlags(argv, flag, values) {
+	var list = cleanList(values || []);
 
-function legacyFirewallMode(settings) {
-	var hasSources = hasItems(settings.source_cidrs);
-	var hasTargets = hasItems(settings.target_services) || hasItems(settings.target_domains) || hasItems(settings.target_cidrs);
+	for (var i = 0; i < list.length; i++) {
+		argv.push(flag);
+		argv.push(list[i]);
+	}
 
-	if (settings.enabled !== true || (!hasSources && !hasTargets))
-		return 'disabled';
-
-	if (hasSources)
-		return 'hosts';
-
-	if (legacyTargetMode(settings) === 'bypass')
-		return 'split';
-
-	return 'targets';
+	return argv;
 }
 
 function normalizedSelectorSet(raw, legacy) {
@@ -440,14 +440,40 @@ function normalizedSelectorSet(raw, legacy) {
 	};
 }
 
-function normalizedSplitSettings(firewall, mode) {
-	var split = firewall.split || {};
-	var legacyMode = legacyTargetMode(firewall);
-	var useLegacyBypass = !selectorSetHasEntries(split.bypass) && !selectorSetHasEntries(split.proxy) && mode === 'split' && legacyMode === 'bypass';
+function inferFirewallMode(raw) {
+	var mode = trim(raw && raw.mode);
+	var split = raw && raw.split ? raw.split : {};
+	var targets = raw && raw.targets ? raw.targets : {};
+	var hasDeviceSelectors = cleanList((raw && raw.hosts) || (raw && raw.source_cidrs) || []).length > 0;
+	var hasDestinationSelectors = selectorSetHasEntries(targets) ||
+		cleanList(raw && raw.target_services).length > 0 ||
+		cleanList(raw && raw.target_domains).length > 0 ||
+		cleanList(raw && raw.target_cidrs).length > 0;
+	var hasSplit = selectorSetHasEntries(split.proxy) || selectorSetHasEntries(split.bypass) ||
+		cleanList(split.excluded_sources).length > 0;
+
+	if (mode === 'hosts' || mode === 'targets' || mode === 'split' || mode === 'disabled')
+		return mode;
+	if (hasDeviceSelectors)
+		return 'hosts';
+	if (hasSplit)
+		return 'split';
+	if (hasDestinationSelectors)
+		return 'targets';
+
+	return 'disabled';
+}
+
+function normalizedSplitSettings(raw) {
+	var split = raw && raw.split ? raw.split : {};
+	var explicitBypass = selectorSetHasEntries(split.bypass);
+	var explicitProxy = selectorSetHasEntries(split.proxy);
+	var legacyBypass = trim(raw && raw.target_mode) === 'bypass';
+	var useLegacyBypass = !explicitBypass && !explicitProxy && legacyBypass;
 
 	return {
 		'proxy': normalizedSelectorSet(split.proxy || {}, null),
-		'bypass': useLegacyBypass ? normalizedSelectorSet(null, firewall) : normalizedSelectorSet(split.bypass || {}, null),
+		'bypass': useLegacyBypass ? normalizedSelectorSet(null, raw) : normalizedSelectorSet(split.bypass || {}, null),
 		'excluded_sources': cleanList(split.excluded_sources || []),
 		'default_action': trim(split.default_action) !== '' ? trim(split.default_action) : (useLegacyBypass ? 'proxy' : 'direct')
 	};
@@ -457,151 +483,186 @@ function splitLooksLikeBypass(split) {
 	return trim((split || {}).default_action) === 'proxy' && !selectorSetHasEntries((split || {}).proxy);
 }
 
-function splitLooksLikeTargets(split) {
-	return trim((split || {}).default_action) === 'direct' &&
-		selectorSetHasEntries((split || {}).proxy) &&
-		!selectorSetHasEntries((split || {}).bypass) &&
-		cleanList((split || {}).excluded_sources || []).length === 0;
+function describeActiveRoutingMode(value) {
+	switch (trim(value)) {
+	case 'bypass':
+		return _('Bypass');
+	case 'disabled':
+		return _('Off');
+	case 'targets':
+		return _('Destination-only routing');
+	case 'hosts':
+		return _('Device-based routing');
+	case 'split':
+		return _('Advanced split routing');
+	default:
+		return _('Unknown');
+	}
+}
+
+function summarizeSelectors(selectors) {
+	var values = selectorValues(selectors);
+
+	return values.length > 0 ? values.join(', ') : '-';
 }
 
 function canonicalFirewall(firewall) {
 	var raw = firewall || {};
-	var mode = trim(raw.mode);
 	var enabled = raw.enabled === true;
-	var split;
-	var targets;
-	var compatibilityWarning = '';
+	var mode = inferFirewallMode(raw);
+	var split = normalizedSplitSettings(raw);
+	var drafts = raw.mode_drafts || {};
+	var draftSplit = drafts.split || {};
+	var bypassDraft = {
+		'selectors': cloneSelectorSet(draftSplit.bypass || {}),
+		'excluded_sources': cleanList(draftSplit.excluded_sources || [])
+	};
+	var currentMode = 'disabled';
+	var supported = true;
+	var warning = '';
+	var activeBypass = {
+		'selectors': emptySelectorSet(),
+		'excluded_sources': []
+	};
+	var summaryLines = [];
 
-	if (mode !== 'hosts' && mode !== 'targets' && mode !== 'split' && mode !== 'disabled')
-		mode = legacyFirewallMode(raw);
-
-	if (!enabled && mode !== 'hosts' && mode !== 'targets' && mode !== 'split')
-		mode = 'disabled';
-
-	split = normalizedSplitSettings(raw, mode);
-	targets = normalizedSelectorSet(raw.targets || {}, mode === 'targets' ? raw : null);
-
-	if (enabled && mode === 'split') {
-		if (splitLooksLikeBypass(split))
-			mode = 'bypass';
-		else if (splitLooksLikeTargets(split)) {
-			mode = 'targets';
-			targets = cloneSelectorSet(split.proxy);
+	if (enabled === true) {
+		if (mode === 'split' && splitLooksLikeBypass(split)) {
+			currentMode = 'bypass';
+			activeBypass = {
+				'selectors': cloneSelectorSet(split.bypass),
+				'excluded_sources': cleanList(split.excluded_sources || [])
+			};
 		}
-		else
-			compatibilityWarning = _('The current firewall config uses advanced split tunnelling created outside LuCI. Choose Targets, Bypass, Hosts, or Disabled to replace it.');
+		else if (mode === 'disabled') {
+			currentMode = 'disabled';
+		}
+		else {
+			supported = false;
+			currentMode = mode;
+			warning = _('The current routing config was created outside this simplified LuCI flow. Switch to Off or Bypass and save to replace it from LuCI.');
+		}
+	}
+
+	summaryLines.push(_('Current mode: %s').format(describeActiveRoutingMode(currentMode)));
+	if (currentMode === 'bypass') {
+		summaryLines.push(_('Keep direct: %s').format(summarizeSelectors(activeBypass.selectors)));
+		summaryLines.push(_('Excluded devices: %s').format(cleanList(activeBypass.excluded_sources).join(', ') || '-'));
+	}
+	else if (currentMode === 'targets') {
+		summaryLines.push(_('Destination-only selectors: %s').format(summarizeSelectors(normalizedSelectorSet(raw.targets || {}, raw))));
+	}
+	else if (currentMode === 'hosts') {
+		summaryLines.push(_('Device-based selectors: %s').format(cleanList(raw.hosts || raw.source_cidrs || []).join(', ') || '-'));
+	}
+	else if (currentMode === 'split') {
+		summaryLines.push(_('Proxy selectors: %s').format(summarizeSelectors(split.proxy)));
+		summaryLines.push(_('Direct selectors: %s').format(summarizeSelectors(split.bypass)));
+		summaryLines.push(_('Excluded devices: %s').format(cleanList(split.excluded_sources).join(', ') || '-'));
 	}
 
 	return {
 		'enabled': enabled,
-		'mode': compatibilityWarning !== '' ? 'advanced-split' : mode,
-		'transparent_port': Number(raw.transparent_port) > 0 ? Number(raw.transparent_port) : 12345,
-		'block_quic': raw.block_quic === true,
-		'disable_ipv6': raw.disable_ipv6 === true,
-		'hosts': cleanList(raw.hosts || raw.source_cidrs || []),
-		'targets': targets,
-		'bypass': {
-			'selectors': cloneSelectorSet(split.bypass),
-			'excluded_sources': cleanList(split.excluded_sources || [])
-		},
-		'split': split,
-		'mode_drafts': raw.mode_drafts || {},
-		'compatibility_warning': compatibilityWarning
+		'current_mode': currentMode,
+		'supported': supported,
+		'warning': warning,
+		'bypass': activeBypass,
+		'bypass_draft': bypassDraft,
+		'summary_lines': summaryLines
 	};
 }
 
-function selectorSetFromDraft(rawDraft) {
-	return normalizedSelectorSet(null, rawDraft || {});
-}
+var defaultDNSServers = [ '1.1.1.1', '1.0.0.1' ];
+var defaultDNSDirectDomains = [ 'domain:lan', 'full:router.lan' ];
 
-function buildFormState(firewall) {
-	var current = canonicalFirewall(firewall);
-	var drafts = current.mode_drafts || {};
-	var hosts = listEditorFromEntries((drafts.hosts || {}).source_cidrs || []);
-	var targets = selectorEditorFromSet(selectorSetFromDraft(drafts.targets || {}));
-	var bypass = {
-		'selectors': selectorEditorFromSet(((drafts.split || {}).bypass) || emptySelectorSet()),
-		'excluded': listEditorFromEntries(((drafts.split || {}).excluded_sources) || [])
+function canonicalDNS(dns) {
+	var raw = dns || {};
+	var normalized = {
+		'mode': trim(raw.mode).toLowerCase(),
+		'transport': trim(raw.transport).toLowerCase(),
+		'servers': cleanList(raw.servers || []),
+		'bootstrap': cleanList(raw.bootstrap || []),
+		'direct_domains': cleanList(raw.direct_domains || [])
 	};
+	var isDefault = normalized.mode === 'split' &&
+		normalized.transport === 'doh' &&
+		sameList(normalized.servers, defaultDNSServers) &&
+		sameList(normalized.bootstrap, []) &&
+		sameList(normalized.direct_domains, defaultDNSDirectDomains);
+	var supported = normalized.mode === 'system' || isDefault;
+	var choice = '';
 
-	if (current.mode === 'hosts')
-		hosts = listEditorFromEntries(current.hosts);
-	else if (current.mode === 'targets')
-		targets = selectorEditorFromSet(current.targets);
-	else if (current.mode === 'bypass') {
-		bypass.selectors = selectorEditorFromSet(current.bypass.selectors);
-		bypass.excluded = listEditorFromEntries(current.bypass.excluded_sources);
-	}
-	else if (current.mode === 'advanced-split') {
-		targets = selectorEditorFromSet(current.split.proxy);
-		bypass.selectors = selectorEditorFromSet(current.bypass.selectors);
-		bypass.excluded = listEditorFromEntries(current.bypass.excluded_sources);
-	}
+	if (normalized.mode === 'system')
+		choice = 'system';
+	else if (isDefault)
+		choice = 'default';
 
 	return {
-		'mode': current.mode || 'disabled',
-		'port': String(current.transparent_port),
-		'block_quic': current.block_quic === true,
-		'disable_ipv6': current.disable_ipv6 === true,
-		'hosts': hosts,
-		'targets': targets,
-		'bypass': bypass,
-		'compatibility_warning': current.compatibility_warning || ''
+		'supported': supported,
+		'choice': supported ? choice : '',
+		'warning': supported ? '' : _('The current DNS profile was created outside this simplified LuCI flow. Choose System DNS or RouteFlux Recommended DNS and save to replace it.'),
+		'summary_lines': [
+			_('Mode: %s').format(normalized.mode || '-'),
+			_('Transport: %s').format(normalized.transport || '-'),
+			_('Servers: %s').format(normalized.servers.join(', ') || '-'),
+			_('Bootstrap: %s').format(normalized.bootstrap.join(', ') || '-'),
+			_('Direct domains: %s').format(normalized.direct_domains.join(', ') || '-')
+		]
 	};
 }
 
-function modeSummary(mode) {
-	switch (mode) {
-	case 'hosts':
-		return _('Hosts');
-	case 'targets':
-		return _('Targets');
+function buildFormState(firewall, dns) {
+	var routing = canonicalFirewall(firewall);
+	var dnsState = canonicalDNS(dns);
+	var selectorSet = routing.current_mode === 'bypass'
+		? routing.bypass.selectors
+		: routing.bypass_draft.selectors;
+	var excludedSources = routing.current_mode === 'bypass'
+		? routing.bypass.excluded_sources
+		: routing.bypass_draft.excluded_sources;
+
+	return {
+		'mode': routing.supported ? routing.current_mode : '',
+		'dns_choice': dnsState.supported ? dnsState.choice : '',
+		'bypass': {
+			'selectors': selectorEditorFromSet(selectorSet),
+			'excluded': listEditorFromEntries(excludedSources)
+		}
+	};
+}
+
+function modeSummary(value) {
+	switch (trim(value)) {
 	case 'bypass':
 		return _('Bypass');
-	case 'advanced-split':
-		return _('Advanced Split');
-	default:
-		return _('Disabled');
-	}
-}
-
-function editorByKey(view, key) {
-	if (!view.formState)
-		return null;
-
-	switch (key) {
+	case 'disabled':
+		return _('Off');
 	case 'targets':
-		return view.formState.targets;
-	case 'bypass':
-		return view.formState.bypass.selectors;
-	default:
-		return null;
-	}
-}
-
-function listByKey(view, key) {
-	if (!view.formState)
-		return null;
-
-	switch (key) {
+		return _('Destination-only routing');
 	case 'hosts':
-		return view.formState.hosts;
-	case 'bypass-excluded':
-		return view.formState.bypass.excluded;
+		return _('Device-based routing');
+	case 'split':
+		return _('Advanced split routing');
 	default:
-		return null;
+		return _('Off');
 	}
 }
 
-function appendStringSliceFlags(argv, flag, values) {
-	var list = cleanList(values || []);
-
-	for (var i = 0; i < list.length; i++) {
-		argv.push(flag);
-		argv.push(list[i]);
+function dnsChoiceSummary(value) {
+	switch (trim(value)) {
+	case 'system':
+		return _('System DNS');
+	case 'default':
+		return _('RouteFlux Recommended DNS');
+	default:
+		return _('Custom DNS');
 	}
+}
 
-	return argv;
+function choiceClass(selected) {
+	return selected === true
+		? 'routeflux-routing-choice routeflux-routing-choice-selected'
+		: 'routeflux-routing-choice';
 }
 
 return view.extend({
@@ -616,10 +677,10 @@ return view.extend({
 			this.execJSON([ '--json', 'list', 'subscriptions' ]).catch(function(err) {
 				return { '__error__': err.message || String(err) };
 			}),
-			this.execText([ 'firewall', 'explain' ]).catch(function(err) {
+			this.execJSON([ '--json', 'services', 'list' ]).catch(function(err) {
 				return { '__error__': err.message || String(err) };
 			}),
-			this.execJSON([ '--json', 'services', 'list' ]).catch(function(err) {
+			this.execJSON([ '--json', 'dns', 'get' ]).catch(function(err) {
 				return { '__error__': err.message || String(err) };
 			})
 		]);
@@ -701,86 +762,63 @@ return view.extend({
 		var firewallPayload = data[1] && !data[1].__error__
 			? data[1]
 			: ((status.settings || {}).firewall || {});
-		var servicesPayload = Array.isArray(data[4]) ? data[4] : [];
+		var dnsPayload = data[4] && !data[4].__error__
+			? data[4]
+			: ((status.settings || {}).dns || {});
+		var servicesPayload = Array.isArray(data[3]) ? data[3] : [];
 
 		this.pageData = {
 			'status': status,
 			'firewall': canonicalFirewall(firewallPayload),
+			'dns': canonicalDNS(dnsPayload),
 			'subscriptions': Array.isArray(data[2]) ? data[2] : [],
-			'explainText': data[3] && data[3].__error__ ? '' : trim(data[3]),
 			'services': servicesPayload
 		};
-		this.formState = buildFormState(firewallPayload);
+		this.formState = buildFormState(firewallPayload, dnsPayload);
 		this.rootErrors = {
 			'status': trim(data[0] && data[0].__error__),
 			'firewall': trim(data[1] && data[1].__error__),
 			'subscriptions': trim(data[2] && data[2].__error__),
-			'explain': trim(data[3] && data[3].__error__),
-			'services': trim(data[4] && data[4].__error__)
+			'services': trim(data[3] && data[3].__error__),
+			'dns': trim(data[4] && data[4].__error__)
 		};
 	},
 
 	renderIntoRoot: function() {
-		var root = document.querySelector('#routeflux-firewall-root');
+		var root = document.querySelector('#routeflux-routing-root');
 
 		if (root)
 			dom.content(root, this.renderPageContent());
 	},
 
 	handleModeChange: function(ev) {
-		this.formState.mode = trim(ev.currentTarget.value) || 'disabled';
-		this.renderIntoRoot();
+		this.formState.mode = trim(ev.currentTarget.value);
 	},
 
-	handlePortInput: function(ev) {
-		this.formState.port = trim(ev.currentTarget.value);
+	handleDNSChoiceChange: function(ev) {
+		this.formState.dns_choice = trim(ev.currentTarget.value);
 	},
 
-	handleBlockQUICChange: function(ev) {
-		this.formState.block_quic = ev.currentTarget.checked === true;
+	handleServiceChoiceChange: function(ev) {
+		this.formState.bypass.selectors.serviceChoice = trim(ev.currentTarget.value);
 	},
 
-	handleDisableIPv6Change: function(ev) {
-		this.formState.disable_ipv6 = ev.currentTarget.checked === true;
+	handleSelectorInputChange: function(ev) {
+		this.formState.bypass.selectors.selectorInput = ev.currentTarget.value;
 	},
 
-	handleServiceChoiceChange: function(key, ev) {
-		var editor = editorByKey(this, key);
-
-		if (!editor)
-			return;
-
-		editor.serviceChoice = trim(ev.currentTarget.value);
+	handleExcludedInputChange: function(ev) {
+		this.formState.bypass.excluded.input = ev.currentTarget.value;
 	},
 
-	handleSelectorInputChange: function(key, ev) {
-		var editor = editorByKey(this, key);
-
-		if (!editor)
-			return;
-
-		editor.selectorInput = ev.currentTarget.value;
-	},
-
-	handleListInputChange: function(key, ev) {
-		var list = listByKey(this, key);
-
-		if (!list)
-			return;
-
-		list.input = ev.currentTarget.value;
-	},
-
-	handleAddService: function(key, ev) {
-		var editor = editorByKey(this, key);
+	handleAddService: function(ev) {
+		var editor;
 		var value;
 
 		if (ev && typeof ev.preventDefault === 'function')
 			ev.preventDefault();
 
-		if (!editor)
-			return;
-
+		editor = this.formState.bypass.selectors;
 		value = trim(editor.serviceChoice).toLowerCase();
 		if (value === '')
 			return;
@@ -790,8 +828,8 @@ return view.extend({
 		this.renderIntoRoot();
 	},
 
-	handleAddSelector: function(key, ev) {
-		var editor = editorByKey(this, key);
+	handleAddSelector: function(ev) {
+		var editor;
 		var parts;
 		var i;
 		var value;
@@ -799,9 +837,7 @@ return view.extend({
 		if (ev && typeof ev.preventDefault === 'function')
 			ev.preventDefault();
 
-		if (!editor)
-			return;
-
+		editor = this.formState.bypass.selectors;
 		parts = parseList(editor.selectorInput);
 		for (i = 0; i < parts.length; i++) {
 			value = trim(parts[i]);
@@ -818,8 +854,8 @@ return view.extend({
 		this.renderIntoRoot();
 	},
 
-	handleAddListEntry: function(key, ev) {
-		var list = listByKey(this, key);
+	handleAddExcluded: function(ev) {
+		var list;
 		var parts;
 		var i;
 		var value;
@@ -827,9 +863,7 @@ return view.extend({
 		if (ev && typeof ev.preventDefault === 'function')
 			ev.preventDefault();
 
-		if (!list)
-			return;
-
+		list = this.formState.bypass.excluded;
 		parts = parseList(list.input);
 		for (i = 0; i < parts.length; i++) {
 			value = normalizeSourceSelector(parts[i]);
@@ -843,13 +877,14 @@ return view.extend({
 		this.renderIntoRoot();
 	},
 
-	handleRemoveSelector: function(key, field, value, ev) {
-		var editor = editorByKey(this, key);
+	handleRemoveSelector: function(field, value, ev) {
+		var editor;
 
 		if (ev && typeof ev.preventDefault === 'function')
 			ev.preventDefault();
 
-		if (!editor || !Array.isArray(editor[field]))
+		editor = this.formState.bypass.selectors;
+		if (!Array.isArray(editor[field]))
 			return;
 
 		editor[field] = cleanList(editor[field].filter(function(entry) {
@@ -858,114 +893,96 @@ return view.extend({
 		this.renderIntoRoot();
 	},
 
-	handleRemoveListEntry: function(key, value, ev) {
-		var list = listByKey(this, key);
+	handleRemoveExcluded: function(value, ev) {
+		var list;
 
 		if (ev && typeof ev.preventDefault === 'function')
 			ev.preventDefault();
 
-		if (!list)
-			return;
-
+		list = this.formState.bypass.excluded;
 		list.entries = cleanList(list.entries.filter(function(entry) {
 			return entry !== value;
 		}));
 		this.renderIntoRoot();
 	},
 
-	draftCommands: function() {
-		var commands = [];
-		var bypassDraft = [ 'firewall', 'draft', 'bypass' ];
-
-		commands.push([ 'firewall', 'draft', 'hosts' ].concat(listValues(this.formState.hosts)));
-		commands.push([ 'firewall', 'draft', 'targets' ].concat(selectorValues(selectorSetFromEditor(this.formState.targets))));
-		appendStringSliceFlags(bypassDraft, '--exclude-host', listValues(this.formState.bypass.excluded));
-		commands.push(bypassDraft.concat(selectorValues(selectorSetFromEditor(this.formState.bypass.selectors))));
-
-		return commands;
-	},
-
 	handleSaveSettings: function(ev) {
-		var portRaw = trim(this.formState.port);
-		var port = parseInt(portRaw, 10);
+		var routing = this.pageData.firewall || canonicalFirewall({});
+		var dnsState = this.pageData.dns || canonicalDNS({});
 		var mode = trim(this.formState.mode);
-		var commands = this.draftCommands();
-		var ipv6Command = [ 'firewall', 'set', 'ipv6', this.formState.disable_ipv6 ? 'disable' : 'enable' ];
-		var targetSelectors = selectorValues(selectorSetFromEditor(this.formState.targets));
-		var bypassSelectors = selectorValues(selectorSetFromEditor(this.formState.bypass.selectors));
-		var bypassExcluded = listValues(this.formState.bypass.excluded);
-		var bypassCommand = [ 'firewall', 'set', '--port', String(port), 'bypass' ];
+		var dnsChoice = trim(this.formState.dns_choice);
+		var desiredSelectors = selectorSetFromEditor(this.formState.bypass.selectors);
+		var desiredExcluded = listValues(this.formState.bypass.excluded);
+		var desiredSelectorValues = selectorValues(desiredSelectors);
+		var commands = [];
+		var draftCommand = [ 'firewall', 'draft', 'bypass' ];
+		var bypassCommand = [ 'firewall', 'set', 'bypass' ];
+		var draftChanged;
+		var routingChanged;
+		var dnsChanged;
 
 		if (ev && typeof ev.preventDefault === 'function')
 			ev.preventDefault();
 
-		if (!/^\d+$/.test(portRaw) || isNaN(port) || port <= 0) {
-			ui.addNotification(null, notificationParagraph(_('Transparent port must be a positive integer.')));
+		if (!routing.supported && mode === '') {
+			ui.addNotification(null, notificationParagraph(_('Choose Off or Bypass to replace the current advanced routing setup.')));
 			return Promise.resolve();
 		}
 
-		if (mode === 'hosts' && listValues(this.formState.hosts).length === 0) {
-			ui.addNotification(null, notificationParagraph(_('Enter at least one LAN device, CIDR, range, or all.')));
+		if (mode === 'bypass' && desiredSelectorValues.length === 0) {
+			ui.addNotification(null, notificationParagraph(_('Bypass needs at least one Keep Direct selector.')));
 			return Promise.resolve();
 		}
 
-		if (mode === 'targets' && targetSelectors.length === 0) {
-			ui.addNotification(null, notificationParagraph(_('Add at least one service preset, domain, IPv4 address, CIDR, or range for Route Through RouteFlux.')));
+		if (!dnsState.supported && dnsChoice === '') {
+			ui.addNotification(null, notificationParagraph(_('Choose System DNS or RouteFlux Recommended DNS to replace the current custom DNS profile.')));
 			return Promise.resolve();
 		}
 
-		if (mode === 'bypass' && bypassSelectors.length === 0) {
-			ui.addNotification(null, notificationParagraph(_('Bypass needs at least one Keep Direct entry.')));
-			return Promise.resolve();
-		}
-
-		if (mode === 'advanced-split') {
-			ui.addNotification(null, notificationParagraph(_('Choose Targets, Bypass, Hosts, or Disabled to replace this advanced split tunnelling config.')));
-			return Promise.resolve();
-		}
-
-		if (mode === 'hosts') {
-			commands.push([ 'firewall', 'set', '--port', String(port), 'hosts' ].concat(listValues(this.formState.hosts)));
-			commands.push([ 'firewall', 'set', 'block-quic', this.formState.block_quic ? 'true' : 'false' ]);
-			commands.push(ipv6Command);
-			return this.runCommands(commands, _('Firewall settings saved.'));
-		}
-
-		if (mode === 'targets') {
-			commands.push([ 'firewall', 'set', '--port', String(port), 'targets' ].concat(targetSelectors));
-			commands.push([ 'firewall', 'set', 'block-quic', this.formState.block_quic ? 'true' : 'false' ]);
-			commands.push(ipv6Command);
-			return this.runCommands(commands, _('Firewall settings saved.'));
+		draftChanged = !sameSelectorSet(desiredSelectors, routing.bypass_draft.selectors) ||
+			!sameList(desiredExcluded, routing.bypass_draft.excluded_sources);
+		if (draftChanged) {
+			if (selectorSetHasEntries(desiredSelectors) || desiredExcluded.length > 0) {
+				appendStringSliceFlags(draftCommand, '--exclude-host', desiredExcluded);
+				commands.push(draftCommand.concat(desiredSelectorValues));
+			}
+			else {
+				commands.push([ 'firewall', 'draft', 'bypass' ]);
+			}
 		}
 
 		if (mode === 'bypass') {
-			appendStringSliceFlags(bypassCommand, '--exclude-host', bypassExcluded);
-			commands.push(bypassCommand.concat(bypassSelectors));
-			commands.push([ 'firewall', 'set', 'block-quic', this.formState.block_quic ? 'true' : 'false' ]);
-			commands.push(ipv6Command);
-			return this.runCommands(commands, _('Firewall settings saved.'));
+			routingChanged = !routing.supported ||
+				routing.current_mode !== 'bypass' ||
+				!sameSelectorSet(desiredSelectors, routing.bypass.selectors) ||
+				!sameList(desiredExcluded, routing.bypass.excluded_sources);
+			if (routingChanged) {
+				appendStringSliceFlags(bypassCommand, '--exclude-host', desiredExcluded);
+				commands.push(bypassCommand.concat(desiredSelectorValues));
+			}
+		}
+		else if (mode === 'disabled') {
+			routingChanged = !routing.supported || routing.current_mode !== 'disabled' || routing.enabled === true;
+			if (routingChanged)
+				commands.push([ 'firewall', 'disable' ]);
 		}
 
-		commands.push([ 'firewall', 'disable' ]);
-		commands.push([ 'firewall', 'set', 'port', String(port) ]);
-		commands.push([ 'firewall', 'set', 'block-quic', this.formState.block_quic ? 'true' : 'false' ]);
-		commands.push(ipv6Command);
-		return this.runCommands(commands, _('Firewall settings saved and routing disabled.'));
-	},
+		if (dnsChoice !== '') {
+			dnsChanged = !dnsState.supported || dnsState.choice !== dnsChoice;
+			if (dnsChanged) {
+				if (dnsChoice === 'system')
+					commands.push([ 'dns', 'set', 'mode', 'system' ]);
+				else if (dnsChoice === 'default')
+					commands.push([ 'dns', 'set', 'default' ]);
+			}
+		}
 
-	handleDisable: function(ev) {
-		var commands;
-
-		if (ev && typeof ev.preventDefault === 'function')
-			ev.preventDefault();
-
-		if (!window.confirm(_('Disable transparent routing?')))
+		if (commands.length === 0) {
+			ui.addNotification(null, notificationParagraph(_('No routing changes to save.')), 'info');
 			return Promise.resolve();
+		}
 
-		commands = this.draftCommands();
-		commands.push([ 'firewall', 'disable' ]);
-
-		return this.runCommands(commands, _('Firewall disabled.'));
+		return this.runCommands(commands, _('Routing settings saved.'));
 	},
 
 	renderServiceOptions: function(selectedValue) {
@@ -977,7 +994,7 @@ return view.extend({
 		for (var i = 0; i < services.length; i++) {
 			var entry = services[i];
 			var suffix = entry.readonly === true ? _('Built-in') : _('Custom');
-			var label = trim(entry.name) + ' \u00b7 ' + suffix;
+			var label = trim(entry.name) + ' · ' + suffix;
 
 			options.push(E('option', {
 				'value': trim(entry.name),
@@ -988,253 +1005,92 @@ return view.extend({
 		return options;
 	},
 
-	renderSelectorItems: function(key, editor) {
+	renderSelectorItems: function(editor) {
 		var rows = [];
 		var selectors = selectorSetFromEditor(editor);
 		var i;
 
 		for (i = 0; i < selectors.services.length; i++) {
-			rows.push(E('div', { 'class': 'routeflux-firewall-item' }, [
-				E('span', { 'class': 'routeflux-firewall-badge' }, [ _('Preset') ]),
-				E('span', { 'class': 'routeflux-firewall-item-value' }, [ selectors.services[i] ]),
+			rows.push(E('div', { 'class': 'routeflux-routing-item' }, [
+				E('span', { 'class': 'routeflux-routing-badge' }, [ _('Preset') ]),
+				E('span', { 'class': 'routeflux-routing-item-value' }, [ selectors.services[i] ]),
 				E('button', {
 					'class': 'cbi-button cbi-button-remove',
 					'type': 'button',
-					'click': ui.createHandlerFn(this, 'handleRemoveSelector', key, 'services', selectors.services[i])
+					'click': ui.createHandlerFn(this, 'handleRemoveSelector', 'services', selectors.services[i])
 				}, [ _('Remove') ])
 			]));
 		}
 
 		for (i = 0; i < selectors.domains.length; i++) {
-			rows.push(E('div', { 'class': 'routeflux-firewall-item' }, [
-				E('span', { 'class': 'routeflux-firewall-badge routeflux-firewall-badge-domain' }, [ _('Domain') ]),
-				E('span', { 'class': 'routeflux-firewall-item-value' }, [ selectors.domains[i] ]),
+			rows.push(E('div', { 'class': 'routeflux-routing-item' }, [
+				E('span', { 'class': 'routeflux-routing-badge routeflux-routing-badge-domain' }, [ _('Domain') ]),
+				E('span', { 'class': 'routeflux-routing-item-value' }, [ selectors.domains[i] ]),
 				E('button', {
 					'class': 'cbi-button cbi-button-remove',
 					'type': 'button',
-					'click': ui.createHandlerFn(this, 'handleRemoveSelector', key, 'domains', selectors.domains[i])
+					'click': ui.createHandlerFn(this, 'handleRemoveSelector', 'domains', selectors.domains[i])
 				}, [ _('Remove') ])
 			]));
 		}
 
 		for (i = 0; i < selectors.cidrs.length; i++) {
-			rows.push(E('div', { 'class': 'routeflux-firewall-item' }, [
-				E('span', { 'class': 'routeflux-firewall-badge routeflux-firewall-badge-ip' }, [ _('IPv4') ]),
-				E('span', { 'class': 'routeflux-firewall-item-value' }, [ selectors.cidrs[i] ]),
+			rows.push(E('div', { 'class': 'routeflux-routing-item' }, [
+				E('span', { 'class': 'routeflux-routing-badge routeflux-routing-badge-ip' }, [ _('IPv4') ]),
+				E('span', { 'class': 'routeflux-routing-item-value' }, [ selectors.cidrs[i] ]),
 				E('button', {
 					'class': 'cbi-button cbi-button-remove',
 					'type': 'button',
-					'click': ui.createHandlerFn(this, 'handleRemoveSelector', key, 'cidrs', selectors.cidrs[i])
+					'click': ui.createHandlerFn(this, 'handleRemoveSelector', 'cidrs', selectors.cidrs[i])
 				}, [ _('Remove') ])
 			]));
 		}
 
 		if (rows.length === 0)
-			return E('div', { 'class': 'routeflux-firewall-empty' }, [ _('Nothing added yet.') ]);
+			return E('div', { 'class': 'routeflux-routing-empty' }, [ _('Nothing added yet.') ]);
 
-		return E('div', { 'class': 'routeflux-firewall-list' }, rows);
+		return E('div', { 'class': 'routeflux-routing-list' }, rows);
 	},
 
-	renderListItems: function(key, list, emptyLabel) {
+	renderExcludedItems: function(list) {
 		var values = listValues(list);
 		var rows = [];
 
 		for (var i = 0; i < values.length; i++) {
-			rows.push(E('div', { 'class': 'routeflux-firewall-item' }, [
-				E('span', { 'class': 'routeflux-firewall-badge routeflux-firewall-badge-host' }, [ _('Host') ]),
-				E('span', { 'class': 'routeflux-firewall-item-value' }, [ values[i] ]),
+			rows.push(E('div', { 'class': 'routeflux-routing-item' }, [
+				E('span', { 'class': 'routeflux-routing-badge routeflux-routing-badge-host' }, [ _('Host') ]),
+				E('span', { 'class': 'routeflux-routing-item-value' }, [ values[i] ]),
 				E('button', {
 					'class': 'cbi-button cbi-button-remove',
 					'type': 'button',
-					'click': ui.createHandlerFn(this, 'handleRemoveListEntry', key, values[i])
+					'click': ui.createHandlerFn(this, 'handleRemoveExcluded', values[i])
 				}, [ _('Remove') ])
 			]));
 		}
 
 		if (rows.length === 0)
-			return E('div', { 'class': 'routeflux-firewall-empty' }, [ emptyLabel ]);
+			return E('div', { 'class': 'routeflux-routing-empty' }, [ _('No excluded devices added.') ]);
 
-		return E('div', { 'class': 'routeflux-firewall-list' }, rows);
+		return E('div', { 'class': 'routeflux-routing-list' }, rows);
 	},
 
-	renderSelectorEditor: function(title, description, key, editor, placeholder, options) {
-		var settings = options || {};
-		var className = 'routeflux-firewall-editor';
-		var descriptionClassName = 'cbi-value-description';
-		var kicker = trim(settings.kicker);
+	renderSummaryShell: function(title, lines) {
+		var items = Array.isArray(lines) ? lines : [];
 
-		if (trim(settings.className) !== '')
-			className += ' ' + trim(settings.className);
-
-		if (trim(settings.descriptionClassName) !== '')
-			descriptionClassName += ' ' + trim(settings.descriptionClassName);
-
-		return E('div', { 'class': className }, [
-			E('div', { 'class': 'routeflux-firewall-editor-head' }, [
-				kicker !== '' ? E('span', { 'class': 'routeflux-firewall-editor-kicker' }, [ kicker ]) : null,
-				E('h4', {}, [ title ]),
-				E('p', { 'class': descriptionClassName }, [ description ])
-			].filter(Boolean)),
-			E('div', { 'class': 'routeflux-firewall-editor-grid' }, [
-				E('div', { 'class': 'cbi-value' }, [
-					E('label', { 'class': 'cbi-value-title' }, [ _('Service Preset') ]),
-					E('div', { 'class': 'routeflux-firewall-inline' }, [
-						E('select', {
-							'class': 'cbi-input-select',
-							'change': function(ev) {
-								this.handleServiceChoiceChange(key, ev);
-							}.bind(this)
-						}, this.renderServiceOptions(editor.serviceChoice)),
-						E('button', {
-							'class': 'cbi-button cbi-button-action',
-							'type': 'button',
-							'click': ui.createHandlerFn(this, 'handleAddService', key)
-						}, [ _('Add Preset') ])
-					])
-				]),
-				E('div', { 'class': 'cbi-value' }, [
-					E('label', { 'class': 'cbi-value-title' }, [ _('Extra Domain or IPv4') ]),
-					E('div', { 'class': 'routeflux-firewall-inline' }, [
-						E('input', {
-							'class': 'cbi-input-text',
-							'type': 'text',
-							'placeholder': placeholder,
-							'value': editor.selectorInput,
-							'input': function(ev) {
-								this.handleSelectorInputChange(key, ev);
-							}.bind(this)
-						}),
-						E('button', {
-							'class': 'cbi-button cbi-button-action',
-							'type': 'button',
-							'click': ui.createHandlerFn(this, 'handleAddSelector', key)
-						}, [ _('Add Selector') ])
-					])
-				])
-			]),
-			this.renderSelectorItems(key, editor)
+		return E('div', { 'class': 'cbi-section' }, [
+			E('div', { 'class': 'routeflux-routing-summary-shell' }, [
+				E('h3', {}, [ title ]),
+				E('ul', { 'class': 'routeflux-routing-summary-list' }, items.map(function(line) {
+					return E('li', {}, [ line ]);
+				}))
+			])
 		]);
-	},
-
-	renderListEditor: function(title, description, key, list, placeholder, emptyLabel, options) {
-		var settings = options || {};
-		var className = 'routeflux-firewall-editor';
-		var descriptionClassName = 'cbi-value-description';
-		var kicker = trim(settings.kicker);
-
-		if (trim(settings.className) !== '')
-			className += ' ' + trim(settings.className);
-
-		if (trim(settings.descriptionClassName) !== '')
-			descriptionClassName += ' ' + trim(settings.descriptionClassName);
-
-		return E('div', { 'class': className }, [
-			E('div', { 'class': 'routeflux-firewall-editor-head' }, [
-				kicker !== '' ? E('span', { 'class': 'routeflux-firewall-editor-kicker' }, [ kicker ]) : null,
-				E('h4', {}, [ title ]),
-				E('p', { 'class': descriptionClassName }, [ description ])
-			].filter(Boolean)),
-			E('div', { 'class': 'cbi-value' }, [
-				E('div', { 'class': 'routeflux-firewall-inline' }, [
-					E('input', {
-						'class': 'cbi-input-text',
-						'type': 'text',
-						'placeholder': placeholder,
-						'value': list.input,
-						'input': function(ev) {
-							this.handleListInputChange(key, ev);
-						}.bind(this)
-					}),
-					E('button', {
-						'class': 'cbi-button cbi-button-action',
-						'type': 'button',
-						'click': ui.createHandlerFn(this, 'handleAddListEntry', key)
-					}, [ _('Add') ])
-				])
-			]),
-			this.renderListItems(key, list, emptyLabel)
-		]);
-	},
-
-	renderConfigurationPanels: function() {
-		var mode = this.formState.mode;
-		var panels = [];
-
-		if (mode === 'hosts') {
-			panels.push(this.renderListEditor(
-				_('Devices Through RouteFlux'),
-				_('Every destination from these LAN devices will be routed through RouteFlux.'),
-				'hosts',
-				this.formState.hosts,
-				_('Examples: 192.168.1.150 192.168.1.0/24 192.168.1.150-192.168.1.159 all'),
-				_('Add one or more LAN devices to start host-based routing.'),
-				{
-					'className': 'routeflux-firewall-editor-muted routeflux-firewall-editor-hosts',
-					'kicker': _('Device matching')
-				}
-			));
-		}
-
-		if (mode === 'targets') {
-			panels.push(this.renderSelectorEditor(
-				_('Route Through RouteFlux'),
-				_('Choose service presets plus any extra domains or IPv4 targets that should go through RouteFlux.'),
-				'targets',
-				this.formState.targets,
-				_('Examples: youtube.com 1.1.1.1 203.0.113.10-203.0.113.20'),
-				{
-					'className': 'routeflux-firewall-editor-emphasis routeflux-firewall-editor-targets',
-					'kicker': _('Proxy targets')
-				}
-			));
-		}
-
-		if (mode === 'bypass') {
-			panels.push(this.renderSelectorEditor(
-				_('Keep Direct'),
-				_('These service presets, domains, and IPv4 targets stay direct while all other traffic keeps using RouteFlux.'),
-				'bypass',
-				this.formState.bypass.selectors,
-				_('Examples: gosuslugi.ru 203.0.113.10 203.0.113.10-203.0.113.20'),
-				{
-					'className': 'routeflux-firewall-editor-emphasis routeflux-firewall-editor-bypass',
-					'descriptionClassName': 'routeflux-firewall-editor-description-strong',
-					'kicker': _('Direct exceptions')
-				}
-			));
-			panels.push(this.renderListEditor(
-				_('Excluded Devices'),
-				_('These LAN devices are never intercepted by bypass mode.'),
-				'bypass-excluded',
-				this.formState.bypass.excluded,
-				_('Examples: 192.168.1.50 192.168.1.0/24 192.168.1.10-192.168.1.20 all'),
-				_('Excluded devices are optional.'),
-				{
-					'className': 'routeflux-firewall-editor-emphasis routeflux-firewall-editor-bypass routeflux-firewall-editor-excluded',
-					'descriptionClassName': 'routeflux-firewall-editor-description-strong',
-					'kicker': _('LAN exclusions')
-				}
-			));
-		}
-
-		if (mode === 'advanced-split') {
-			panels.push(E('div', { 'class': 'alert-message warning' }, [
-				this.formState.compatibility_warning || _('The current firewall config uses advanced split tunnelling created outside LuCI. Choose a supported mode to replace it.')
-			]));
-		}
-
-		if (mode === 'disabled') {
-			panels.push(E('div', { 'class': 'routeflux-firewall-empty routeflux-firewall-disabled-note' }, [
-				_('Firewall routing is disabled. Drafts for Hosts, Targets, and Bypass will still be saved when you click Save.')
-			]));
-		}
-
-		return panels;
 	},
 
 	renderPageContent: function() {
 		var status = this.pageData.status || {};
-		var firewall = this.pageData.firewall || canonicalFirewall({});
+		var routing = this.pageData.firewall || canonicalFirewall({});
+		var dnsState = this.pageData.dns || canonicalDNS({});
 		var subscriptions = this.pageData.subscriptions || [];
 		var presentation = buildSubscriptionPresentation(subscriptions);
 		var connected = !!(status.state && status.state.connected === true);
@@ -1248,70 +1104,71 @@ return view.extend({
 			? (activeEntry ? activeEntry.profile_label : _('Profile 1'))
 			: _('Not selected');
 		var activeNodeName = nodeDisplayName(activeNode, _('Not selected'));
-		var currentMode = firewall.enabled ? firewall.mode : 'disabled';
+		var currentDNSLabel = dnsChoiceSummary(dnsState.choice);
 		var content = [];
 
 		if (this.rootErrors.status !== '')
 			ui.addNotification(null, notificationParagraph(_('Status error: %s').format(this.rootErrors.status)));
 		if (this.rootErrors.firewall !== '')
-			ui.addNotification(null, notificationParagraph(_('Firewall error: %s').format(this.rootErrors.firewall)));
+			ui.addNotification(null, notificationParagraph(_('Routing error: %s').format(this.rootErrors.firewall)));
 		if (this.rootErrors.subscriptions !== '')
 			ui.addNotification(null, notificationParagraph(_('Subscriptions error: %s').format(this.rootErrors.subscriptions)));
-		if (this.rootErrors.explain !== '')
-			ui.addNotification(null, notificationParagraph(_('Firewall help error: %s').format(this.rootErrors.explain)));
 		if (this.rootErrors.services !== '')
 			ui.addNotification(null, notificationParagraph(_('Services error: %s').format(this.rootErrors.services)));
+		if (this.rootErrors.dns !== '')
+			ui.addNotification(null, notificationParagraph(_('DNS error: %s').format(this.rootErrors.dns)));
 
 		content.push(routefluxUI.renderSharedStyles());
 		content.push(E('style', { 'type': 'text/css' }, [
-			'.routeflux-firewall-layout { display:grid; gap:14px; }',
-			'.routeflux-firewall-grid { display:grid; grid-template-columns:repeat(auto-fit, minmax(240px, 1fr)); gap:12px; margin-bottom:14px; }',
-			'.routeflux-firewall-grid > .cbi-value { padding:15px 16px; border:1px solid var(--border-color-medium, rgba(98, 112, 129, 0.34)); border-radius:16px; background:linear-gradient(180deg, var(--background-color-high, rgba(249, 250, 251, 0.98)) 0%, var(--background-color-low, rgba(237, 242, 247, 0.98)) 100%); box-shadow:0 12px 24px rgba(15, 23, 42, 0.08), inset 0 1px 0 rgba(255, 255, 255, 0.56); }',
-			'.routeflux-firewall-grid > .cbi-value .cbi-value-title { color:var(--text-color-high, #17263a); font-weight:700; }',
-			'.routeflux-firewall-grid > .cbi-value .cbi-value-description { margin-top:8px; color:var(--text-color-medium, #4f5f70); line-height:1.55; }',
-			'.routeflux-firewall-editors { display:grid; gap:12px; }',
-			'.routeflux-firewall-editor { position:relative; border:1px solid rgba(98, 112, 129, 0.32); border-radius:18px; padding:18px; background:linear-gradient(180deg, rgba(248, 250, 252, 0.98) 0%, rgba(238, 243, 249, 0.98) 100%); box-shadow:0 16px 32px rgba(15, 23, 42, 0.1), inset 0 1px 0 rgba(255, 255, 255, 0.66); overflow:hidden; }',
-			'.routeflux-firewall-editor-emphasis { border-color:rgba(56, 189, 248, 0.34); background:linear-gradient(180deg, rgba(246, 250, 255, 0.99) 0%, rgba(233, 243, 252, 0.98) 100%); box-shadow:0 18px 36px rgba(14, 165, 233, 0.11), inset 0 1px 0 rgba(255, 255, 255, 0.72); }',
-			'.routeflux-firewall-editor-muted { background:linear-gradient(180deg, rgba(248, 250, 252, 0.97) 0%, rgba(236, 241, 247, 0.97) 100%); }',
-			'.routeflux-firewall-editor-bypass { border-color:rgba(37, 99, 128, 0.36); background:linear-gradient(180deg, rgba(228, 238, 244, 0.98) 0%, rgba(214, 226, 235, 0.98) 100%); box-shadow:0 16px 30px rgba(22, 50, 74, 0.1), inset 0 1px 0 rgba(255, 255, 255, 0.62); }',
-			'.routeflux-firewall-editor-bypass::before { content:""; position:absolute; inset:0 0 auto 0; height:4px; background:linear-gradient(90deg, #0ea5e9 0%, #22c55e 100%); }',
-			'.routeflux-firewall-editor-head { display:grid; gap:8px; margin-bottom:14px; }',
-			'.routeflux-firewall-editor-kicker { display:inline-flex; align-items:center; width:max-content; max-width:100%; padding:4px 10px; border-radius:999px; background:rgba(15, 118, 110, 0.12); color:#0f766e; font-size:11px; font-weight:800; letter-spacing:.08em; text-transform:uppercase; }',
-			'.routeflux-firewall-editor-head h4 { margin:0; color:var(--text-color-high, #17263a); font-size:clamp(20px, 1vw + 16px, 28px); line-height:1.2; }',
-			'.routeflux-firewall-editor-head .cbi-value-description { color:var(--text-color-medium, #4f5f70); margin:0; max-width:72ch; line-height:1.6; font-size:13px; }',
-			'.routeflux-firewall-editor-bypass .routeflux-firewall-editor-head h4 { color:#16324a !important; }',
-			'.routeflux-firewall-editor-description-strong { color:#16324a !important; font-weight:500; }',
-			'.routeflux-firewall-editor-grid { display:grid; grid-template-columns:repeat(auto-fit, minmax(280px, 1fr)); gap:14px; margin-bottom:14px; }',
-			'.routeflux-firewall-editor-grid .cbi-value-title { display:inline-block; margin-bottom:8px; color:var(--text-color-high, #17263a); font-weight:700; }',
-			'.routeflux-firewall-editor-bypass .routeflux-firewall-editor-grid .cbi-value-title { color:#284357 !important; }',
-			'.routeflux-firewall-inline { display:flex; gap:10px; align-items:stretch; }',
-			'.routeflux-firewall-inline > .cbi-input-text, .routeflux-firewall-inline > .cbi-input-select { flex:1 1 auto; min-width:0; min-height:56px; padding:0 16px; border:1px solid rgba(71, 85, 105, 0.44); border-radius:14px; background:linear-gradient(180deg, rgba(255, 255, 255, 0.98) 0%, rgba(244, 247, 251, 0.98) 100%); color:var(--text-color-high, #17263a); box-shadow:inset 0 1px 0 rgba(255, 255, 255, 0.86), 0 10px 24px rgba(15, 23, 42, 0.08); }',
-			'.routeflux-firewall-inline > .cbi-input-select { padding-right:44px; }',
-			'.routeflux-firewall-inline .cbi-input-text::placeholder { color:rgba(71, 85, 105, 0.72); opacity:1; }',
-			'.routeflux-firewall-inline > .cbi-input-text:focus, .routeflux-firewall-inline > .cbi-input-select:focus { border-color:rgba(14, 165, 233, 0.72); box-shadow:0 0 0 1px rgba(14, 165, 233, 0.2), 0 14px 30px rgba(14, 165, 233, 0.14); }',
-			'.routeflux-firewall-inline > .cbi-button-action { min-width:138px; min-height:56px; padding:0 18px; border:1px solid rgba(14, 165, 233, 0.5); border-radius:14px; background:linear-gradient(180deg, #14324b 0%, #10283b 100%); color:#eef6ff; font-weight:700; box-shadow:0 14px 30px rgba(15, 23, 42, 0.16); }',
-			'.routeflux-firewall-list { display:grid; gap:8px; }',
-			'.routeflux-firewall-item { display:flex; gap:12px; align-items:center; padding:12px 14px; border-radius:15px; background:rgba(255, 255, 255, 0.9); border:1px solid rgba(148, 163, 184, 0.26); box-shadow:0 8px 18px rgba(15, 23, 42, 0.06); }',
-			'.routeflux-firewall-item-value { flex:1 1 auto; min-width:0; word-break:break-word; font-weight:600; color:#1f2d40; }',
-			'.routeflux-firewall-badge { display:inline-flex; align-items:center; justify-content:center; min-width:58px; padding:4px 8px; border-radius:999px; background:rgba(59, 130, 246, 0.12); color:#1d4ed8; font-size:11px; font-weight:700; letter-spacing:.04em; text-transform:uppercase; }',
-			'.routeflux-firewall-badge-domain { background:rgba(16, 185, 129, 0.12); color:#047857; }',
-			'.routeflux-firewall-badge-ip { background:rgba(249, 115, 22, 0.14); color:#c2410c; }',
-			'.routeflux-firewall-badge-host { background:rgba(99, 102, 241, 0.12); color:#4338ca; }',
-			'.routeflux-firewall-item .cbi-button-remove { margin-left:auto; border-radius:12px; }',
-			'.routeflux-firewall-empty { padding:14px; border-radius:14px; background:rgba(255, 255, 255, 0.78); border:1px dashed rgba(148, 163, 184, 0.42); color:#4b5563; }',
-			'.routeflux-firewall-disabled-note { margin-top:4px; }',
-			'.routeflux-firewall-actions { display:flex; flex-wrap:wrap; gap:10px; }',
-			'.routeflux-firewall-actions .cbi-button { min-height:48px; padding:0 18px; border-radius:14px; font-weight:700; }',
-			'.routeflux-firewall-page-description { color:var(--text-color-medium, #4f5f70); max-width:78ch; line-height:1.6; }',
-			'.routeflux-firewall-toggle { display:flex; gap:10px; align-items:flex-start; font-weight:600; color:var(--text-color-high, #17263a); }',
-			'.routeflux-firewall-toggle input { margin-top:4px; }',
-			'.routeflux-firewall-help { white-space:pre-wrap; margin:0; padding:0; border:0; border-radius:0; background:transparent; color:#16324a; font:inherit; line-height:1.7; }',
-			'@media (max-width: 720px) { .routeflux-firewall-inline { flex-direction:column; } .routeflux-firewall-inline > .cbi-button-action, .routeflux-firewall-actions .cbi-button { width:100%; } .routeflux-firewall-grid > .cbi-value { padding:14px; } .routeflux-firewall-editor { padding:16px; } }'
+			'#routeflux-routing-root { --routeflux-routing-ink:#10263f; --routeflux-routing-ink-muted:#44566b; --routeflux-routing-ink-soft:#62758a; --routeflux-routing-panel-bg:linear-gradient(160deg, rgba(243, 248, 255, 0.98) 0%, rgba(230, 239, 249, 0.98) 56%, rgba(220, 232, 245, 0.98) 100%); --routeflux-routing-surface-bg:linear-gradient(180deg, rgba(255, 255, 255, 0.97) 0%, rgba(246, 250, 254, 0.97) 100%); --routeflux-routing-surface-strong:linear-gradient(180deg, #17324d 0%, #10243a 100%); color:var(--routeflux-routing-ink); }',
+			'#routeflux-routing-root h2 { color:var(--routeflux-routing-ink); letter-spacing:-0.03em; }',
+			'.routeflux-routing-layout { display:grid; gap:14px; }',
+			'.routeflux-routing-grid { display:grid; grid-template-columns:repeat(auto-fit, minmax(240px, 1fr)); gap:12px; }',
+			'.routeflux-routing-panel { position:relative; overflow:hidden; isolation:isolate; border:1px solid rgba(120, 141, 167, 0.42); border-radius:22px; padding:20px; background:var(--routeflux-routing-panel-bg); box-shadow:0 20px 44px rgba(3, 15, 32, 0.22), inset 0 1px 0 rgba(255, 255, 255, 0.78); }',
+			'.routeflux-routing-panel::before { content:""; position:absolute; inset:0; background:radial-gradient(circle at top left, rgba(125, 211, 252, 0.22), transparent 34%), radial-gradient(circle at bottom right, rgba(59, 130, 246, 0.12), transparent 40%); pointer-events:none; }',
+			'.routeflux-routing-panel > * { position:relative; z-index:1; }',
+			'.routeflux-routing-panel h3 { margin:0; color:var(--routeflux-routing-ink); font-size:clamp(24px, 1.1vw + 18px, 34px); line-height:1.12; letter-spacing:-0.03em; }',
+			'.routeflux-routing-mode-grid, .routeflux-routing-dns-grid { display:grid; gap:14px; }',
+			'.routeflux-routing-choice { display:flex; gap:12px; align-items:flex-start; padding:16px 18px; border:1px solid rgba(120, 141, 167, 0.34); border-radius:18px; background:var(--routeflux-routing-surface-bg); box-shadow:0 14px 30px rgba(15, 23, 42, 0.08), inset 0 1px 0 rgba(255, 255, 255, 0.9); transition:transform .18s ease, border-color .18s ease, box-shadow .18s ease, background .18s ease; }',
+			'.routeflux-routing-choice:hover { transform:translateY(-1px); border-color:rgba(29, 118, 216, 0.42); box-shadow:0 16px 32px rgba(15, 23, 42, 0.12), inset 0 1px 0 rgba(255, 255, 255, 0.94); }',
+			'.routeflux-routing-choice-selected { border-color:rgba(29, 118, 216, 0.58); background:linear-gradient(180deg, rgba(255, 255, 255, 0.99) 0%, rgba(236, 245, 255, 0.99) 100%); box-shadow:0 18px 34px rgba(14, 116, 144, 0.16), inset 0 1px 0 rgba(255, 255, 255, 0.96); }',
+			'.routeflux-routing-choice input { margin-top:4px; accent-color:#0f6bdc; }',
+			'.routeflux-routing-choice-title { display:block; font-weight:800; font-size:clamp(18px, 0.55vw + 15px, 24px); color:var(--routeflux-routing-ink); letter-spacing:-0.02em; }',
+			'.routeflux-routing-choice-description { display:block; margin-top:6px; color:var(--routeflux-routing-ink-muted); line-height:1.55; font-size:15px; }',
+			'.routeflux-routing-editor-head { display:grid; gap:10px; margin-bottom:16px; }',
+			'.routeflux-routing-editor-head .cbi-section-descr { margin:0; color:var(--routeflux-routing-ink-muted); line-height:1.6; max-width:72ch; }',
+			'.routeflux-routing-editor-kicker { display:inline-flex; align-items:center; width:max-content; max-width:100%; padding:5px 11px; border-radius:999px; background:rgba(14, 165, 233, 0.14); color:#075985; font-size:12px; font-weight:800; letter-spacing:.08em; text-transform:uppercase; }',
+			'.routeflux-routing-panel .cbi-value-title { display:inline-block; margin-bottom:8px; color:var(--routeflux-routing-ink); font-weight:800; }',
+			'.routeflux-routing-editor-grid { display:grid; grid-template-columns:repeat(auto-fit, minmax(280px, 1fr)); gap:14px; margin-bottom:14px; }',
+			'.routeflux-routing-inline { display:flex; gap:10px; align-items:stretch; }',
+			'.routeflux-routing-inline > .cbi-input-text, .routeflux-routing-inline > .cbi-input-select { flex:1 1 auto; min-width:0; min-height:52px; padding:0 14px; border:1px solid rgba(71, 85, 105, 0.38); border-radius:15px; background:linear-gradient(180deg, rgba(255, 255, 255, 0.99) 0%, rgba(244, 248, 252, 0.99) 100%); color:var(--routeflux-routing-ink); box-shadow:inset 0 1px 0 rgba(255, 255, 255, 0.92), 0 10px 24px rgba(15, 23, 42, 0.08); }',
+			'.routeflux-routing-inline > .cbi-input-select { padding-right:44px; }',
+			'.routeflux-routing-inline .cbi-input-text::placeholder { color:rgba(68, 86, 107, 0.88); opacity:1; }',
+			'.routeflux-routing-inline > .cbi-input-text:focus, .routeflux-routing-inline > .cbi-input-select:focus { border-color:rgba(14, 165, 233, 0.72); box-shadow:0 0 0 1px rgba(14, 165, 233, 0.24), 0 16px 30px rgba(14, 165, 233, 0.16); }',
+			'.routeflux-routing-inline > .cbi-button-action { min-width:132px; min-height:52px; padding:0 18px; border:1px solid rgba(56, 189, 248, 0.44); border-radius:15px; background:var(--routeflux-routing-surface-strong); color:#eef8ff; font-weight:800; text-shadow:0 1px 0 rgba(0, 0, 0, 0.22); box-shadow:0 16px 28px rgba(3, 15, 32, 0.22); }',
+			'.routeflux-routing-inline > .cbi-button-action:hover, .routeflux-routing-actions .cbi-button:hover { border-color:rgba(96, 165, 250, 0.66); background:linear-gradient(180deg, #214365 0%, #16304a 100%); color:#ffffff; }',
+			'.routeflux-routing-list { display:grid; gap:8px; }',
+			'.routeflux-routing-item { display:flex; gap:12px; align-items:center; padding:12px 14px; border-radius:15px; background:rgba(255, 255, 255, 0.93); border:1px solid rgba(125, 145, 168, 0.28); box-shadow:0 10px 22px rgba(15, 23, 42, 0.08); }',
+			'.routeflux-routing-item-value { flex:1 1 auto; min-width:0; word-break:break-word; font-weight:700; color:var(--routeflux-routing-ink); }',
+			'.routeflux-routing-badge { display:inline-flex; align-items:center; justify-content:center; min-width:58px; padding:4px 8px; border-radius:999px; background:rgba(37, 99, 235, 0.13); color:#1d4ed8; font-size:11px; font-weight:800; letter-spacing:.05em; text-transform:uppercase; }',
+			'.routeflux-routing-badge-domain { background:rgba(16, 185, 129, 0.14); color:#047857; }',
+			'.routeflux-routing-badge-ip { background:rgba(249, 115, 22, 0.14); color:#c2410c; }',
+			'.routeflux-routing-badge-host { background:rgba(99, 102, 241, 0.14); color:#4338ca; }',
+			'.routeflux-routing-empty { padding:14px; border-radius:14px; background:rgba(255, 255, 255, 0.82); border:1px dashed rgba(125, 145, 168, 0.42); color:var(--routeflux-routing-ink-muted); }',
+			'.routeflux-routing-actions { display:flex; flex-wrap:wrap; gap:10px; }',
+			'.routeflux-routing-actions .cbi-button { min-height:48px; padding:0 18px; border:1px solid rgba(56, 189, 248, 0.38); border-radius:15px; background:var(--routeflux-routing-surface-strong); color:#eef8ff; font-weight:800; text-shadow:0 1px 0 rgba(0, 0, 0, 0.22); box-shadow:0 16px 30px rgba(3, 15, 32, 0.18); }',
+			'.routeflux-routing-summary-shell { padding:16px 18px; border:1px solid rgba(125, 145, 168, 0.34); border-radius:16px; background:rgba(255, 255, 255, 0.84); box-shadow:0 10px 22px rgba(15, 23, 42, 0.08); }',
+			'.routeflux-routing-summary-shell h3 { margin-top:0; margin-bottom:10px; color:var(--routeflux-routing-ink); font-size:20px; letter-spacing:-0.02em; }',
+			'.routeflux-routing-summary-list { margin:0; padding-left:18px; color:var(--routeflux-routing-ink-muted); line-height:1.55; }',
+			'.routeflux-routing-page-description { color:var(--routeflux-routing-ink-muted); max-width:78ch; line-height:1.6; }',
+			'.routeflux-routing-optional summary { cursor:pointer; font-weight:800; color:var(--routeflux-routing-ink); }',
+			'.routeflux-routing-optional-shell { margin-top:12px; }',
+			'@media (max-width: 720px) { .routeflux-routing-inline { flex-direction:column; } .routeflux-routing-inline > .cbi-button-action, .routeflux-routing-actions .cbi-button { width:100%; } }'
 		]));
 
-		content.push(E('h2', {}, [ _('RouteFlux - Firewall') ]));
-		content.push(E('p', { 'class': 'cbi-section-descr routeflux-firewall-page-description' }, [
-			_('Manage transparent routing with clear structured editors for Hosts, Targets, and Bypass. Use the Services tab to create reusable custom service presets.')
+		content.push(E('h2', {}, [ _('RouteFlux - Routing') ]));
+		content.push(E('p', { 'class': 'cbi-section-descr routeflux-routing-page-description' }, [
+			_('Simple routing for everyday LuCI use. Switch RouteFlux off, keep selected destinations direct, and choose a basic DNS profile.')
 		]));
 
 		content.push(E('div', { 'class': 'routeflux-overview-grid' }, [
@@ -1319,139 +1176,187 @@ return view.extend({
 				'tone': routefluxUI.statusTone(connected),
 				'primary': true
 			}),
-			this.renderCard(_('Mode'), modeSummary(currentMode)),
-			this.renderCard(_('Transparent Port'), String(firewall.transparent_port || 12345)),
-			this.renderCard(_('Block QUIC'), firewall.block_quic === true ? _('Enabled') : _('Disabled')),
-			this.renderCard(_('Disable IPv6'), firewall.disable_ipv6 === true ? _('Enabled') : _('Disabled')),
+			this.renderCard(_('Routing Mode'), modeSummary(routing.current_mode)),
+			this.renderCard(_('DNS Profile'), currentDNSLabel),
 			this.renderCard(_('Active Provider'), activeProvider),
 			this.renderCard(_('Active Profile'), activeProfile),
 			this.renderCard(_('Active Node'), activeNodeName)
 		]));
 
-		if (currentMode !== 'disabled' && !connected) {
+		if (routing.warning !== '') {
 			content.push(E('div', { 'class': 'cbi-section' }, [
-				E('div', { 'class': 'alert-message' }, [
-					_('Transparent routing settings are saved, but RouteFlux is currently disconnected. Connect a node to apply nftables and Xray runtime changes.')
-				])
+				E('div', { 'class': 'alert-message warning' }, [ routing.warning ])
 			]));
+			content.push(this.renderSummaryShell(_('Current Routing Summary'), routing.summary_lines));
 		}
 
-		content.push(E('div', { 'class': 'cbi-section routeflux-firewall-layout' }, [
-			E('h3', {}, [ _('Configuration') ]),
-			E('div', { 'class': 'routeflux-firewall-grid' }, [
-				E('div', { 'class': 'cbi-value' }, [
-					E('label', { 'class': 'cbi-value-title', 'for': 'routeflux-firewall-mode' }, [ _('Mode') ]),
-					E('div', { 'class': 'cbi-value-field' }, [
-						E('select', {
-							'id': 'routeflux-firewall-mode',
-							'class': 'cbi-input-select',
-							'change': function(ev) {
-								this.handleModeChange(ev);
-							}.bind(this)
-						}, [
-							E('option', { 'value': 'disabled', 'selected': this.formState.mode === 'disabled' ? 'selected' : null }, [ _('Disabled') ]),
-							E('option', { 'value': 'hosts', 'selected': this.formState.mode === 'hosts' ? 'selected' : null }, [ _('Hosts') ]),
-							E('option', { 'value': 'targets', 'selected': this.formState.mode === 'targets' ? 'selected' : null }, [ _('Targets') ]),
-							E('option', { 'value': 'bypass', 'selected': this.formState.mode === 'bypass' ? 'selected' : null }, [ _('Bypass') ]),
-							this.formState.mode === 'advanced-split'
-								? E('option', { 'value': 'advanced-split', 'selected': 'selected', 'disabled': 'disabled' }, [ _('Advanced Split (switch required)') ])
-								: null
-						].filter(function(option) { return option !== null; }))
-					]),
-					E('div', { 'class': 'cbi-value-description' }, [
-						_('Hosts sends all traffic from selected LAN devices through RouteFlux. Targets proxies only selected resources. Bypass keeps everything on RouteFlux except selected direct resources and excluded devices.')
-					])
-				]),
-				E('div', { 'class': 'cbi-value' }, [
-					E('label', { 'class': 'cbi-value-title', 'for': 'routeflux-firewall-port' }, [ _('Transparent Port') ]),
-					E('div', { 'class': 'cbi-value-field' }, [
-						E('input', {
-							'id': 'routeflux-firewall-port',
-							'class': 'cbi-input-text',
-							'type': 'number',
-							'min': '1',
-							'value': this.formState.port,
-							'input': function(ev) {
-								this.handlePortInput(ev);
-							}.bind(this)
-						})
-					]),
-					E('div', { 'class': 'cbi-value-description' }, [
-						_('Transparent redirect port used by nftables and the generated Xray runtime config.')
-					])
-				]),
-				E('div', {
-					'class': 'cbi-value',
-					'style': 'grid-column:1 / -1'
-				}, [
-					E('label', { 'class': 'cbi-value-title', 'for': 'routeflux-firewall-block-quic' }, [ _('Block QUIC') ]),
-					E('div', { 'class': 'cbi-value-field' }, [
-						E('label', { 'class': 'routeflux-firewall-toggle' }, [
+		if (dnsState.warning !== '') {
+			content.push(E('div', { 'class': 'cbi-section' }, [
+				E('div', { 'class': 'alert-message warning' }, [ dnsState.warning ])
+			]));
+			content.push(this.renderSummaryShell(_('Current DNS Summary'), dnsState.summary_lines));
+		}
+
+		content.push(E('div', { 'class': 'cbi-section routeflux-routing-layout' }, [
+			E('div', { 'class': 'routeflux-routing-grid' }, [
+				E('div', { 'class': 'routeflux-routing-panel' }, [
+					E('h3', {}, [ _('Routing') ]),
+					E('div', { 'class': 'routeflux-routing-mode-grid' }, [
+						E('label', { 'class': choiceClass(this.formState.mode === 'disabled') }, [
 							E('input', {
-								'id': 'routeflux-firewall-block-quic',
-								'type': 'checkbox',
-								'checked': this.formState.block_quic ? 'checked' : null,
-								'change': function(ev) {
-									this.handleBlockQUICChange(ev);
-								}.bind(this)
+								'type': 'radio',
+								'name': 'routeflux-routing-mode',
+								'value': 'disabled',
+								'checked': this.formState.mode === 'disabled' ? 'checked' : null,
+								'change': L.bind(function(ev) {
+									this.handleModeChange(ev);
+								}, this)
 							}),
-							_('Keep the legacy QUIC compatibility switch for TCP-only transparent routing setups.')
+							E('span', {}, [
+								E('span', { 'class': 'routeflux-routing-choice-title' }, [ _('Off') ]),
+								E('span', { 'class': 'routeflux-routing-choice-description' }, [
+									_('Keep RouteFlux connected if you want, but do not intercept router traffic from LuCI.')
+								])
+							])
+						]),
+						E('label', { 'class': choiceClass(this.formState.mode === 'bypass') }, [
+							E('input', {
+								'type': 'radio',
+								'name': 'routeflux-routing-mode',
+								'value': 'bypass',
+								'checked': this.formState.mode === 'bypass' ? 'checked' : null,
+								'change': L.bind(function(ev) {
+									this.handleModeChange(ev);
+								}, this)
+							}),
+							E('span', {}, [
+								E('span', { 'class': 'routeflux-routing-choice-title' }, [ _('Bypass') ]),
+								E('span', { 'class': 'routeflux-routing-choice-description' }, [
+									_('Proxy everything except the services, domains, IPv4 targets, and optional device exclusions listed below.')
+								])
+							])
 						])
-					]),
-					E('div', { 'class': 'cbi-value-description' }, [
-						_('When enabled, RouteFlux blocks proxied QUIC and UDP traffic so clients retry over TCP. Leave it off when you want QUIC to be proxied normally.')
 					])
 				]),
-				E('div', {
-					'class': 'cbi-value',
-					'style': 'grid-column:1 / -1'
-				}, [
-					E('label', { 'class': 'cbi-value-title', 'for': 'routeflux-firewall-disable-ipv6' }, [ _('Disable IPv6') ]),
-					E('div', { 'class': 'cbi-value-field' }, [
-						E('label', { 'class': 'routeflux-firewall-toggle' }, [
+				E('div', { 'class': 'routeflux-routing-panel' }, [
+					E('h3', {}, [ _('DNS') ]),
+					E('div', { 'class': 'routeflux-routing-dns-grid' }, [
+						E('label', { 'class': choiceClass(this.formState.dns_choice === 'system') }, [
 							E('input', {
-								'id': 'routeflux-firewall-disable-ipv6',
-								'type': 'checkbox',
-								'checked': this.formState.disable_ipv6 ? 'checked' : null,
-								'change': function(ev) {
-									this.handleDisableIPv6Change(ev);
-								}.bind(this)
+								'type': 'radio',
+								'name': 'routeflux-routing-dns',
+								'value': 'system',
+								'checked': this.formState.dns_choice === 'system' ? 'checked' : null,
+								'change': L.bind(function(ev) {
+									this.handleDNSChoiceChange(ev);
+								}, this)
 							}),
-							_('Turn off router IPv6 when you want RouteFlux to prevent IPv6 from bypassing IPv4-only transparent routing.')
+							E('span', {}, [
+								E('span', { 'class': 'routeflux-routing-choice-title' }, [ _('System DNS') ]),
+								E('span', { 'class': 'routeflux-routing-choice-description' }, [
+									_('Leave DNS exactly as the router already handles it.')
+								])
+							])
+						]),
+						E('label', { 'class': choiceClass(this.formState.dns_choice === 'default') }, [
+							E('input', {
+								'type': 'radio',
+								'name': 'routeflux-routing-dns',
+								'value': 'default',
+								'checked': this.formState.dns_choice === 'default' ? 'checked' : null,
+								'change': L.bind(function(ev) {
+									this.handleDNSChoiceChange(ev);
+								}, this)
+							}),
+							E('span', {}, [
+								E('span', { 'class': 'routeflux-routing-choice-title' }, [ _('RouteFlux Recommended DNS') ]),
+								E('span', { 'class': 'routeflux-routing-choice-description' }, [
+									_('Use the everyday RouteFlux DNS profile: encrypted public DNS with local names kept on the router.')
+								])
+							])
 						])
-					]),
-					E('div', { 'class': 'cbi-value-description' }, [
-						_('RouteFlux transparent routing only intercepts IPv4 traffic. If IPv6 stays enabled, matching traffic can still leave the router outside the proxy.')
 					])
 				])
 			]),
-			E('div', { 'class': 'routeflux-firewall-editors' }, this.renderConfigurationPanels()),
-			E('div', { 'class': 'routeflux-firewall-actions' }, [
-				E('button', {
-					'class': 'cbi-button cbi-button-apply',
-					'type': 'button',
-					'click': ui.createHandlerFn(this, 'handleSaveSettings')
-				}, [ _('Save') ]),
-				E('button', {
-					'class': 'cbi-button cbi-button-reset',
-					'type': 'button',
-					'click': ui.createHandlerFn(this, 'handleDisable'),
-					'disabled': currentMode === 'disabled' ? 'disabled' : null
-				}, [ _('Disable Routing') ])
-			])
-		]));
-
-		content.push(E('div', { 'class': 'cbi-section' }, [
-			E('div', { 'class': 'routeflux-firewall-editor routeflux-firewall-editor-emphasis routeflux-firewall-editor-bypass routeflux-firewall-help-shell' }, [
-				E('div', { 'class': 'routeflux-firewall-editor-head' }, [
-					E('span', { 'class': 'routeflux-firewall-editor-kicker' }, [ _('Reference') ]),
-					E('h4', {}, [ _('Help') ]),
-					E('p', { 'class': 'cbi-value-description routeflux-firewall-editor-description-strong' }, [
-						_('Use this reference while tuning bypass rules, excluded devices, and other transparent routing behavior.')
+			E('div', { 'class': 'routeflux-routing-panel' }, [
+				E('div', { 'class': 'routeflux-routing-editor-head' }, [
+					E('span', { 'class': 'routeflux-routing-editor-kicker' }, [ _('Bypass') ]),
+					E('h3', {}, [ _('Keep Direct') ]),
+					E('p', { 'class': 'cbi-section-descr' }, [
+						_('Add built-in presets, custom aliases, domains, or IPv4 ranges that should stay direct while bypass mode is active.')
 					])
 				]),
-				E('pre', { 'class': 'routeflux-firewall-help' }, [
-					this.pageData.explainText || _('No firewall help text is available.')
+				E('div', { 'class': 'routeflux-routing-editor-grid' }, [
+					E('div', { 'class': 'cbi-value' }, [
+						E('label', { 'class': 'cbi-value-title' }, [ _('Service Preset') ]),
+						E('div', { 'class': 'routeflux-routing-inline' }, [
+							E('select', {
+								'class': 'cbi-input-select',
+								'change': L.bind(function(ev) {
+									this.handleServiceChoiceChange(ev);
+								}, this)
+							}, this.renderServiceOptions(this.formState.bypass.selectors.serviceChoice)),
+							E('button', {
+								'class': 'cbi-button cbi-button-action',
+								'type': 'button',
+								'click': ui.createHandlerFn(this, 'handleAddService')
+							}, [ _('Add Preset') ])
+						])
+					]),
+					E('div', { 'class': 'cbi-value' }, [
+						E('label', { 'class': 'cbi-value-title' }, [ _('Extra Domain or IPv4') ]),
+						E('div', { 'class': 'routeflux-routing-inline' }, [
+							E('input', {
+								'class': 'cbi-input-text',
+								'type': 'text',
+								'placeholder': _('Examples: gosuslugi.ru 203.0.113.10 203.0.113.10-203.0.113.20'),
+								'value': this.formState.bypass.selectors.selectorInput,
+								'input': L.bind(function(ev) {
+									this.handleSelectorInputChange(ev);
+								}, this)
+							}),
+							E('button', {
+								'class': 'cbi-button cbi-button-action',
+								'type': 'button',
+								'click': ui.createHandlerFn(this, 'handleAddSelector')
+							}, [ _('Add Selector') ])
+						])
+					])
+				]),
+				this.renderSelectorItems(this.formState.bypass.selectors),
+				E('div', { 'class': 'routeflux-routing-optional-shell' }, [
+					E('details', { 'class': 'routeflux-routing-optional' }, [
+						E('summary', {}, [ _('Excluded Devices') ]),
+						E('div', { 'class': 'routeflux-routing-editor-grid', 'style': 'margin-top:12px;' }, [
+							E('div', { 'class': 'cbi-value' }, [
+								E('label', { 'class': 'cbi-value-title' }, [ _('Excluded Devices') ]),
+								E('div', { 'class': 'routeflux-routing-inline' }, [
+									E('input', {
+										'class': 'cbi-input-text',
+										'type': 'text',
+										'placeholder': _('Examples: 192.168.1.50 192.168.1.0/24 192.168.1.10-192.168.1.20 all'),
+										'value': this.formState.bypass.excluded.input,
+										'input': L.bind(function(ev) {
+											this.handleExcludedInputChange(ev);
+										}, this)
+									}),
+									E('button', {
+										'class': 'cbi-button cbi-button-action',
+										'type': 'button',
+										'click': ui.createHandlerFn(this, 'handleAddExcluded')
+									}, [ _('Add') ])
+								])
+							])
+						]),
+						this.renderExcludedItems(this.formState.bypass.excluded)
+					])
+				]),
+				E('div', { 'class': 'routeflux-routing-actions' }, [
+					E('button', {
+						'class': 'cbi-button cbi-button-apply',
+						'type': 'button',
+						'click': ui.createHandlerFn(this, 'handleSaveSettings')
+					}, [ _('Save') ])
 				])
 			])
 		]));
@@ -1461,7 +1366,7 @@ return view.extend({
 
 	render: function(data) {
 		this.initializePageState(data);
-		return E('div', { 'id': 'routeflux-firewall-root' }, this.renderPageContent());
+		return E('div', { 'id': 'routeflux-routing-root' }, this.renderPageContent());
 	},
 
 	handleSave: null,
