@@ -15,9 +15,10 @@ func TestAboutViewUsesLatestInstallScriptUpgradeFlow(t *testing.T) {
 	for _, want := range []string{
 		"RouteFlux - About",
 		"Update to new version",
-		"/bin/sh",
-		"wget -O /tmp/routeflux-install.sh \"https://github.com/Alaxay8/routeflux/releases/latest/download/install.sh\" && sh /tmp/routeflux-install.sh",
+		"/usr/libexec/routeflux-self-update",
 		"Existing /etc/routeflux state is preserved by the installer.",
+		"function extractSelfUpdateStatus(output)",
+		"status !== 'up-to-date'",
 	} {
 		if !strings.Contains(source, want) {
 			t.Fatalf("about view missing marker %q", want)
@@ -27,9 +28,45 @@ func TestAboutViewUsesLatestInstallScriptUpgradeFlow(t *testing.T) {
 	for _, forbidden := range []string{
 		"'--upgrade'",
 		"this.execText([ '--upgrade' ])",
+		"fs.exec('/bin/sh'",
 	} {
 		if strings.Contains(source, forbidden) {
 			t.Fatalf("about view must not keep legacy upgrade flow marker %q", forbidden)
+		}
+	}
+}
+
+func TestAboutUpdateHelperRunsExactInstallCommand(t *testing.T) {
+	t.Parallel()
+
+	source := readSelfUpdateHelperSource(t)
+
+	for _, want := range []string{
+		"#!/bin/sh",
+		"set -eu",
+		"wget -O /tmp/routeflux-install.sh \"https://github.com/Alaxay8/routeflux/releases/latest/download/install.sh\" && sh /tmp/routeflux-install.sh",
+	} {
+		if !strings.Contains(source, want) {
+			t.Fatalf("self-update helper missing marker %q", want)
+		}
+	}
+}
+
+func TestRouteFluxACLAllowsOnlySelfUpdateHelper(t *testing.T) {
+	t.Parallel()
+
+	source := readACLSource(t)
+
+	if !strings.Contains(source, "\"/usr/libexec/routeflux-self-update\": [ \"exec\" ]") {
+		t.Fatal("acl must allow routeflux self-update helper")
+	}
+
+	for _, forbidden := range []string{
+		"\"/bin/sh *\": [ \"exec\" ]",
+		"\"/bin/sh\": [ \"exec\" ]",
+	} {
+		if strings.Contains(source, forbidden) {
+			t.Fatalf("acl must not allow shell execution marker %q", forbidden)
 		}
 	}
 }
@@ -71,6 +108,40 @@ func readAboutViewSource(t *testing.T) string {
 	}
 
 	path := filepath.Join(root, "luci-app-routeflux", "htdocs", "luci-static", "resources", "view", "routeflux", "about.js")
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("read %s: %v", path, err)
+	}
+
+	return string(data)
+}
+
+func readSelfUpdateHelperSource(t *testing.T) string {
+	t.Helper()
+
+	root, err := filepath.Abs(filepath.Join("..", ".."))
+	if err != nil {
+		t.Fatalf("resolve repo root: %v", err)
+	}
+
+	path := filepath.Join(root, "openwrt", "root", "usr", "libexec", "routeflux-self-update")
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("read %s: %v", path, err)
+	}
+
+	return string(data)
+}
+
+func readACLSource(t *testing.T) string {
+	t.Helper()
+
+	root, err := filepath.Abs(filepath.Join("..", ".."))
+	if err != nil {
+		t.Fatalf("resolve repo root: %v", err)
+	}
+
+	path := filepath.Join(root, "luci-app-routeflux", "root", "usr", "share", "rpcd", "acl.d", "luci-app-routeflux.json")
 	data, err := os.ReadFile(path)
 	if err != nil {
 		t.Fatalf("read %s: %v", path, err)

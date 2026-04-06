@@ -76,6 +76,10 @@ routeflux_cron_helper_path() {
 	scope_path "/usr/libexec/routeflux-cron"
 }
 
+routeflux_self_update_helper_path() {
+	scope_path "/usr/libexec/routeflux-self-update"
+}
+
 require_root_if_needed() {
 	if [ "${ROUTEFLUX_INSTALL_ROOT}" = "/" ] && [ "$(id -u)" -ne 0 ]; then
 		die "run this uninstaller as root on the router, or use --install-root for a staging directory"
@@ -141,6 +145,7 @@ xray_service="$(xray_service_path)"
 xray_config="$(xray_config_path)"
 xray_config_dir="$(dirname "${xray_config}")"
 routeflux_cron_helper="$(routeflux_cron_helper_path)"
+routeflux_self_update_helper="$(routeflux_self_update_helper_path)"
 rpcd_service="$(scope_path "/etc/init.d/rpcd")"
 uhttpd_service="$(scope_path "/etc/init.d/uhttpd")"
 
@@ -178,6 +183,7 @@ remove_path "${xray_binary}"
 remove_path "${xray_service}"
 remove_path "${xray_config_dir}"
 remove_path "${routeflux_cron_helper}"
+remove_path "${routeflux_self_update_helper}"
 remove_path "$(scope_path "/var/log/xray.log")"
 remove_path "$(scope_path "/var/run/xray.pid")"
 
