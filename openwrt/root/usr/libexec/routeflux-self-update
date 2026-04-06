@@ -1,4 +1,98 @@
 #!/bin/sh
 set -eu
 
-wget -O /tmp/routeflux-install.sh "https://github.com/Alaxay8/routeflux/releases/latest/download/install.sh" && sh /tmp/routeflux-install.sh
+ROUTEFLUX_BINARY="${ROUTEFLUX_BINARY:-/usr/bin/routeflux}"
+ROUTEFLUX_WGET="${ROUTEFLUX_WGET:-wget}"
+ROUTEFLUX_RELEASES_API="${ROUTEFLUX_RELEASES_API:-https://api.github.com/repos/Alaxay8/routeflux/releases/latest}"
+ROUTEFLUX_TAG_REF_API_BASE="${ROUTEFLUX_TAG_REF_API_BASE:-https://api.github.com/repos/Alaxay8/routeflux/git/ref/tags}"
+ROUTEFLUX_RELEASE_INSTALL_URL="${ROUTEFLUX_RELEASE_INSTALL_URL:-https://github.com/Alaxay8/routeflux/releases/latest/download/install.sh}"
+ROUTEFLUX_UPDATE_SCRIPT_PATH="${ROUTEFLUX_UPDATE_SCRIPT_PATH:-/tmp/routeflux-install.sh}"
+
+trim() {
+	printf '%s' "${1:-}" | sed 's/^[[:space:]]*//; s/[[:space:]]*$//'
+}
+
+json_string_value() {
+	key="$1"
+	sed -n "s/.*\"${key}\":[[:space:]]*\"\\([^\"]*\\)\".*/\\1/p" | head -n1
+}
+
+fetch_text() {
+	"${ROUTEFLUX_WGET}" -qO- "$1"
+}
+
+run_install() {
+	if [ -n "${ROUTEFLUX_SELF_UPDATE_TEST_MODE:-}" ]; then
+		"${ROUTEFLUX_WGET}" -O "${ROUTEFLUX_UPDATE_SCRIPT_PATH}" "${ROUTEFLUX_RELEASE_INSTALL_URL}" && sh "${ROUTEFLUX_UPDATE_SCRIPT_PATH}"
+		return
+	fi
+
+	wget -O /tmp/routeflux-install.sh "https://github.com/Alaxay8/routeflux/releases/latest/download/install.sh" && sh /tmp/routeflux-install.sh
+}
+
+same_commit() {
+	current="$1"
+	latest="$2"
+
+	case "${latest}" in
+		"${current}"*)
+			return 0
+			;;
+	esac
+
+	return 1
+}
+
+current_version=''
+current_commit=''
+latest_version=''
+latest_commit=''
+
+if [ -x "${ROUTEFLUX_BINARY}" ]; then
+	version_json="$("${ROUTEFLUX_BINARY}" --json version 2>/dev/null || true)"
+	current_version="$(printf '%s\n' "${version_json}" | json_string_value version)"
+	current_version="${current_version#v}"
+	current_commit="$(printf '%s\n' "${version_json}" | json_string_value commit)"
+fi
+
+latest_tag="$(fetch_text "${ROUTEFLUX_RELEASES_API}" | json_string_value tag_name)"
+latest_version="${latest_tag#v}"
+
+if [ -n "${latest_tag}" ]; then
+	latest_commit="$(fetch_text "${ROUTEFLUX_TAG_REF_API_BASE}/${latest_tag}" | json_string_value sha)"
+fi
+
+if [ -n "${current_version}" ] && [ -n "${current_commit}" ] && [ -n "${latest_version}" ] && [ -n "${latest_commit}" ] &&
+	[ "${current_version}" = "${latest_version}" ] && same_commit "${current_commit}" "${latest_commit}"; then
+	printf '%s\n' 'ROUTEFLUX_SELF_UPDATE_STATUS=up-to-date'
+	printf 'RouteFlux is already up to date (%s, %s).\n' "${current_version}" "${current_commit}"
+	exit 0
+fi
+
+before_version="$(trim "${current_version}")"
+before_commit="$(trim "${current_commit}")"
+
+run_install
+
+after_version=''
+after_commit=''
+if [ -x "${ROUTEFLUX_BINARY}" ]; then
+	version_json="$("${ROUTEFLUX_BINARY}" --json version 2>/dev/null || true)"
+	after_version="$(printf '%s\n' "${version_json}" | json_string_value version)"
+	after_version="${after_version#v}"
+	after_commit="$(printf '%s\n' "${version_json}" | json_string_value commit)"
+fi
+
+printf '%s\n' 'ROUTEFLUX_SELF_UPDATE_STATUS=updated'
+
+if [ -n "${before_version}" ] && [ -n "${before_commit}" ] && [ -n "${after_version}" ] && [ -n "${after_commit}" ]; then
+	printf 'RouteFlux updated from %s (%s) to %s (%s).\n' "${before_version}" "${before_commit}" "${after_version}" "${after_commit}"
+	exit 0
+fi
+
+if [ -n "${after_version}" ] && [ -n "${after_commit}" ]; then
+	printf 'RouteFlux installed successfully (%s, %s).\n' "${after_version}" "${after_commit}"
+	exit 0
+fi
+
+printf 'RouteFlux installed successfully.\n'

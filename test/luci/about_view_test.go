@@ -17,6 +17,8 @@ func TestAboutViewUsesLatestInstallScriptUpgradeFlow(t *testing.T) {
 		"Update to new version",
 		"/usr/libexec/routeflux-self-update",
 		"Existing /etc/routeflux state is preserved by the installer.",
+		"function extractSelfUpdateStatus(output)",
+		"status !== 'up-to-date'",
 	} {
 		if !strings.Contains(source, want) {
 			t.Fatalf("about view missing marker %q", want)
