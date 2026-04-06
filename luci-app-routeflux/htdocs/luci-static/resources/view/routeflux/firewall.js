@@ -1120,8 +1120,8 @@ return view.extend({
 
 		content.push(routefluxUI.renderSharedStyles());
 		content.push(E('style', { 'type': 'text/css' }, [
-			'#routeflux-routing-root { --routeflux-routing-ink:#10263f; --routeflux-routing-ink-muted:#44566b; --routeflux-routing-ink-soft:#62758a; --routeflux-routing-panel-bg:linear-gradient(160deg, rgba(243, 248, 255, 0.98) 0%, rgba(230, 239, 249, 0.98) 56%, rgba(220, 232, 245, 0.98) 100%); --routeflux-routing-surface-bg:linear-gradient(180deg, rgba(255, 255, 255, 0.97) 0%, rgba(246, 250, 254, 0.97) 100%); --routeflux-routing-surface-strong:linear-gradient(180deg, #17324d 0%, #10243a 100%); color:var(--routeflux-routing-ink); }',
-			'.routeflux-routing-layout { display:grid; gap:14px; }',
+			'#routeflux-routing-root { --routeflux-routing-ink:#10263f; --routeflux-routing-ink-muted:#44566b; --routeflux-routing-ink-soft:#62758a; --routeflux-routing-panel-bg:linear-gradient(160deg, rgba(243, 248, 255, 0.98) 0%, rgba(230, 239, 249, 0.98) 56%, rgba(220, 232, 245, 0.98) 100%); --routeflux-routing-surface-bg:linear-gradient(180deg, rgba(255, 255, 255, 0.97) 0%, rgba(246, 250, 254, 0.97) 100%); --routeflux-routing-surface-strong:linear-gradient(180deg, #17324d 0%, #10243a 100%); }',
+			'.routeflux-routing-layout { display:grid; gap:14px; color:var(--routeflux-routing-ink); }',
 			'.routeflux-routing-grid { display:grid; grid-template-columns:repeat(auto-fit, minmax(240px, 1fr)); gap:12px; }',
 			'.routeflux-routing-panel { position:relative; overflow:hidden; isolation:isolate; border:1px solid rgba(120, 141, 167, 0.42); border-radius:22px; padding:20px; background:var(--routeflux-routing-panel-bg); box-shadow:0 20px 44px rgba(3, 15, 32, 0.22), inset 0 1px 0 rgba(255, 255, 255, 0.78); }',
 			'.routeflux-routing-panel::before { content:""; position:absolute; inset:0; background:radial-gradient(circle at top left, rgba(125, 211, 252, 0.22), transparent 34%), radial-gradient(circle at bottom right, rgba(59, 130, 246, 0.12), transparent 40%); pointer-events:none; }',

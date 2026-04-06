@@ -47,6 +47,16 @@ func TestFirewallViewDefinesReadableContrastTheme(t *testing.T) {
 	}
 }
 
+func TestFirewallViewKeepsIntroOnThemeColors(t *testing.T) {
+	t.Parallel()
+
+	source := readFirewallViewSource(t)
+
+	if strings.Contains(source, "#routeflux-routing-root { --routeflux-routing-ink:#10263f; --routeflux-routing-ink-muted:#44566b; --routeflux-routing-ink-soft:#62758a; --routeflux-routing-panel-bg:linear-gradient(160deg, rgba(243, 248, 255, 0.98) 0%, rgba(230, 239, 249, 0.98) 56%, rgba(220, 232, 245, 0.98) 100%); --routeflux-routing-surface-bg:linear-gradient(180deg, rgba(255, 255, 255, 0.97) 0%, rgba(246, 250, 254, 0.97) 100%); --routeflux-routing-surface-strong:linear-gradient(180deg, #17324d 0%, #10243a 100%); color:var(--routeflux-routing-ink); }") {
+		t.Fatal("routing root must not override intro text color")
+	}
+}
+
 func TestFirewallViewRemovesAdvancedRoutingControls(t *testing.T) {
 	t.Parallel()
 
