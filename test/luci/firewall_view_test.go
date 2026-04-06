@@ -96,7 +96,7 @@ func TestFirewallViewPersistsOnlyOffAndBypassModes(t *testing.T) {
 	}
 }
 
-func TestLuCIMenuKeepsOnlySubscriptionsAndRouting(t *testing.T) {
+func TestLuCIMenuKeepsSubscriptionsRoutingAndAbout(t *testing.T) {
 	t.Parallel()
 
 	root, err := filepath.Abs(filepath.Join("..", ".."))
@@ -121,8 +121,8 @@ func TestLuCIMenuKeepsOnlySubscriptionsAndRouting(t *testing.T) {
 		t.Fatalf("unmarshal menu json: %v", err)
 	}
 
-	if len(payload) != 3 {
-		t.Fatalf("expected root + 2 LuCI entries, got %d", len(payload))
+	if len(payload) != 4 {
+		t.Fatalf("expected root + 3 LuCI entries, got %d", len(payload))
 	}
 
 	rootEntry, ok := payload["admin/services/routeflux"]
@@ -149,6 +149,14 @@ func TestLuCIMenuKeepsOnlySubscriptionsAndRouting(t *testing.T) {
 		t.Fatalf("unexpected routing title %q", routingEntry.Title)
 	}
 
+	aboutEntry, ok := payload["admin/services/routeflux/about"]
+	if !ok {
+		t.Fatal("missing about menu entry")
+	}
+	if aboutEntry.Title != "About" {
+		t.Fatalf("unexpected about title %q", aboutEntry.Title)
+	}
+
 	for _, forbidden := range []string{
 		"admin/services/routeflux/overview",
 		"admin/services/routeflux/dns",
@@ -156,7 +164,6 @@ func TestLuCIMenuKeepsOnlySubscriptionsAndRouting(t *testing.T) {
 		"admin/services/routeflux/diagnostics",
 		"admin/services/routeflux/logs",
 		"admin/services/routeflux/services",
-		"admin/services/routeflux/about",
 	} {
 		if _, exists := payload[forbidden]; exists {
 			t.Fatalf("menu must not keep removed entry %q", forbidden)

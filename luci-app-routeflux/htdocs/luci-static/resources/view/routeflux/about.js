@@ -5,22 +5,12 @@
 'require routeflux.ui as routefluxUI';
 
 var routefluxBinary = '/usr/bin/routeflux';
-var whatsNewBaseRelease = 'v0.1.5';
+var latestInstallCommand = 'wget -O /tmp/routeflux-install.sh "https://github.com/Alaxay8/routeflux/releases/latest/download/install.sh" && sh /tmp/routeflux-install.sh';
 var whatsNewEntries = [
 	{
 		kind: _('New'),
-		title: _('Subscription expiration date is now shown'),
-		summary: _('Subscriptions now show an Expiration date row and refresh it whenever the provider exposes expiry metadata during add or refresh operations.')
-	},
-	{
-		kind: _('New'),
-		title: _('Update RouteFlux from LuCI'),
-		summary: _('The About page can now download and install the latest published RouteFlux release directly on the router.')
-	},
-	{
-		kind: _('Fix'),
-		title: _('Bypass mode and target bundles'),
-		summary: _('LuCI now keeps separate saved selector sets for Targets, Hosts, and Bypass, and custom target aliases can include other service aliases to build reusable bundles.')
+		title: _('Simplified LuCI interface'),
+		summary: _('LuCI now focuses on the everyday Subscriptions, Routing, and About flow with a cleaner and more compact interface.')
 	}
 ];
 
@@ -33,6 +23,29 @@ function trim(value) {
 
 function notificationParagraph(message) {
 	return E('p', {}, [ message ]);
+}
+
+function padNumber(value) {
+	return String(value).padStart(2, '0');
+}
+
+function formatBuildDate(value) {
+	var raw = trim(value);
+	var parsed;
+
+	if (raw === '')
+		return 'unknown';
+
+	parsed = new Date(raw);
+	if (isNaN(parsed.getTime()))
+		return raw;
+
+	return String(parsed.getFullYear()) + '-' +
+		padNumber(parsed.getMonth() + 1) + '-' +
+		padNumber(parsed.getDate()) + ' ' +
+		padNumber(parsed.getHours()) + ':' +
+		padNumber(parsed.getMinutes()) + ':' +
+		padNumber(parsed.getSeconds());
 }
 
 function renderWhatsNewCard(entry) {
@@ -76,8 +89,8 @@ return view.extend({
 		});
 	},
 
-	execText: function(argv) {
-		return fs.exec(routefluxBinary, argv).then(function(res) {
+	execShell: function(command) {
+		return fs.exec('/bin/sh', [ '-c', command ]).then(function(res) {
 			var stderr = trim(res.stderr);
 			var stdout = trim(res.stdout);
 
@@ -98,7 +111,7 @@ return view.extend({
 		if (!window.confirm(_('Download the latest RouteFlux release and install it over the current router version? Existing /etc/routeflux state is preserved by the installer.')))
 			return Promise.resolve();
 
-		return this.execText([ '--upgrade' ]).then(function(res) {
+		return this.execShell(latestInstallCommand).then(function(res) {
 			ui.addNotification(null, notificationParagraph(res.stdout || _('Upgrade completed. Reloading the page...')), 'info');
 			window.setTimeout(function() {
 				window.location.reload();
@@ -112,7 +125,7 @@ return view.extend({
 	showWhatsNewModal: function() {
 		var body = [
 			E('p', { 'class': 'routeflux-modal-help' }, [
-				_('Changes included after the %s release, rewritten as practical user-facing updates.').format(whatsNewBaseRelease)
+				_('Recent user-facing changes in the simplified LuCI experience.')
 			]),
 			E('div', { 'class': 'routeflux-overview-grid routeflux-about-update-grid' }, whatsNewEntries.map(renderWhatsNewCard))
 		];
@@ -147,8 +160,8 @@ return view.extend({
 		var content = [];
 		var version = trim(info.version) || 'dev';
 		var commit = trim(info.commit) || 'unknown';
-		var buildDate = trim(info.build_date) || 'unknown';
-		var versionText = 'RouteFlux ' + version + '\nCommit: ' + commit + '\nBuilt: ' + buildDate;
+		var formattedBuildDate = formatBuildDate(info.build_date);
+		var versionText = 'RouteFlux ' + version + '\nCommit: ' + commit + '\nBuilt: ' + formattedBuildDate;
 
 		if (info.__error__)
 			ui.addNotification(null, notificationParagraph(_('Version error: %s').format(info.__error__)));
@@ -172,7 +185,7 @@ return view.extend({
 		content.push(E('div', { 'class': 'routeflux-overview-grid' }, [
 			routefluxUI.renderSummaryCard(_('Version'), version),
 			routefluxUI.renderSummaryCard(_('Commit'), commit),
-			routefluxUI.renderSummaryCard(_('Build Date'), buildDate)
+			routefluxUI.renderSummaryCard(_('Build Date'), formattedBuildDate)
 		]));
 
 		content.push(E('div', { 'class': 'cbi-section' }, [
@@ -195,7 +208,7 @@ return view.extend({
 					'class': 'btn cbi-button cbi-button-action important',
 					'type': 'button',
 					'click': ui.createHandlerFn(this, 'handleUpgrade')
-				}, [ _('Update to latest version') ])
+				}, [ _('Update to new version') ])
 			])
 		]));
 

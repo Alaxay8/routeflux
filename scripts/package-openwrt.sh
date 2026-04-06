@@ -57,6 +57,8 @@ cp "${ROOT_DIR}/luci-app-routeflux/htdocs/luci-static/resources/view/routeflux/s
 	"${DATA_DIR}/www/luci-static/resources/view/routeflux/subscriptions.js"
 cp "${ROOT_DIR}/luci-app-routeflux/htdocs/luci-static/resources/view/routeflux/firewall.js" \
 	"${DATA_DIR}/www/luci-static/resources/view/routeflux/firewall.js"
+cp "${ROOT_DIR}/luci-app-routeflux/htdocs/luci-static/resources/view/routeflux/about.js" \
+	"${DATA_DIR}/www/luci-static/resources/view/routeflux/about.js"
 
 cat > "${CONTROL_DIR}/control" <<EOF
 Package: ${PACKAGE_NAME}
@@ -103,7 +105,6 @@ if [ -z "${IPKG_INSTROOT:-}" ]; then
 		/www/luci-static/resources/view/routeflux/diagnostics.js \
 		/www/luci-static/resources/view/routeflux/logs.js \
 		/www/luci-static/resources/view/routeflux/services.js \
-		/www/luci-static/resources/view/routeflux/about.js \
 		>/dev/null 2>&1 || true
 	harden_secret_storage
 	/usr/libexec/routeflux-cron ensure-xray-log-retention >/dev/null 2>&1 || true

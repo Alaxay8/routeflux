@@ -27,5 +27,13 @@
 			"type": "view",
 			"path": "routeflux/firewall"
 		}
+	},
+	"admin/services/routeflux/about": {
+		"title": "About",
+		"order": 30,
+		"action": {
+			"type": "view",
+			"path": "routeflux/about"
+		}
 	}
 }
