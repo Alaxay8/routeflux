@@ -1121,7 +1121,7 @@ return view.extend({
 		content.push(routefluxUI.renderSharedStyles());
 		content.push(E('style', { 'type': 'text/css' }, [
 			'#routeflux-routing-root { --routeflux-routing-ink:#10263f; --routeflux-routing-ink-muted:#44566b; --routeflux-routing-ink-soft:#62758a; --routeflux-routing-panel-bg:linear-gradient(160deg, rgba(243, 248, 255, 0.98) 0%, rgba(230, 239, 249, 0.98) 56%, rgba(220, 232, 245, 0.98) 100%); --routeflux-routing-surface-bg:linear-gradient(180deg, rgba(255, 255, 255, 0.97) 0%, rgba(246, 250, 254, 0.97) 100%); --routeflux-routing-surface-strong:linear-gradient(180deg, #17324d 0%, #10243a 100%); color:var(--routeflux-routing-ink); }',
-			'#routeflux-routing-root h2 { color:var(--routeflux-routing-ink); letter-spacing:-0.03em; }',
+			'.routeflux-routing-title { color:var(--text-color-high, inherit); }',
 			'.routeflux-routing-layout { display:grid; gap:14px; }',
 			'.routeflux-routing-grid { display:grid; grid-template-columns:repeat(auto-fit, minmax(240px, 1fr)); gap:12px; }',
 			'.routeflux-routing-panel { position:relative; overflow:hidden; isolation:isolate; border:1px solid rgba(120, 141, 167, 0.42); border-radius:22px; padding:20px; background:var(--routeflux-routing-panel-bg); box-shadow:0 20px 44px rgba(3, 15, 32, 0.22), inset 0 1px 0 rgba(255, 255, 255, 0.78); }',
@@ -1160,13 +1160,13 @@ return view.extend({
 			'.routeflux-routing-summary-shell { padding:16px 18px; border:1px solid rgba(125, 145, 168, 0.34); border-radius:16px; background:rgba(255, 255, 255, 0.84); box-shadow:0 10px 22px rgba(15, 23, 42, 0.08); }',
 			'.routeflux-routing-summary-shell h3 { margin-top:0; margin-bottom:10px; color:var(--routeflux-routing-ink); font-size:20px; letter-spacing:-0.02em; }',
 			'.routeflux-routing-summary-list { margin:0; padding-left:18px; color:var(--routeflux-routing-ink-muted); line-height:1.55; }',
-			'.routeflux-routing-page-description { color:var(--routeflux-routing-ink-muted); max-width:78ch; line-height:1.6; }',
+			'.routeflux-routing-page-description { color:var(--text-color-medium, #666); max-width:78ch; line-height:1.6; }',
 			'.routeflux-routing-optional summary { cursor:pointer; font-weight:800; color:var(--routeflux-routing-ink); }',
 			'.routeflux-routing-optional-shell { margin-top:12px; }',
 			'@media (max-width: 720px) { .routeflux-routing-inline { flex-direction:column; } .routeflux-routing-inline > .cbi-button-action, .routeflux-routing-actions .cbi-button { width:100%; } }'
 		]));
 
-		content.push(E('h2', {}, [ _('RouteFlux - Routing') ]));
+		content.push(E('h2', { 'class': 'routeflux-routing-title' }, [ _('RouteFlux - Routing') ]));
 		content.push(E('p', { 'class': 'cbi-section-descr routeflux-routing-page-description' }, [
 			_('RouteFlux status, the active connection, and the basic routing actions you need every day.')
 		]));
