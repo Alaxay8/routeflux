@@ -1168,7 +1168,7 @@ return view.extend({
 
 		content.push(E('h2', {}, [ _('RouteFlux - Routing') ]));
 		content.push(E('p', { 'class': 'cbi-section-descr routeflux-routing-page-description' }, [
-			_('Simple routing for everyday LuCI use. Switch RouteFlux off, keep selected destinations direct, and choose a basic DNS profile.')
+			_('RouteFlux status, the active connection, and the basic routing actions you need every day.')
 		]));
 
 		content.push(E('div', { 'class': 'routeflux-overview-grid' }, [

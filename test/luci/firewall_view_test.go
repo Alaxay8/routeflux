@@ -15,6 +15,7 @@ func TestFirewallViewUsesSimplifiedRoutingCopy(t *testing.T) {
 
 	for _, want := range []string{
 		"RouteFlux - Routing",
+		"RouteFlux status, the active connection, and the basic routing actions you need every day.",
 		"System DNS",
 		"RouteFlux Recommended DNS",
 		"Keep Direct",

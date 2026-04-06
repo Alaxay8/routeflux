@@ -6,8 +6,6 @@
 'require routeflux.ui as routefluxUI';
 
 var routefluxBinary = '/usr/bin/routeflux';
-var speedTestRPCTimeoutSeconds = 90;
-var sortByAvailabilityStorageKey = 'routeflux.subscriptions.sort_by_last_availability';
 
 function trim(value) {
 	if (value == null)
@@ -122,7 +120,6 @@ function inferRegionCodeFromAddress(value) {
 		return '';
 
 	var labels = host.split('.').filter(Boolean);
-
 	if (labels.length === 0)
 		return '';
 
@@ -248,6 +245,15 @@ function buildSubscriptionPresentation(subscriptions) {
 	};
 }
 
+function presentationForSubscription(sub, presentation) {
+	var id = trim(sub && sub.id);
+
+	if (id === '' || !presentation || !presentation.by_id)
+		return null;
+
+	return presentation.by_id[id] || null;
+}
+
 function nodeDisplayName(node, fallback) {
 	var name = trim(node && node.name);
 	var remark = trim(node && node.remark);
@@ -303,24 +309,6 @@ function normalizeCommandError(value, fallback) {
 	}
 
 	return fallback || _('RouteFlux command failed.');
-}
-
-function formatMbps(value) {
-	var parsed = Number(value);
-
-	if (!isFinite(parsed))
-		return '-';
-
-	return parsed.toFixed(2) + ' Mbps';
-}
-
-function formatMilliseconds(value) {
-	var parsed = Number(value);
-
-	if (!isFinite(parsed))
-		return '-';
-
-	return parsed.toFixed(2) + ' ms';
 }
 
 function formatBytes(value) {
@@ -424,109 +412,6 @@ function responsiveTableCell(label, content, extraClass) {
 	}, Array.isArray(content) ? content : [ content ]);
 }
 
-function sortPreferenceStorage() {
-	try {
-		if (typeof window !== 'undefined' && window.localStorage)
-			return window.localStorage;
-	}
-	catch (err) {
-	}
-
-	return null;
-}
-
-function loadSortByAvailabilityPreference() {
-	var storage = sortPreferenceStorage();
-	var value;
-
-	if (!storage)
-		return false;
-
-	try {
-		value = trim(storage.getItem(sortByAvailabilityStorageKey)).toLowerCase();
-	}
-	catch (err) {
-		return false;
-	}
-
-	return value === '1' || value === 'true';
-}
-
-function persistSortByAvailabilityPreference(enabled) {
-	var storage = sortPreferenceStorage();
-
-	if (!storage)
-		return;
-
-	try {
-		storage.setItem(sortByAvailabilityStorageKey, enabled ? '1' : '0');
-	}
-	catch (err) {
-	}
-}
-
-function nodeAvailabilityScore(healthByNodeId, nodeID) {
-	var health = healthByNodeId && healthByNodeId[trim(nodeID)];
-	var score = Number(health && health.score);
-
-	if (!isFinite(score))
-		return null;
-
-	return score;
-}
-
-function sortNodesByAvailability(subscription, healthByNodeId, activeSubscriptionId, activeNodeId, sortByAvailability) {
-	var nodes = Array.isArray(subscription && subscription.nodes) ? subscription.nodes.slice() : [];
-	var isActiveSubscription = trim(subscription && subscription.id) !== '' && trim(subscription && subscription.id) === trim(activeSubscriptionId);
-	var pinnedNode = null;
-	var scoredNodes = [];
-	var unknownNodes = [];
-	var i;
-
-	if (!sortByAvailability)
-		return nodes;
-
-	for (i = 0; i < nodes.length; i++) {
-		var node = nodes[i];
-		var entry = {
-			'node': node,
-			'index': i,
-			'score': nodeAvailabilityScore(healthByNodeId, node && node.id)
-		};
-
-		if (isActiveSubscription && trim(node && node.id) !== '' && trim(node && node.id) === trim(activeNodeId)) {
-			pinnedNode = entry;
-			continue;
-		}
-
-		if (entry.score == null) {
-			unknownNodes.push(entry);
-			continue;
-		}
-
-		scoredNodes.push(entry);
-	}
-
-	scoredNodes.sort(function(left, right) {
-		if (left.score !== right.score)
-			return right.score - left.score;
-
-		return left.index - right.index;
-	});
-
-	var orderedNodes = [];
-	if (pinnedNode)
-		orderedNodes.push(pinnedNode.node);
-
-	for (i = 0; i < scoredNodes.length; i++)
-		orderedNodes.push(scoredNodes[i].node);
-
-	for (i = 0; i < unknownNodes.length; i++)
-		orderedNodes.push(unknownNodes[i].node);
-
-	return orderedNodes;
-}
-
 function emptyAddDraft() {
 	return {
 		'name': '',
@@ -555,8 +440,6 @@ return view.extend({
 		this.pageLoading = false;
 		this.addDraft = emptyAddDraft();
 		this.subscriptionOpen = {};
-		this.speedTestBusy = false;
-		this.sortByLastAvailability = loadSortByAvailabilityPreference();
 	},
 
 	setPageInfo: function(message) {
@@ -682,65 +565,6 @@ return view.extend({
 		});
 	},
 
-	copyTextToClipboard: function(text) {
-		var value = String(text || '');
-
-		if (value === '')
-			return Promise.reject(new Error(_('Nothing to export.')));
-
-		if (typeof navigator !== 'undefined' && navigator.clipboard && typeof navigator.clipboard.writeText === 'function')
-			return navigator.clipboard.writeText(value);
-
-		return new Promise(function(resolve, reject) {
-			var area;
-
-			if (!document || !document.body) {
-				reject(new Error(_('Clipboard export is unavailable.')));
-				return;
-			}
-
-			area = E('textarea', {
-				'style': 'position:fixed; left:-9999px; top:-9999px; opacity:0'
-			}, [ value ]);
-
-			document.body.appendChild(area);
-			area.focus();
-			area.select();
-
-			try {
-				if (!document.execCommand('copy'))
-					throw new Error(_('Clipboard export is unavailable.'));
-				resolve();
-			}
-			catch (err) {
-				reject(err);
-			}
-			finally {
-				document.body.removeChild(area);
-			}
-		});
-	},
-
-	withRPCTimeout: function(timeoutSeconds, executor) {
-		var nextTimeout = Number(timeoutSeconds);
-		var previousRaw;
-		var hasPrevious;
-
-		if (!isFinite(nextTimeout) || nextTimeout <= 0 || typeof executor !== 'function')
-			return Promise.resolve().then(executor);
-
-		previousRaw = L.env.rpctimeout;
-		hasPrevious = previousRaw != null && previousRaw !== '';
-		L.env.rpctimeout = String(Math.ceil(nextTimeout));
-
-		return Promise.resolve().then(executor).finally(function() {
-			if (hasPrevious)
-				L.env.rpctimeout = previousRaw;
-			else
-				delete L.env.rpctimeout;
-		});
-	},
-
 	actionKey: function(scope, subscriptionId, nodeId) {
 		return [ trim(scope), trim(subscriptionId), trim(nodeId) ].filter(Boolean).join(':');
 	},
@@ -837,13 +661,6 @@ return view.extend({
 		this.addDraft[key] = ev && ev.target ? ev.target.value : '';
 	},
 
-	handleSortByAvailabilityToggle: function(ev) {
-		this.ensureState();
-		this.sortByLastAvailability = !!(ev && ev.target && ev.target.checked);
-		persistSortByAvailabilityPreference(this.sortByLastAvailability);
-		this.renderIntoRoot();
-	},
-
 	refreshPageContent: function(options) {
 		var settings = options || {};
 
@@ -867,103 +684,6 @@ return view.extend({
 		this.clearPageMessages();
 		return routefluxUI.runPendingAction(this, key, executor, {
 			'message': message
-		});
-	},
-
-	showSpeedTestModal: function(node, state) {
-		var nodeName = nodeDisplayName(node, node && node.id);
-		var body = [
-			E('p', { 'class': 'routeflux-modal-help' }, [
-				_('This is a router-side diagnostic. It measures the selected node from the router through a temporary isolated Xray process and does not change the active RouteFlux connection.')
-			])
-		];
-
-		if (state === 'loading') {
-			body.push(E('p', { 'class': 'routeflux-speedtest-status' }, [
-				_('Running speed test. This can take a few seconds.')
-			]));
-		}
-		else if (state && state.error) {
-			body.push(E('div', { 'class': 'alert-message warning' }, [ state.error ]));
-		}
-		else if (state && state.result) {
-			body.push(E('div', { 'class': 'routeflux-speedtest-grid' }, [
-				E('div', { 'class': 'routeflux-speedtest-metric' }, [
-					E('div', { 'class': 'routeflux-speedtest-label' }, [ _('Ping') ]),
-					E('div', { 'class': 'routeflux-speedtest-value' }, [ formatMilliseconds(state.result.latency_ms) ])
-				]),
-				E('div', { 'class': 'routeflux-speedtest-metric' }, [
-					E('div', { 'class': 'routeflux-speedtest-label' }, [ _('Download') ]),
-					E('div', { 'class': 'routeflux-speedtest-value' }, [ formatMbps(state.result.download_mbps) ])
-				]),
-				E('div', { 'class': 'routeflux-speedtest-metric' }, [
-					E('div', { 'class': 'routeflux-speedtest-label' }, [ _('Upload') ]),
-					E('div', { 'class': 'routeflux-speedtest-value' }, [ formatMbps(state.result.upload_mbps) ])
-				]),
-				E('div', { 'class': 'routeflux-speedtest-metric' }, [
-					E('div', { 'class': 'routeflux-speedtest-label' }, [ _('Downloaded') ]),
-					E('div', { 'class': 'routeflux-speedtest-value routeflux-speedtest-subtle' }, [ formatBytes(state.result.download_bytes) ])
-				]),
-				E('div', { 'class': 'routeflux-speedtest-metric' }, [
-					E('div', { 'class': 'routeflux-speedtest-label' }, [ _('Uploaded') ]),
-					E('div', { 'class': 'routeflux-speedtest-value routeflux-speedtest-subtle' }, [ formatBytes(state.result.upload_bytes) ])
-				]),
-				E('div', { 'class': 'routeflux-speedtest-metric' }, [
-					E('div', { 'class': 'routeflux-speedtest-label' }, [ _('Finished') ]),
-					E('div', { 'class': 'routeflux-speedtest-value routeflux-speedtest-subtle' }, [ routefluxUI.formatTimestamp(state.result.finished_at) || '-' ])
-				])
-			]));
-		}
-
-		routefluxUI.showModal(_('Speed Test: %s').format(nodeName), body, {
-			'bodyClass': 'routeflux-modal-speedtest',
-			'modalClass': 'routeflux-modal-speedtest'
-		});
-	},
-
-	showInspectPreviewModal: function(node, state) {
-		var nodeName = nodeDisplayName(node, node && node.id);
-		var actions = [];
-		var previewText = '';
-		var body = [
-			E('p', { 'class': 'routeflux-modal-help' }, [
-				_('Sensitive values are redacted. DNS and DoH settings remain visible in this preview.')
-			])
-		];
-
-		if (state === 'loading') {
-			body.push(E('p', { 'class': 'routeflux-speedtest-status' }, [
-				_('Loading generated Xray JSON preview...')
-			]));
-		}
-		else if (state && state.error) {
-			body.push(E('div', { 'class': 'alert-message warning' }, [ state.error ]));
-		}
-		else if (state && state.preview) {
-			previewText = JSON.stringify(state.preview, null, 2);
-			body.push(E('pre', { 'class': 'routeflux-inspect-pre' }, [
-				previewText
-			]));
-			actions.push(E('button', {
-				'class': 'cbi-button cbi-button-action',
-				'click': L.bind(function(ev) {
-					return this.handleExportPreviewJSON(previewText, ev);
-				}, this)
-			}, [ _('Export JSON') ]));
-		}
-
-		actions.push(E('button', {
-			'class': 'cbi-button',
-			'click': function(ev) {
-				ui.hideModal();
-				return false;
-			}
-		}, [ _('Close') ]));
-
-		routefluxUI.showModal(_('Xray JSON Preview: %s').format(nodeName), body, {
-			'bodyClass': 'routeflux-modal-json',
-			'modalClass': 'routeflux-modal-json',
-			'actions': actions
 		});
 	},
 
@@ -1000,11 +720,34 @@ return view.extend({
 		}, this));
 	},
 
+	resolveSelectedSubscriptionId: function() {
+		var select = document.querySelector('#routeflux-subscription');
+		var subscriptions = Array.isArray(this.pageData && this.pageData[1]) ? this.pageData[1] : [];
+		var selected = trim(select && select.value);
+		var active = trim(this.pageData && this.pageData[0] && this.pageData[0].active_subscription && this.pageData[0].active_subscription.id);
+
+		if (selected !== '')
+			return selected;
+		if (active !== '')
+			return active;
+		if (subscriptions.length > 0)
+			return trim(subscriptions[0].id);
+
+		return '';
+	},
+
 	handleAdd: function(ev) {
-		var source = trim(this.addDraft && this.addDraft.source);
-		var name = trim(this.addDraft && this.addDraft.name);
-		var argv = [ 'add' ];
+		var source;
+		var name;
+		var argv;
 		var message;
+
+		if (ev && typeof ev.preventDefault === 'function')
+			ev.preventDefault();
+
+		source = trim(this.addDraft && this.addDraft.source);
+		name = trim(this.addDraft && this.addDraft.name);
+		argv = [ 'add' ];
 
 		if (source === '') {
 			message = _('Paste a subscription URL, share link, or 3x-ui/Xray JSON first.');
@@ -1035,6 +778,9 @@ return view.extend({
 	},
 
 	handleRefreshSubscription: function(subscriptionId, ev) {
+		if (ev && typeof ev.preventDefault === 'function')
+			ev.preventDefault();
+
 		return this.runCLIAction(
 			this.subscriptionActionKey(subscriptionId),
 			[ 'refresh', '--subscription', subscriptionId ],
@@ -1047,6 +793,9 @@ return view.extend({
 	},
 
 	handleRemoveSubscription: function(subscriptionId, displayName, ev) {
+		if (ev && typeof ev.preventDefault === 'function')
+			ev.preventDefault();
+
 		if (!window.confirm(_('Remove subscription "%s"?').format(displayName || subscriptionId)))
 			return Promise.resolve();
 
@@ -1062,6 +811,9 @@ return view.extend({
 	},
 
 	handleRemoveAll: function(ev) {
+		if (ev && typeof ev.preventDefault === 'function')
+			ev.preventDefault();
+
 		if (!window.confirm(_('Remove all imported subscriptions? This disconnects the active profile if needed.')))
 			return Promise.resolve();
 
@@ -1077,9 +829,24 @@ return view.extend({
 	},
 
 	handleConnectAuto: function(subscriptionId, ev) {
+		var targetSubscriptionID;
+		var message;
+
+		if (ev && typeof ev.preventDefault === 'function')
+			ev.preventDefault();
+
+		targetSubscriptionID = trim(subscriptionId) || this.resolveSelectedSubscriptionId();
+		if (targetSubscriptionID === '') {
+			message = _('Choose a subscription first.');
+			this.setPageError(message);
+			ui.addNotification(null, notificationParagraph(message));
+			this.renderIntoRoot();
+			return Promise.resolve();
+		}
+
 		return this.runCLIAction(
-			this.subscriptionActionKey(subscriptionId),
-			[ 'connect', '--auto', '--subscription', subscriptionId ],
+			this.subscriptionActionKey(targetSubscriptionID),
+			[ 'connect', '--auto', '--subscription', targetSubscriptionID ],
 			_('Auto mode enabled.'),
 			_('Connecting automatic selection...'),
 			{
@@ -1089,6 +856,9 @@ return view.extend({
 	},
 
 	handleConnectNode: function(subscriptionId, nodeId, ev) {
+		if (ev && typeof ev.preventDefault === 'function')
+			ev.preventDefault();
+
 		return this.runCLIAction(
 			this.nodeActionKey(subscriptionId, nodeId),
 			[ 'connect', '--subscription', subscriptionId, '--node', nodeId ],
@@ -1100,97 +870,141 @@ return view.extend({
 		);
 	},
 
-	handleSpeedTest: function(subscriptionId, node, ev) {
-		var nodeID = trim(node && node.id);
+	handleDisconnect: function(ev) {
+		if (ev && typeof ev.preventDefault === 'function')
+			ev.preventDefault();
+
+		return this.runCLIAction(
+			'disconnect',
+			[ 'disconnect' ],
+			_('Disconnected.'),
+			_('Disconnecting RouteFlux...'),
+			{
+				'loadingMessage': _('Reloading runtime status...')
+			}
+		);
+	},
+
+	handleRefreshActive: function(ev) {
+		var activeSubscriptionID;
 		var message;
 
-		if (this.speedTestBusy === true) {
-			message = _('Another speed test is already running.');
+		if (ev && typeof ev.preventDefault === 'function')
+			ev.preventDefault();
+
+		activeSubscriptionID = trim(this.pageData && this.pageData[0] && this.pageData[0].active_subscription && this.pageData[0].active_subscription.id);
+		if (activeSubscriptionID === '') {
+			message = _('There is no active subscription to refresh.');
 			this.setPageError(message);
 			ui.addNotification(null, notificationParagraph(message));
 			this.renderIntoRoot();
 			return Promise.resolve();
 		}
 
-		this.speedTestBusy = true;
-		this.showSpeedTestModal(node, 'loading');
-		this.renderIntoRoot();
-
-		return this.runAction(
-			this.nodeActionKey(subscriptionId, nodeID),
-			_('Running speed test...'),
-			L.bind(function() {
-				return this.withRPCTimeout(speedTestRPCTimeoutSeconds, L.bind(function() {
-					return this.execJSON([
-						'--json', 'inspect', 'speed',
-						'--subscription', subscriptionId,
-						'--node', nodeID
-					]);
-				}, this)).then(L.bind(function(result) {
-					this.showSpeedTestModal(node, { 'result': result });
-					return result;
-				}, this)).catch(L.bind(function(err) {
-					var errorMessage = err.message || String(err);
-
-					this.showSpeedTestModal(node, { 'error': errorMessage });
-					this.setPageError(errorMessage);
-					ui.addNotification(null, notificationParagraph(errorMessage));
-					this.renderIntoRoot();
-					return null;
-				}, this));
-			}, this)
-		).finally(L.bind(function() {
-			this.speedTestBusy = false;
-			this.renderIntoRoot();
-		}, this));
-	},
-
-	handleInspectPreview: function(subscriptionId, node, ev) {
-		var nodeID = trim(node && node.id);
-
-		this.showInspectPreviewModal(node, 'loading');
-		this.renderIntoRoot();
-
-		return this.runAction(
-			this.nodeActionKey(subscriptionId, nodeID),
-			_('Loading generated Xray JSON preview...'),
-			L.bind(function() {
-				return this.execJSON([
-					'inspect', 'xray-safe',
-					'--subscription', subscriptionId,
-					'--node', nodeID
-				]).then(L.bind(function(preview) {
-					this.showInspectPreviewModal(node, { 'preview': preview });
-					return preview;
-				}, this)).catch(L.bind(function(err) {
-					var errorMessage = err.message || String(err);
-
-					this.showInspectPreviewModal(node, { 'error': errorMessage });
-					this.setPageError(errorMessage);
-					ui.addNotification(null, notificationParagraph(errorMessage));
-					this.renderIntoRoot();
-					return null;
-				}, this));
-			}, this)
+		return this.runCLIAction(
+			'refresh-active',
+			[ 'refresh', '--subscription', activeSubscriptionID ],
+			_('Active subscription refreshed.'),
+			_('Refreshing active subscription...'),
+			{
+				'loadingMessage': _('Reloading subscriptions...')
+			}
 		);
 	},
 
-	handleExportPreviewJSON: function(previewText, ev) {
-		return this.copyTextToClipboard(previewText).then(L.bind(function() {
-			ui.addNotification(null, notificationParagraph(_('JSON copied to clipboard.')), 'info');
-		}, this)).catch(L.bind(function(err) {
-			var errorMessage = err && err.message ? err.message : String(err);
+	renderCard: function(label, value, options) {
+		var settings = options || {};
 
-			this.setPageError(errorMessage);
-			ui.addNotification(null, notificationParagraph(errorMessage));
-			this.renderIntoRoot();
-			return null;
-		}, this));
+		settings.fallback = settings.fallback != null ? settings.fallback : _('Not selected');
+
+		return routefluxUI.renderSummaryCard(label, value, settings);
 	},
 
-	renderNodeTable: function(subscription, healthByNodeId, activeSubscriptionId, activeNodeId) {
-		var nodes = sortNodesByAvailability(subscription, healthByNodeId, activeSubscriptionId, activeNodeId, this.sortByLastAvailability);
-		var speedTestBusy = this.speedTestBusy === true;
+	renderSummarySection: function(status, presentation) {
+		var connected = !!(status.state && status.state.connected === true);
+		var activeSubscription = status.active_subscription || {};
+		var activeNode = status.active_node || {};
+		var activeEntry = presentationForSubscription(activeSubscription, presentation);
+		var activeProvider = trim(activeSubscription.id) !== ''
+			? (activeEntry ? activeEntry.provider_title : providerTitle(activeSubscription))
+			: _('Not selected');
+		var activeProfile = trim(activeSubscription.id) !== ''
+			? (activeEntry ? activeEntry.profile_label : _('Profile 1'))
+			: _('Not selected');
+		var activeNodeName = nodeDisplayName(activeNode, _('Not selected'));
+
+		return E('div', { 'class': 'routeflux-overview-grid' }, [
+			this.renderCard(_('Connection'), connected ? _('Connected') : _('Disconnected'), {
+				'tone': routefluxUI.statusTone(connected),
+				'primary': true
+			}),
+			this.renderCard(_('Effective Mode'), firstNonEmpty([ status.state && status.state.mode ], _('disconnected'))),
+			this.renderCard(_('Active Provider'), activeProvider),
+			this.renderCard(_('Active Profile'), activeProfile),
+			this.renderCard(_('Active Node'), activeNodeName),
+			this.renderCard(_('Last Refresh'), routefluxUI.formatTimestamp(activeSubscription.last_updated_at) || _('Never'))
+		]);
+	},
+
+	renderPageActions: function(status, subscriptions, presentation) {
+		var connected = !!(status.state && status.state.connected === true);
+		var activeSubscriptionID = trim(status.active_subscription && status.active_subscription.id);
+		var currentSubscriptionID = activeSubscriptionID;
+		var options = [];
+
+		if (currentSubscriptionID === '' && subscriptions.length > 0)
+			currentSubscriptionID = trim(subscriptions[0].id);
+
+		for (var i = 0; i < subscriptions.length; i++) {
+			var sub = subscriptions[i];
+			var entry = presentationForSubscription(sub, presentation);
+			var label = entry
+				? entry.provider_title + ' / ' + entry.profile_label
+				: providerTitle(sub) + ' / ' + _('Profile 1');
+			var attrs = { 'value': trim(sub.id) };
+
+			if (trim(sub.id) === currentSubscriptionID)
+				attrs.selected = 'selected';
+
+			options.push(E('option', attrs, [ label ]));
+		}
+
+		return E('div', { 'class': 'cbi-section' }, [
+			E('h3', {}, [ _('Actions') ]),
+			E('div', { 'class': 'routeflux-actions' }, [
+				E('div', { 'class': 'cbi-value' }, [
+					E('label', { 'class': 'cbi-value-title', 'for': 'routeflux-subscription' }, [ _('Subscription') ]),
+					E('div', { 'class': 'cbi-value-field' }, [
+						E('select', {
+							'id': 'routeflux-subscription',
+							'disabled': subscriptions.length === 0 ? 'disabled' : null
+						}, options)
+					])
+				]),
+				E('button', {
+					'class': 'cbi-button cbi-button-apply',
+					'type': 'button',
+					'click': ui.createHandlerFn(this, 'handleConnectAuto', null),
+					'disabled': subscriptions.length === 0 ? 'disabled' : null
+				}, [ _('Connect Auto') ]),
+				E('button', {
+					'class': 'cbi-button cbi-button-action',
+					'type': 'button',
+					'click': ui.createHandlerFn(this, 'handleRefreshActive'),
+					'disabled': activeSubscriptionID === '' ? 'disabled' : null
+				}, [ _('Refresh Active') ]),
+				E('button', {
+					'class': 'cbi-button cbi-button-reset',
+					'type': 'button',
+					'click': ui.createHandlerFn(this, 'handleDisconnect'),
+					'disabled': connected ? null : 'disabled'
+				}, [ _('Disconnect') ])
+			])
+		]);
+	},
+
+	renderNodeTable: function(subscription, activeSubscriptionId, activeNodeId) {
+		var nodes = Array.isArray(subscription && subscription.nodes) ? subscription.nodes : [];
 
 		if (nodes.length === 0)
 			return E('p', {}, [ _('No nodes found in this subscription.') ]);
@@ -1213,26 +1027,14 @@ return view.extend({
 				responsiveTableCell(_('Address'), address, 'routeflux-node-cell-address'),
 				responsiveTableCell(_('Protocol'), firstNonEmpty([ node.protocol ], '-')),
 				responsiveTableCell(_('Transport'), firstNonEmpty([ node.transport ], '-')),
-				responsiveTableCell(_('Security'), firstNonEmpty([ node.security ], '-')),
 				responsiveTableCell(_('Actions'), [
-					E('div', { 'class': 'routeflux-node-actions-shell' }, [
-						E('div', { 'class': 'routeflux-node-actions' }, [
-							E('button', {
-								'class': 'cbi-button cbi-button-action',
-								'click': ui.createHandlerFn(this, 'handleConnectNode', subscription.id, node.id),
-								'disabled': nodeBusy ? 'disabled' : null
-							}, [ _('Connect') ]),
-							E('button', {
-								'class': 'cbi-button cbi-button-action',
-								'click': ui.createHandlerFn(this, 'handleInspectPreview', subscription.id, node),
-								'disabled': nodeBusy ? 'disabled' : null
-							}, [ _('JSON') ]),
-							E('button', {
-								'class': 'cbi-button cbi-button-action',
-								'click': ui.createHandlerFn(this, 'handleSpeedTest', subscription.id, node),
-								'disabled': nodeBusy || speedTestBusy ? 'disabled' : null
-							}, [ _('Speed Test') ])
-						])
+					E('div', { 'class': 'routeflux-node-actions' }, [
+						E('button', {
+							'class': 'cbi-button cbi-button-action',
+							'type': 'button',
+							'click': ui.createHandlerFn(this, 'handleConnectNode', subscription.id, node.id),
+							'disabled': nodeBusy ? 'disabled' : null
+						}, [ _('Connect') ])
 					]),
 					busyMessage !== '' ? E('div', { 'class': 'routeflux-action-status' }, [ busyMessage ]) : ''
 				], 'right routeflux-node-cell-actions')
@@ -1241,27 +1043,18 @@ return view.extend({
 
 		return E('div', { 'class': 'routeflux-node-table-wrap' }, [
 			E('table', { 'class': 'table cbi-section-table routeflux-node-table' }, [
-				E('colgroup', {}, [
-					E('col', { 'class': 'routeflux-node-col-name' }),
-					E('col', { 'class': 'routeflux-node-col-address' }),
-					E('col', { 'class': 'routeflux-node-col-protocol' }),
-					E('col', { 'class': 'routeflux-node-col-transport' }),
-					E('col', { 'class': 'routeflux-node-col-security' }),
-					E('col', { 'class': 'routeflux-node-col-actions' })
-				]),
 				E('tr', { 'class': 'tr cbi-section-table-titles' }, [
 					E('th', { 'class': 'th' }, [ _('Node') ]),
 					E('th', { 'class': 'th' }, [ _('Address') ]),
 					E('th', { 'class': 'th' }, [ _('Protocol') ]),
 					E('th', { 'class': 'th' }, [ _('Transport') ]),
-					E('th', { 'class': 'th' }, [ _('Security') ]),
 					E('th', { 'class': 'th right routeflux-node-heading-actions' }, [ _('Actions') ])
 				])
 			].concat(rows))
 		]);
 	},
 
-	renderSubscriptionCard: function(entry, healthByNodeId, activeSubscriptionId, activeNodeId) {
+	renderSubscriptionCard: function(entry, activeSubscriptionId, activeNodeId) {
 		var subscription = entry.subscription;
 		var displayName = entry.profile_label;
 		var providerName = entry.provider_title;
@@ -1273,7 +1066,6 @@ return view.extend({
 			[ _('ID'), subscription.id ],
 			[ _('Provider'), providerName ],
 			[ _('Profile'), displayName ],
-			[ _('Source Type'), firstNonEmpty([ subscription.source_type ], '-') ],
 			[ _('Updated'), routefluxUI.formatTimestamp(subscription.last_updated_at) || _('Never') ],
 			[ _('Remaining traffic'), renderTrafficSummary(subscription) ],
 			[ _('Expiration date'), routefluxUI.formatTimestamp(subscription.expires_at) || '-' ],
@@ -1286,32 +1078,34 @@ return view.extend({
 			]);
 		});
 
-		var headerNodes = [
-			E('div', { 'class': 'routeflux-subscription-title' }, [ displayName ])
+		var heading = [
+			E('div', { 'class': 'routeflux-subscription-title' }, [ displayName ]),
+			E('div', { 'class': 'routeflux-subscription-provider' }, [ providerName ])
 		];
 
-		headerNodes.push(E('div', { 'class': 'routeflux-subscription-provider' }, [ providerName ]));
-
 		if (isActive)
-			headerNodes.push(E('div', { 'class': 'routeflux-subscription-badges' }, [ badge(_('Active'), 'notice') ]));
+			heading.push(E('div', { 'class': 'routeflux-subscription-badges' }, [ badge(_('Active'), 'notice') ]));
 
 		return E('div', { 'class': 'cbi-section routeflux-subscription-card' }, [
 			E('div', { 'class': 'routeflux-subscription-header' }, [
-				E('div', { 'class': 'routeflux-subscription-heading' }, headerNodes),
+				E('div', { 'class': 'routeflux-subscription-heading' }, heading),
 				E('div', { 'class': 'routeflux-subscription-controls' }, [
 					E('div', { 'class': 'routeflux-subscription-actions' }, [
 						E('button', {
 							'class': 'cbi-button cbi-button-action',
+							'type': 'button',
 							'click': ui.createHandlerFn(this, 'handleRefreshSubscription', subscription.id),
 							'disabled': subscriptionBusy ? 'disabled' : null
 						}, [ _('Refresh') ]),
 						E('button', {
 							'class': 'cbi-button cbi-button-apply',
+							'type': 'button',
 							'click': ui.createHandlerFn(this, 'handleConnectAuto', subscription.id),
 							'disabled': subscriptionBusy ? 'disabled' : null
 						}, [ _('Connect Auto') ]),
 						E('button', {
 							'class': 'cbi-button cbi-button-negative',
+							'type': 'button',
 							'click': ui.createHandlerFn(this, 'handleRemoveSubscription', subscription.id, displayName),
 							'disabled': subscriptionBusy ? 'disabled' : null
 						}, [ _('Remove') ])
@@ -1330,15 +1124,13 @@ return view.extend({
 					this.handleSubscriptionToggle(subscription.id, ev);
 				}, this)
 			}, [
-				E('summary', {}, [
-					_('Nodes (%d)').format(nodesCount)
-				]),
-				this.renderNodeTable(subscription, healthByNodeId, activeSubscriptionId, activeNodeId)
+				E('summary', {}, [ _('Nodes (%d)').format(nodesCount) ]),
+				this.renderNodeTable(subscription, activeSubscriptionId, activeNodeId)
 			])
 		]);
 	},
 
-	renderProviderGroup: function(group, healthByNodeId, activeSubscriptionId, activeNodeId) {
+	renderProviderGroup: function(group, activeSubscriptionId, activeNodeId) {
 		var description = _('%d profile(s), %d node(s)').format(group.items.length, group.total_nodes);
 		var content = [
 			E('div', { 'class': 'routeflux-provider-group-header' }, [
@@ -1348,7 +1140,7 @@ return view.extend({
 		];
 
 		for (var i = 0; i < group.items.length; i++)
-			content.push(this.renderSubscriptionCard(group.items[i], healthByNodeId, activeSubscriptionId, activeNodeId));
+			content.push(this.renderSubscriptionCard(group.items[i], activeSubscriptionId, activeNodeId));
 
 		return E('div', { 'class': 'routeflux-provider-group' }, content);
 	},
@@ -1359,7 +1151,6 @@ return view.extend({
 		var presentation = buildSubscriptionPresentation(subscriptions);
 		var activeSubscriptionId = trim(status.active_subscription && status.active_subscription.id);
 		var activeNodeId = trim(status.active_node && status.active_node.id);
-		var healthByNodeId = (status.state && status.state.health) || {};
 		var addBusy = routefluxUI.isPendingAction(this, 'add');
 		var addBusyMessage = routefluxUI.pendingActionMessage(this, 'add');
 		var removeAllBusy = routefluxUI.isPendingAction(this, 'remove-all');
@@ -1371,6 +1162,9 @@ return view.extend({
 		content.push(routefluxUI.renderSharedStyles());
 		content.push(E('style', { 'type': 'text/css' }, [
 			'.routeflux-subscriptions-shell { width:100%; max-width:100%; min-width:0; box-sizing:border-box; }',
+			'.routeflux-actions { display:flex; flex-wrap:wrap; gap:10px; align-items:flex-end; margin-bottom:16px; }',
+			'.routeflux-actions > * { margin:0; }',
+			'.routeflux-actions .cbi-value { min-width:260px; }',
 			'.routeflux-subscription-card { margin-bottom:16px; }',
 			'.routeflux-subscription-header { display:grid; grid-template-columns:minmax(0, 1fr) auto; gap:14px 18px; align-items:start; margin-bottom:12px; }',
 			'.routeflux-subscription-heading { min-width:0; }',
@@ -1391,20 +1185,10 @@ return view.extend({
 			'.routeflux-traffic-meter-fill { height:100%; border-radius:inherit; background:linear-gradient(90deg, #22c55e 0%, #14b8a6 100%); }',
 			'.routeflux-traffic-shell-unlimited .routeflux-traffic-primary { color:#17603d; }',
 			'.routeflux-node-table-wrap { width:100%; max-width:100%; overflow-x:auto; -webkit-overflow-scrolling:touch; }',
-			'.routeflux-node-table { width:100%; min-width:920px; table-layout:fixed; }',
-			'.routeflux-node-col-name { width:18%; }',
-			'.routeflux-node-col-address { width:20%; }',
-			'.routeflux-node-col-protocol { width:9%; }',
-			'.routeflux-node-col-transport { width:9%; }',
-			'.routeflux-node-col-security { width:12%; }',
-			'.routeflux-node-col-actions { width:32%; }',
+			'.routeflux-node-table { width:100%; min-width:760px; table-layout:fixed; }',
 			'.routeflux-node-table .th, .routeflux-node-table .td { vertical-align:middle; overflow-wrap:anywhere; word-break:break-word; }',
 			'.routeflux-node-heading-actions { text-align:right; }',
-			'.routeflux-node-cell-actions { min-width:0; }',
-			'.routeflux-node-active-badge { margin-top:6px; }',
-			'.routeflux-node-actions-shell { width:100%; }',
-			'.routeflux-node-actions { display:flex; flex-wrap:nowrap; justify-content:flex-end; align-items:stretch; gap:8px; width:100%; }',
-			'.routeflux-node-actions .cbi-button { flex:1 1 0; min-width:0; text-align:center; }',
+			'.routeflux-node-actions { display:flex; justify-content:flex-end; }',
 			'.routeflux-action-status { margin-top:8px; color:var(--text-color-medium, #586677); font-size:12px; line-height:1.4; }',
 			'.routeflux-action-status-group { width:100%; text-align:right; }',
 			'.routeflux-page-status { margin-bottom:14px; }',
@@ -1416,36 +1200,20 @@ return view.extend({
 			'.routeflux-add-actions { display:flex; flex-wrap:wrap; gap:10px; }',
 			'.routeflux-add-grid .cbi-value-field, .routeflux-add-grid .cbi-input-text, .routeflux-add-grid .cbi-input-textarea { width:100%; max-width:100%; box-sizing:border-box; }',
 			'.routeflux-add-grid textarea { min-height:140px; width:100%; max-width:100%; }',
-			'.routeflux-sort-controls { margin-bottom:16px; }',
-			'.routeflux-sort-toggle { display:inline-flex; align-items:center; gap:8px; font-weight:600; cursor:pointer; }',
-			'.routeflux-sort-toggle input { margin:0; }',
-			'.routeflux-sort-help { margin:8px 0 0; color:var(--text-color-medium, #586677); line-height:1.45; }',
 			'.routeflux-node-details { margin-top:12px; }',
 			'.routeflux-node-details summary { cursor:pointer; margin-bottom:10px; }',
 			'.routeflux-provider-group { margin-bottom:22px; }',
 			'.routeflux-provider-group-header { display:grid; grid-template-columns:minmax(0, 1fr) auto; gap:8px 12px; align-items:end; margin:12px 0 8px; }',
 			'.routeflux-provider-group-title { font-size:clamp(20px, 1.3vw + 15px, 26px); font-weight:600; overflow-wrap:anywhere; word-break:break-word; }',
 			'.routeflux-provider-group-meta { color:var(--text-color-medium, #666); }',
-			'.modal.routeflux-modal-json { width:min(92vw, 980px); max-width:92vw; }',
-			'.modal.routeflux-modal-speedtest { width:min(92vw, 720px); max-width:92vw; overflow:hidden; }',
-			'.routeflux-modal-help { margin:0 0 12px; color:var(--text-color-medium, #586677); max-width:100%; overflow-wrap:anywhere; word-break:break-word; line-height:1.45; }',
-			'.routeflux-inspect-pre { white-space:pre-wrap; margin:0; max-height:56vh; max-width:100%; overflow:auto; padding:14px 16px; border:1px solid rgba(71, 85, 105, 0.82); border-radius:12px; background:linear-gradient(180deg, #09111d 0%, #0d1623 48%, #101a29 100%); color:#eef4fb; font-family:SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", monospace; font-size:13px; line-height:1.72; box-sizing:border-box; }',
-			'.routeflux-speedtest-status { margin:0; font-weight:600; }',
-			'.routeflux-speedtest-grid { display:grid; grid-template-columns:repeat(2, minmax(0, 1fr)); gap:10px; margin-top:12px; max-width:100%; min-width:0; align-items:stretch; }',
-			'.routeflux-speedtest-metric { min-width:0; width:100%; border:1px solid var(--border-color-medium); border-radius:12px; padding:10px 12px; background:linear-gradient(180deg, var(--background-color-high) 0%, var(--background-color-low) 100%); box-shadow:inset 0 1px 0 hsla(var(--background-color-high-hsl), 0.28); box-sizing:border-box; }',
-			'.routeflux-speedtest-label { color:var(--text-color-medium, #586677); font-size:10px; text-transform:uppercase; letter-spacing:.12em; font-weight:700; margin-bottom:4px; }',
-			'.routeflux-speedtest-value { color:var(--text-color-high, #17263a); font-size:15px; font-weight:700; line-height:1.3; overflow-wrap:anywhere; word-break:break-word; }',
-			'.routeflux-speedtest-subtle { font-size:14px; }',
-			'@media (min-width: 981px) { .routeflux-node-heading-actions, .routeflux-node-cell-actions { text-align:center !important; } .routeflux-node-actions-shell { display:block; width:min(100%, 320px); margin:0 auto; padding:8px 10px; border:1px solid var(--border-color-medium); border-radius:14px; background:linear-gradient(180deg, var(--background-color-high) 0%, var(--background-color-low) 100%); box-shadow:inset 0 1px 0 hsla(var(--background-color-high-hsl), 0.24), 0 0 0 1px hsla(var(--border-color-low-hsl), 0.25); } .routeflux-node-actions { display:grid; grid-template-columns:repeat(2, minmax(0, 1fr)); justify-content:center; gap:8px; width:100%; } .routeflux-node-actions .cbi-button { width:100%; min-width:0; } .routeflux-node-actions .cbi-button:last-child { grid-column:1 / -1; } }',
-			'@media (max-width: 980px) { .routeflux-subscription-header, .routeflux-provider-group-header, .routeflux-add-grid { grid-template-columns:minmax(0, 1fr); } .routeflux-subscription-controls { justify-items:stretch; min-width:0; } .routeflux-subscription-actions, .routeflux-node-actions { justify-content:flex-start; } .routeflux-action-status-group { text-align:left; } .routeflux-node-table { min-width:860px; } }',
-			'@media (max-width: 700px) { .routeflux-meta-table, .routeflux-meta-table .tr, .routeflux-meta-table .td { display:block; width:100%; box-sizing:border-box; } .routeflux-meta-table .tr { padding:10px 0; border-top:1px solid rgba(98, 112, 129, 0.22); } .routeflux-meta-table .tr:first-child { padding-top:0; border-top:0; } .routeflux-meta-label { width:100%; padding-bottom:4px; } .routeflux-meta-value { padding-top:0; } .routeflux-add-actions, .routeflux-page-status-actions { flex-direction:column; } .routeflux-add-actions .cbi-button, .routeflux-page-status-actions .cbi-button { width:100%; } .routeflux-speedtest-grid { grid-template-columns:minmax(0, 1fr); } }',
-			'@media (max-width: 560px) { .routeflux-subscription-actions, .routeflux-node-actions { flex-direction:column; align-items:stretch; } .routeflux-subscription-actions .cbi-button, .routeflux-node-actions .cbi-button { flex:1 1 auto; width:100%; } .routeflux-node-table, .routeflux-node-table .tr, .routeflux-node-table .td { display:block; width:100%; box-sizing:border-box; } .routeflux-node-table { min-width:0; } .routeflux-node-table .cbi-section-table-titles { display:none; } .routeflux-node-table .routeflux-node-row { margin-bottom:12px; padding:12px 14px; border:1px solid var(--border-color-medium); border-radius:12px; background:linear-gradient(180deg, var(--background-color-high) 0%, var(--background-color-low) 100%); box-shadow:0 8px 18px hsla(var(--border-color-low-hsl), 0.35), inset 0 1px 0 hsla(var(--background-color-high-hsl), 0.28); } .routeflux-node-table .routeflux-node-row:last-child { margin-bottom:0; } .routeflux-node-table .td { padding:8px 0; border-top:1px solid var(--border-color-low); text-align:left; } .routeflux-node-table .td:first-child { padding-top:0; border-top:0; } .routeflux-node-table .td:last-child { padding-bottom:0; } .routeflux-node-table .td::before { content:attr(data-title); display:block; margin-bottom:4px; color:var(--text-color-medium, #586677); font-size:10px; text-transform:uppercase; letter-spacing:.12em; font-weight:700; } .routeflux-node-cell-actions { min-width:0; } .routeflux-node-actions { width:100%; } .routeflux-action-status { margin-top:6px; } }',
-			'@media (max-width: 420px) { .modal.routeflux-modal-json, .modal.routeflux-modal-speedtest { width:min(96vw, 96vw); max-width:96vw; } .routeflux-inspect-pre { font-size:12px; padding:12px; } }'
+			'@media (max-width: 980px) { .routeflux-subscription-header, .routeflux-provider-group-header, .routeflux-add-grid { grid-template-columns:minmax(0, 1fr); } .routeflux-subscription-controls { justify-items:stretch; min-width:0; } .routeflux-subscription-actions, .routeflux-node-actions { justify-content:flex-start; } .routeflux-action-status-group { text-align:left; } }',
+			'@media (max-width: 700px) { .routeflux-actions, .routeflux-add-actions, .routeflux-page-status-actions { flex-direction:column; } .routeflux-actions .cbi-button, .routeflux-add-actions .cbi-button, .routeflux-page-status-actions .cbi-button { width:100%; } .routeflux-meta-table, .routeflux-meta-table .tr, .routeflux-meta-table .td { display:block; width:100%; box-sizing:border-box; } .routeflux-meta-table .tr { padding:10px 0; border-top:1px solid rgba(98, 112, 129, 0.22); } .routeflux-meta-table .tr:first-child { padding-top:0; border-top:0; } .routeflux-meta-label { width:100%; padding-bottom:4px; } .routeflux-meta-value { padding-top:0; } }',
+			'@media (max-width: 560px) { .routeflux-subscription-actions, .routeflux-node-actions { flex-direction:column; align-items:stretch; } .routeflux-subscription-actions .cbi-button, .routeflux-node-actions .cbi-button { width:100%; } .routeflux-node-table, .routeflux-node-table .tr, .routeflux-node-table .td { display:block; width:100%; box-sizing:border-box; } .routeflux-node-table { min-width:0; } .routeflux-node-table .cbi-section-table-titles { display:none; } .routeflux-node-table .routeflux-node-row { margin-bottom:12px; padding:12px 14px; border:1px solid var(--border-color-medium); border-radius:12px; background:linear-gradient(180deg, var(--background-color-high) 0%, var(--background-color-low) 100%); box-shadow:0 8px 18px hsla(var(--border-color-low-hsl), 0.35), inset 0 1px 0 hsla(var(--background-color-high-hsl), 0.28); } .routeflux-node-table .routeflux-node-row:last-child { margin-bottom:0; } .routeflux-node-table .td { padding:8px 0; border-top:1px solid var(--border-color-low); text-align:left; } .routeflux-node-table .td:first-child { padding-top:0; border-top:0; } .routeflux-node-table .td:last-child { padding-bottom:0; } .routeflux-node-table .td::before { content:attr(data-title); display:block; margin-bottom:4px; color:var(--text-color-medium, #586677); font-size:10px; text-transform:uppercase; letter-spacing:.12em; font-weight:700; } }'
 		]));
 
 		content.push(E('h2', {}, [ _('RouteFlux - Subscriptions') ]));
 		content.push(E('p', { 'class': 'cbi-section-descr' }, [
-			_('Manage imported subscriptions, add new providers, refresh existing profiles, remove one or all profiles, and connect a specific node or the best node automatically.')
+			_('RouteFlux status, the active connection, and the basic subscription actions you need every day.')
 		]));
 
 		if (this.pageInfo !== '' || this.pageError !== '') {
@@ -1455,6 +1223,7 @@ return view.extend({
 				this.pageError !== '' ? E('div', { 'class': 'routeflux-page-status-actions' }, [
 					E('button', {
 						'class': 'cbi-button',
+						'type': 'button',
 						'click': ui.createHandlerFn(this, function() {
 							return this.refreshPageContent({
 								'showLoading': true,
@@ -1465,6 +1234,9 @@ return view.extend({
 				]) : ''
 			]));
 		}
+
+		content.push(this.renderSummarySection(status, presentation));
+		content.push(this.renderPageActions(status, subscriptions, presentation));
 
 		content.push(E('div', { 'class': 'cbi-section' }, [
 			E('h3', {}, [ _('Add Subscription') ]),
@@ -1501,11 +1273,13 @@ return view.extend({
 			E('div', { 'class': 'routeflux-add-actions' }, [
 				E('button', {
 					'class': 'cbi-button cbi-button-apply',
+					'type': 'button',
 					'click': ui.createHandlerFn(this, 'handleAdd'),
 					'disabled': addBusy ? 'disabled' : null
 				}, [ _('Add Subscription') ]),
 				E('button', {
 					'class': 'cbi-button cbi-button-negative',
+					'type': 'button',
 					'click': ui.createHandlerFn(this, 'handleRemoveAll'),
 					'disabled': subscriptions.length === 0 || removeAllBusy ? 'disabled' : null
 				}, [ _('Remove All') ])
@@ -1521,24 +1295,8 @@ return view.extend({
 			return content;
 		}
 
-		content.push(E('div', { 'class': 'cbi-section routeflux-sort-controls' }, [
-			E('h3', {}, [ _('Display Options') ]),
-			E('label', { 'class': 'routeflux-sort-toggle', 'for': 'routeflux-sort-by-availability' }, [
-				E('input', {
-					'id': 'routeflux-sort-by-availability',
-					'type': 'checkbox',
-					'checked': this.sortByLastAvailability ? 'checked' : null,
-					'change': ui.createHandlerFn(this, 'handleSortByAvailabilityToggle')
-				}),
-				E('span', {}, [ _('Sort by last availability') ])
-			]),
-			E('p', { 'class': 'routeflux-sort-help' }, [
-				_('Uses the last saved availability score. Untested nodes stay at the end. Scores are not shown in the table.')
-			])
-		]));
-
 		for (var i = 0; i < presentation.groups.length; i++)
-			content.push(this.renderProviderGroup(presentation.groups[i], healthByNodeId, activeSubscriptionId, activeNodeId));
+			content.push(this.renderProviderGroup(presentation.groups[i], activeSubscriptionId, activeNodeId));
 
 		return content;
 	},

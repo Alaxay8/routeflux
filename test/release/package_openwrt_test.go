@@ -24,6 +24,8 @@ func TestPackageOpenWrtFallsBackToTarWhenBSDTarMissing(t *testing.T) {
 	writeFile(t, filepath.Join(repoDir, "luci-app-routeflux", "root", "usr", "share", "luci", "menu.d", "luci-app-routeflux.json"), "{}\n", 0o644)
 	writeFile(t, filepath.Join(repoDir, "luci-app-routeflux", "root", "usr", "share", "rpcd", "acl.d", "luci-app-routeflux.json"), "{}\n", 0o644)
 	writeFile(t, filepath.Join(repoDir, "luci-app-routeflux", "htdocs", "luci-static", "resources", "routeflux", "ui.js"), "'use strict';\n", 0o644)
+	writeFile(t, filepath.Join(repoDir, "luci-app-routeflux", "htdocs", "luci-static", "resources", "view", "routeflux", "subscriptions.js"), "'use strict';\n", 0o644)
+	writeFile(t, filepath.Join(repoDir, "luci-app-routeflux", "htdocs", "luci-static", "resources", "view", "routeflux", "firewall.js"), "'use strict';\n", 0o644)
 	writeFile(t, filepath.Join(repoDir, "luci-app-routeflux", "htdocs", "luci-static", "resources", "view", "routeflux", "overview.js"), "'use strict';\n", 0o644)
 
 	toolDir := t.TempDir()
@@ -59,6 +61,15 @@ func TestPackageOpenWrtFallsBackToTarWhenBSDTarMissing(t *testing.T) {
 	if _, err := os.Stat(filepath.Join(repoDir, "dist", "routeflux-ipk", "data", "www", "luci-static", "resources", "routeflux", "ui.js")); err != nil {
 		t.Fatalf("expected shared routeflux ui helper in package data: %v", err)
 	}
+	if _, err := os.Stat(filepath.Join(repoDir, "dist", "routeflux-ipk", "data", "www", "luci-static", "resources", "view", "routeflux", "subscriptions.js")); err != nil {
+		t.Fatalf("expected subscriptions view in package data: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(repoDir, "dist", "routeflux-ipk", "data", "www", "luci-static", "resources", "view", "routeflux", "firewall.js")); err != nil {
+		t.Fatalf("expected routing view in package data: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(repoDir, "dist", "routeflux-ipk", "data", "www", "luci-static", "resources", "view", "routeflux", "overview.js")); !os.IsNotExist(err) {
+		t.Fatalf("expected obsolete overview view to stay out of package data, got err=%v", err)
+	}
 	if _, err := os.Stat(filepath.Join(repoDir, "dist", "routeflux-ipk", "data", "usr", "libexec", "routeflux-cron")); err != nil {
 		t.Fatalf("expected cron helper in package data: %v", err)
 	}
@@ -73,6 +84,13 @@ func TestPackageOpenWrtFallsBackToTarWhenBSDTarMissing(t *testing.T) {
 		"/etc/routeflux/speedtest.lock",
 		"find /etc/routeflux -maxdepth 1 -type f -name '*.corrupt-*' -exec chmod 0600 {} \\;",
 		"/etc/xray/config.json.last-known-good",
+		"/www/luci-static/resources/view/routeflux/overview.js",
+		"/www/luci-static/resources/view/routeflux/dns.js",
+		"/www/luci-static/resources/view/routeflux/settings.js",
+		"/www/luci-static/resources/view/routeflux/diagnostics.js",
+		"/www/luci-static/resources/view/routeflux/logs.js",
+		"/www/luci-static/resources/view/routeflux/services.js",
+		"/www/luci-static/resources/view/routeflux/about.js",
 	} {
 		if !strings.Contains(string(postinst), want) {
 			t.Fatalf("expected generated postinst to contain %q, got:\n%s", want, postinst)

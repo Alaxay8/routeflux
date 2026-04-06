@@ -115,15 +115,89 @@ func (h *openWRTHarness) AssertLuCISubscriptionsPage(ctx context.Context, expect
 	return nil
 }
 
+func (h *openWRTHarness) AssertLuCIRoutingPage(ctx context.Context, expectedTexts ...string) error {
+	browserPath, err := lookupBrowserBinary()
+	if err != nil {
+		return err
+	}
+
+	allocatorOptions := append(chromedp.DefaultExecAllocatorOptions[:],
+		chromedp.ExecPath(browserPath),
+		chromedp.Flag("headless", true),
+		chromedp.Flag("disable-gpu", true),
+		chromedp.Flag("no-sandbox", true),
+		chromedp.Flag("disable-dev-shm-usage", true),
+	)
+
+	allocCtx, cancelAlloc := chromedp.NewExecAllocator(ctx, allocatorOptions...)
+	defer cancelAlloc()
+
+	browserCtx, cancelBrowser := chromedp.NewContext(allocCtx)
+	defer cancelBrowser()
+
+	smokeCtx, cancelSmoke := context.WithTimeout(browserCtx, 90*time.Second)
+	defer cancelSmoke()
+
+	luciClient, sessionCookies, err := h.openLuCISession(smokeCtx)
+	if err != nil {
+		return err
+	}
+	if err := h.waitForLuCIRoutePage(smokeCtx, luciClient); err != nil {
+		return err
+	}
+
+	var runtimeErrors []string
+	var runtimeMu sync.Mutex
+	chromedp.ListenTarget(smokeCtx, func(ev any) {
+		switch e := ev.(type) {
+		case *runtime.EventExceptionThrown:
+			details := ""
+			if e.ExceptionDetails.Exception != nil {
+				details = strings.TrimSpace(e.ExceptionDetails.Exception.Description)
+			}
+			if details == "" {
+				details = strings.TrimSpace(e.ExceptionDetails.Text)
+			}
+			if details == "" {
+				details = "unknown JavaScript exception"
+			}
+			runtimeMu.Lock()
+			runtimeErrors = append(runtimeErrors, details)
+			runtimeMu.Unlock()
+		}
+	})
+
+	var snapshot luciPageSnapshot
+	if err := chromedp.Run(smokeCtx,
+		runtime.Enable(),
+		network.Enable(),
+		setBrowserCookies(h.luciURL("/cgi-bin/luci/"), sessionCookies),
+		chromedp.Navigate(h.luciURL("/cgi-bin/luci/admin/services/routeflux/firewall")),
+		chromedp.WaitReady(`body`, chromedp.ByQuery),
+		waitForRenderedRoutingPage(expectedTexts, &snapshot),
+	); err != nil {
+		return fmt.Errorf("browser smoke routing page: %w", err)
+	}
+
+	runtimeMu.Lock()
+	defer runtimeMu.Unlock()
+	if len(runtimeErrors) > 0 {
+		return fmt.Errorf("browser runtime exception: %s", runtimeErrors[0])
+	}
+
+	return nil
+}
+
 type luciPageSnapshot struct {
-	BodyHTML     string `json:"bodyHTML"`
-	BodyText     string `json:"bodyText"`
-	HasAddSource bool   `json:"hasAddSource"`
-	HasLoginForm bool   `json:"hasLoginForm"`
-	HasRoot      bool   `json:"hasRoot"`
-	PageError    string `json:"pageError"`
-	Title        string `json:"title"`
-	URL          string `json:"url"`
+	BodyHTML       string `json:"bodyHTML"`
+	BodyText       string `json:"bodyText"`
+	HasAddSource   bool   `json:"hasAddSource"`
+	HasLoginForm   bool   `json:"hasLoginForm"`
+	HasRoutingRoot bool   `json:"hasRoutingRoot"`
+	HasRoot        bool   `json:"hasRoot"`
+	PageError      string `json:"pageError"`
+	Title          string `json:"title"`
+	URL            string `json:"url"`
 }
 
 func (h *openWRTHarness) openLuCISession(ctx context.Context) (*http.Client, []*http.Cookie, error) {
@@ -326,6 +400,68 @@ func waitForRenderedSubscriptionsPage(expectedTexts []string, snapshot *luciPage
 	})
 }
 
+func waitForRenderedRoutingPage(expectedTexts []string, snapshot *luciPageSnapshot) chromedp.Action {
+	return chromedp.ActionFunc(func(ctx context.Context) error {
+		var last luciPageSnapshot
+		var lastErr error
+		var readySince time.Time
+		ticker := time.NewTicker(500 * time.Millisecond)
+		defer ticker.Stop()
+
+		for {
+			current := luciPageSnapshot{}
+			if err := captureLuCIPageSnapshot(&current).Do(ctx); err != nil {
+				lastErr = err
+			} else {
+				last = current
+				lastErr = nil
+				if current.HasLoginForm {
+					return fmt.Errorf("browser returned to LuCI login page: url=%s title=%q", current.URL, current.Title)
+				}
+				if current.PageError != "" {
+					return fmt.Errorf("routing page error: %s", summarizeForError(current.PageError, 240))
+				}
+				if current.HasRoutingRoot && containsAllText(current.BodyText, expectedTexts) {
+					if snapshot != nil {
+						*snapshot = current
+					}
+					return nil
+				}
+				if current.HasRoutingRoot {
+					if readySince.IsZero() {
+						readySince = time.Now()
+					}
+					if time.Since(readySince) >= 10*time.Second {
+						return fmt.Errorf("routing page rendered but missing expected text %v; url=%s title=%q body=%q", missingText(current.BodyText, expectedTexts), current.URL, current.Title, summarizeForError(current.BodyText, 320))
+					}
+				} else {
+					readySince = time.Time{}
+				}
+			}
+
+			select {
+			case <-ctx.Done():
+				parts := []string{fmt.Sprintf("wait for rendered routing page: %v", ctx.Err())}
+				if lastErr != nil {
+					parts = append(parts, fmt.Sprintf("last snapshot error=%v", lastErr))
+				}
+				if last.URL != "" {
+					parts = append(parts, fmt.Sprintf("last url=%s", last.URL))
+				}
+				if last.Title != "" {
+					parts = append(parts, fmt.Sprintf("last title=%q", last.Title))
+				}
+				parts = append(parts,
+					fmt.Sprintf("hasRoutingRoot=%t", last.HasRoutingRoot),
+					fmt.Sprintf("body=%q", summarizeForError(last.BodyText, 320)),
+				)
+				return fmt.Errorf("%s", strings.Join(parts, "; "))
+			case <-ticker.C:
+			}
+		}
+	})
+}
+
 func (h *openWRTHarness) luciURL(path string) string {
 	return fmt.Sprintf("http://127.0.0.1:%d%s", h.httpPort, path)
 }
@@ -390,6 +526,7 @@ func captureLuCIPageSnapshot(snapshot *luciPageSnapshot) chromedp.Action {
 			bodyText: body ? body.innerText : '',
 			hasAddSource: !!document.querySelector('#routeflux-add-source'),
 			hasLoginForm: !!document.querySelector('#luci_password'),
+			hasRoutingRoot: !!document.querySelector('#routeflux-routing-root'),
 			hasRoot: !!document.querySelector('#routeflux-subscriptions-root'),
 			pageError: pageError ? pageError.innerText.trim() : '',
 			title: document.title || '',
