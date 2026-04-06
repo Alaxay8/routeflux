@@ -12,7 +12,8 @@
 		},
 		"write": {
 			"file": {
-				"/usr/bin/routeflux *": [ "exec" ]
+				"/usr/bin/routeflux *": [ "exec" ],
+				"/usr/libexec/routeflux-self-update": [ "exec" ]
 			}
 		}
 	}

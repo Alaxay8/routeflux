@@ -5,7 +5,7 @@
 'require routeflux.ui as routefluxUI';
 
 var routefluxBinary = '/usr/bin/routeflux';
-var latestInstallCommand = 'wget -O /tmp/routeflux-install.sh "https://github.com/Alaxay8/routeflux/releases/latest/download/install.sh" && sh /tmp/routeflux-install.sh';
+var routefluxSelfUpdateHelper = '/usr/libexec/routeflux-self-update';
 var whatsNewEntries = [
 	{
 		kind: _('New'),
@@ -89,8 +89,8 @@ return view.extend({
 		});
 	},
 
-	execShell: function(command) {
-		return fs.exec('/bin/sh', [ '-c', command ]).then(function(res) {
+	execHelper: function(command, argv) {
+		return fs.exec(command, argv || []).then(function(res) {
 			var stderr = trim(res.stderr);
 			var stdout = trim(res.stdout);
 
@@ -111,7 +111,7 @@ return view.extend({
 		if (!window.confirm(_('Download the latest RouteFlux release and install it over the current router version? Existing /etc/routeflux state is preserved by the installer.')))
 			return Promise.resolve();
 
-		return this.execShell(latestInstallCommand).then(function(res) {
+		return this.execHelper(routefluxSelfUpdateHelper).then(function(res) {
 			ui.addNotification(null, notificationParagraph(res.stdout || _('Upgrade completed. Reloading the page...')), 'info');
 			window.setTimeout(function() {
 				window.location.reload();

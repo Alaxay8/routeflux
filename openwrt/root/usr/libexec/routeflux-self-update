@@ -1,0 +1,4 @@
+#!/bin/sh
+set -eu
+
+wget -O /tmp/routeflux-install.sh "https://github.com/Alaxay8/routeflux/releases/latest/download/install.sh" && sh /tmp/routeflux-install.sh
