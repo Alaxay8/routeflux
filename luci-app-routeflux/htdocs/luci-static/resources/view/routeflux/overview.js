@@ -425,9 +425,15 @@ return view.extend({
 		var presentation = buildSubscriptionPresentation(subscriptions);
 		var activeSubscription = status.active_subscription || {};
 		var activeNode = status.active_node || {};
+		var zapret = status.zapret || {};
+		var state = status.state || {};
 		var settings = status.settings || {};
 		var firewall = settings.firewall || {};
 		var dns = settings.dns || {};
+		var activeTransport = firstNonEmpty([
+			status.active_transport,
+			status.state && status.state.active_transport
+		], 'direct');
 		var firewallMode = 'disabled';
 		var explicitFirewallMode = trim(firewall.mode);
 		var hasTargets = (firewall.targets && Array.isArray(firewall.targets.services) && firewall.targets.services.length > 0) ||
@@ -462,7 +468,7 @@ return view.extend({
 				firewallMode = 'enabled';
 		}
 
-		var connected = status.state && status.state.connected === true;
+		var connected = state.connected === true;
 		var activeEntry = presentationForSubscription(activeSubscription, presentation);
 		var provider = trim(activeSubscription.id) !== ''
 			? (activeEntry ? activeEntry.provider_title : providerTitle(activeSubscription))
@@ -506,7 +512,8 @@ return view.extend({
 					'tone': routefluxUI.statusTone(connected),
 					'primary': true
 				}),
-				this.renderCard(_('Mode'), firstNonEmpty([ status.state && status.state.mode ], _('disconnected'))),
+				this.renderCard(_('Mode'), firstNonEmpty([ state.mode ], _('disconnected'))),
+				this.renderCard(_('Transport'), activeTransport),
 				this.renderCard(_('Provider'), provider),
 				this.renderCard(_('Profile'), profile),
 				this.renderCard(_('Node'), nodeName),
@@ -553,6 +560,23 @@ return view.extend({
 			content.push(E('div', { 'class': 'cbi-section' }, [
 				E('h3', {}, [ _('Last Error') ]),
 				E('div', { 'class': 'alert-message warning' }, [ activeSubscription.last_error ])
+			]));
+		}
+
+		if (activeTransport === 'zapret') {
+			content.push(E('div', { 'class': 'cbi-section' }, [
+				E('div', { 'class': 'alert-message notice' }, [
+					E('strong', {}, [ _('Zapret fallback is active.') ]),
+					E('div', {}, [
+						_('Monitored subscription: %s').format(provider + ' / ' + profile)
+					]),
+					E('div', {}, [
+						_('Reason: %s').format(firstNonEmpty([ state.last_failure_reason, zapret.last_reason ], _('No failure reason recorded.')))
+					]),
+					E('div', {}, [
+						_('Zapret service state: %s').format(firstNonEmpty([ zapret.service_state ], _('unknown')))
+					])
+				])
 			]));
 		}
 

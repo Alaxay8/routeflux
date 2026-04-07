@@ -4,7 +4,7 @@
 		"order": 60,
 		"action": {
 			"type": "alias",
-			"path": "admin/services/routeflux/subscriptions"
+			"path": "admin/services/routeflux/firewall"
 		},
 		"depends": {
 			"fs": {
@@ -28,9 +28,25 @@
 			"path": "routeflux/firewall"
 		}
 	},
+	"admin/services/routeflux/zapret": {
+		"title": "Zapret",
+		"order": 30,
+		"action": {
+			"type": "view",
+			"path": "routeflux/zapret"
+		}
+	},
+	"admin/services/routeflux/diagnostics": {
+		"title": "Diagnostics",
+		"order": 40,
+		"action": {
+			"type": "view",
+			"path": "routeflux/diagnostics"
+		}
+	},
 	"admin/services/routeflux/about": {
 		"title": "About",
-		"order": 30,
+		"order": 50,
 		"action": {
 			"type": "view",
 			"path": "routeflux/about"

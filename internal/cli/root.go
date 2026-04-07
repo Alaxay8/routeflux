@@ -81,6 +81,7 @@ func newRootCmd() *cobra.Command {
 		newServicesCmd(opts),
 		newStatusCmd(opts),
 		newSettingsCmd(opts),
+		newZapretCmd(opts),
 		newTUICmd(opts),
 		newVersionCmd(opts),
 	)
@@ -118,12 +119,14 @@ func (o *rootOptions) initService() error {
 	controller := openwrt.NewXrayController()
 	firewall := openwrt.NewFirewallManager()
 	ipv6Manager := openwrt.NewIPv6Manager()
+	zapretManager := openwrt.NewZapretManager()
 	var runtimeBackend backend.Backend = xray.NewRuntimeBackend(configPath, controller).WithLogger(logger)
 	o.service = app.NewService(app.Dependencies{
 		Store:              fileStore,
 		Backend:            runtimeBackend,
 		Firewaller:         firewall,
 		IPv6Manager:        ipv6Manager,
+		ZapretManager:      zapretManager,
 		HTTPClient:         &http.Client{Timeout: 20 * time.Second},
 		Checker:            probe.TCPChecker{Timeout: 5 * time.Second},
 		RuntimeEgressProbe: openwrt.IsOpenWrt(),

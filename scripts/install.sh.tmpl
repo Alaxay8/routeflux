@@ -10,12 +10,20 @@ ROUTEFLUX_INSTALL_ROOT="${ROUTEFLUX_INSTALL_ROOT:-/}"
 ROUTEFLUX_ARCH_OVERRIDE="${ROUTEFLUX_ARCH:-}"
 ROUTEFLUX_XRAY_BINARY_PATH="${ROUTEFLUX_XRAY_BINARY:-}"
 ROUTEFLUX_XRAY_SERVICE_PATH="${ROUTEFLUX_XRAY_SERVICE:-}"
+ROUTEFLUX_INSTALL_DEPS="${ROUTEFLUX_INSTALL_DEPS:-1}"
+ROUTEFLUX_INSTALL_ZAPRET="${ROUTEFLUX_INSTALL_ZAPRET:-1}"
+ROUTEFLUX_ZAPRET_REPO_OWNER="${ROUTEFLUX_ZAPRET_REPO_OWNER:-remittor}"
+ROUTEFLUX_ZAPRET_REPO_NAME="${ROUTEFLUX_ZAPRET_REPO_NAME:-zapret-openwrt}"
+ROUTEFLUX_ZAPRET_RELEASE_BASE_URL="${ROUTEFLUX_ZAPRET_RELEASE_BASE_URL:-}"
+ROUTEFLUX_ZAPRET_VERSION="${ROUTEFLUX_ZAPRET_VERSION:-latest}"
 ROUTEFLUX_DRY_RUN=0
+ROUTEFLUX_OPKG_UPDATED=0
+ROUTEFLUX_INSTALL_MANIFEST_TMP="${ROUTEFLUX_INSTALL_MANIFEST_TMP:-}"
 
 usage() {
 	printf '%s\n' "RouteFlux OpenWrt installer"
 	printf '%s\n' ""
-	printf '%s\n' "Usage: install.sh [--version <version>] [--arch <arch>] [--base-url <url>] [--install-root <path>] [--dry-run]"
+	printf '%s\n' "Usage: install.sh [--version <version>] [--arch <arch>] [--base-url <url>] [--install-root <path>] [--dry-run] [--without-deps] [--without-zapret] [--zapret-version <version>]"
 }
 
 log() {
@@ -67,8 +75,60 @@ routeflux_cron_helper_path() {
 	root_path "usr/libexec/routeflux-cron"
 }
 
+install_manifest_path() {
+	root_path "etc/routeflux/install-manifest.txt"
+}
+
 xray_config_path() {
 	root_path "etc/xray/config.json"
+}
+
+record_manifest_entry() {
+	kind="$1"
+	value="$2"
+
+	[ -n "${ROUTEFLUX_INSTALL_MANIFEST_TMP}" ] || return 0
+	[ -n "${value}" ] || return 0
+
+	mkdir -p "$(dirname "${ROUTEFLUX_INSTALL_MANIFEST_TMP}")"
+	if [ -f "${ROUTEFLUX_INSTALL_MANIFEST_TMP}" ] && grep -Fqx "${kind}=${value}" "${ROUTEFLUX_INSTALL_MANIFEST_TMP}" 2>/dev/null; then
+		return 0
+	fi
+
+	printf '%s=%s\n' "${kind}" "${value}" >> "${ROUTEFLUX_INSTALL_MANIFEST_TMP}"
+}
+
+record_installed_pkg() {
+	record_manifest_entry "pkg" "$1"
+}
+
+record_restore_pkg() {
+	record_manifest_entry "restore" "$1"
+}
+
+record_installed_ipk_packages() {
+	for ipk in "$@"; do
+		base="$(basename "${ipk}" .ipk)"
+		pkg="${base%%_*}"
+		[ -n "${pkg}" ] || continue
+		record_installed_pkg "${pkg}"
+	done
+}
+
+persist_install_manifest() {
+	destination="$(install_manifest_path)"
+
+	if [ -z "${ROUTEFLUX_INSTALL_MANIFEST_TMP}" ] || [ ! -f "${ROUTEFLUX_INSTALL_MANIFEST_TMP}" ]; then
+		remove_path="${destination}"
+		if [ -f "${remove_path}" ]; then
+			rm -f "${remove_path}"
+		fi
+		return 0
+	fi
+
+	mkdir -p "$(dirname "${destination}")"
+	cp "${ROUTEFLUX_INSTALL_MANIFEST_TMP}" "${destination}"
+	chmod 0600 "${destination}" >/dev/null 2>&1 || true
 }
 
 chmod_if_exists() {
@@ -199,6 +259,237 @@ xray_is_ready() {
 	[ -x "$(xray_binary_path)" ] && [ -x "$(service_path xray)" ]
 }
 
+zapret_is_ready() {
+	[ -x "$(service_path zapret)" ]
+}
+
+stabilize_zapret_service() {
+	if ! zapret_is_ready; then
+		return 0
+	fi
+
+	if run_service_if_present zapret stop; then
+		log "Stopped Zapret service so RouteFlux can manage it"
+	fi
+	if run_service_if_present zapret disable; then
+		log "Disabled Zapret autostart so RouteFlux can manage it"
+	fi
+}
+
+download_stdout() {
+	url="$1"
+
+	if command_exists wget; then
+		wget -qO- "${url}"
+		return 0
+	fi
+
+	if command_exists curl; then
+		curl -fsSL "${url}"
+		return 0
+	fi
+
+	die "wget or curl is required to download release assets"
+}
+
+opkg_available() {
+	command_exists opkg
+}
+
+opkg_update_once() {
+	opkg_available || return 0
+	if [ "${ROUTEFLUX_OPKG_UPDATED}" = "1" ]; then
+		return 0
+	fi
+
+	log "Updating opkg package lists"
+	opkg update
+	ROUTEFLUX_OPKG_UPDATED=1
+}
+
+opkg_is_installed() {
+	pkg="$1"
+	opkg_available || return 1
+	opkg list-installed "${pkg}" 2>/dev/null | grep -Fq "${pkg} -"
+}
+
+ensure_opkg_package() {
+	pkg="$1"
+	reason="$2"
+
+	if ! opkg_available; then
+		warn "opkg is unavailable, cannot install ${pkg} (${reason})"
+		return 0
+	fi
+
+	if opkg_is_installed "${pkg}"; then
+		log "Detected ${pkg}"
+		return 0
+	fi
+
+	opkg_update_once
+	log "Installing ${pkg} (${reason})"
+	opkg install "${pkg}"
+	record_installed_pkg "${pkg}"
+}
+
+ensure_download_client() {
+	if command_exists wget || command_exists curl; then
+		log "Detected existing download client"
+		return 0
+	fi
+
+	if ! opkg_available; then
+		die "wget or curl is required to download release assets"
+	fi
+
+	ensure_opkg_package curl "required to download release assets"
+	if command_exists wget || command_exists curl; then
+		return 0
+	fi
+
+	ensure_opkg_package wget-ssl "required to download release assets"
+	if command_exists wget || command_exists curl; then
+		return 0
+	fi
+
+	die "wget or curl is required to download release assets"
+}
+
+ensure_dnsmasq_full() {
+	if ! opkg_available; then
+		warn "opkg is unavailable, cannot ensure dnsmasq-full"
+		return 0
+	fi
+
+	if opkg_is_installed dnsmasq-full; then
+		log "Detected dnsmasq-full"
+		return 0
+	fi
+
+	had_dnsmasq=0
+	if opkg_is_installed dnsmasq; then
+		had_dnsmasq=1
+	fi
+
+	opkg_update_once
+	log "Installing dnsmasq-full (required for RouteFlux domain selectors and nftset integration)"
+	if opkg install dnsmasq-full; then
+		record_installed_pkg dnsmasq-full
+		if [ "${had_dnsmasq}" = "1" ]; then
+			record_restore_pkg dnsmasq
+		fi
+		return 0
+	fi
+
+	if [ "${had_dnsmasq}" = "1" ]; then
+		warn "Replacing dnsmasq with dnsmasq-full"
+		record_restore_pkg dnsmasq
+		opkg remove dnsmasq || true
+		opkg install dnsmasq-full
+		record_installed_pkg dnsmasq-full
+		return 0
+	fi
+
+	die "failed to install dnsmasq-full"
+}
+
+ensure_openwrt_dependencies() {
+	if [ "${ROUTEFLUX_INSTALL_DEPS}" != "1" ]; then
+		log "Skipping OpenWrt dependency installation"
+		return 0
+	fi
+
+	if ! opkg_available; then
+		warn "opkg not found, skipping OpenWrt dependency installation"
+		return 0
+	fi
+
+	ensure_opkg_package ca-bundle "TLS certificate store for HTTPS downloads"
+	ensure_download_client
+	ensure_opkg_package nftables "required for RouteFlux transparent routing"
+	ensure_opkg_package kmod-nft-tproxy "required for UDP transparent proxy routing"
+	ensure_dnsmasq_full
+}
+
+resolve_zapret_version() {
+	if [ "${ROUTEFLUX_ZAPRET_VERSION}" != "latest" ]; then
+		case "${ROUTEFLUX_ZAPRET_VERSION}" in
+			v*)
+				printf '%s\n' "${ROUTEFLUX_ZAPRET_VERSION}"
+				;;
+			*)
+				printf 'v%s\n' "${ROUTEFLUX_ZAPRET_VERSION}"
+				;;
+		esac
+		return 0
+	fi
+
+	api_url="https://api.github.com/repos/${ROUTEFLUX_ZAPRET_REPO_OWNER}/${ROUTEFLUX_ZAPRET_REPO_NAME}/releases/latest"
+	tag="$(download_stdout "${api_url}" | sed -n 's/.*"tag_name"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' | head -n 1)"
+	[ -n "${tag}" ] || die "failed to resolve the latest zapret-openwrt release tag"
+	printf '%s\n' "${tag}"
+}
+
+install_zapret_bundle() {
+	resolved_arch="$1"
+	tmp_dir="$2"
+
+	if [ "${ROUTEFLUX_INSTALL_ZAPRET}" != "1" ]; then
+		log "Skipping Zapret installation"
+		return 0
+	fi
+
+	if zapret_is_ready; then
+		log "Detected existing Zapret runtime"
+		stabilize_zapret_service
+		return 0
+	fi
+
+	if ! opkg_available; then
+		warn "opkg not found, skipping Zapret installation"
+		return 0
+	fi
+
+	if ! command_exists unzip; then
+		ensure_opkg_package unzip "required to unpack the zapret-openwrt bundle"
+	fi
+	command_exists unzip || die "unzip is required to unpack the zapret-openwrt bundle"
+
+	zapret_version="$(resolve_zapret_version)"
+	if [ -n "${ROUTEFLUX_ZAPRET_RELEASE_BASE_URL}" ]; then
+		zapret_release_base_url="${ROUTEFLUX_ZAPRET_RELEASE_BASE_URL}"
+	else
+		zapret_release_base_url="https://github.com/${ROUTEFLUX_ZAPRET_REPO_OWNER}/${ROUTEFLUX_ZAPRET_REPO_NAME}/releases/download/${zapret_version}"
+	fi
+
+	zapret_asset_name="zapret_${zapret_version}_${resolved_arch}.zip"
+	zapret_asset_url="${zapret_release_base_url}/${zapret_asset_name}"
+	zapret_asset_path="${tmp_dir}/${zapret_asset_name}"
+	zapret_extract_dir="${tmp_dir}/zapret-bundle"
+
+	log "Zapret runtime not found, installing bundled Zapret"
+	log "Zapret asset: ${zapret_asset_url}"
+	download_file "${zapret_asset_url}" "${zapret_asset_path}"
+
+	mkdir -p "${zapret_extract_dir}"
+	unzip -oq "${zapret_asset_path}" -d "${zapret_extract_dir}"
+
+	zapret_ipks="$(find "${zapret_extract_dir}" -type f -name 'zapret*.ipk' | sort)"
+	[ -n "${zapret_ipks}" ] || die "downloaded zapret bundle did not contain any zapret ipk packages"
+
+	opkg install ${zapret_ipks}
+	record_installed_ipk_packages ${zapret_ipks}
+
+	if ! zapret_is_ready; then
+		die "zapret packages were installed but /etc/init.d/zapret is still missing"
+	fi
+
+	stabilize_zapret_service
+
+	log "Bundled Zapret installed"
+}
+
 ensure_xray_log_retention() {
 	helper="$(routeflux_cron_helper_path)"
 	[ -x "${helper}" ] || return 0
@@ -230,6 +521,19 @@ while [ "$#" -gt 0 ]; do
 		--dry-run)
 			ROUTEFLUX_DRY_RUN=1
 			shift
+			;;
+		--without-deps)
+			ROUTEFLUX_INSTALL_DEPS=0
+			shift
+			;;
+		--without-zapret)
+			ROUTEFLUX_INSTALL_ZAPRET=0
+			shift
+			;;
+		--zapret-version)
+			[ "$#" -ge 2 ] || die "missing value for --zapret-version"
+			ROUTEFLUX_ZAPRET_VERSION="$2"
+			shift 2
 			;;
 		-h|--help)
 			usage
@@ -284,6 +588,12 @@ asset_path="${tmp_dir}/${asset_name}"
 xray_asset_path="${tmp_dir}/${xray_asset_name}"
 mkdir -p "${tmp_dir}"
 trap 'rm -rf "${tmp_dir}"' EXIT HUP INT TERM
+ROUTEFLUX_INSTALL_MANIFEST_TMP="${tmp_dir}/install-manifest.txt"
+if [ -f "$(install_manifest_path)" ]; then
+	cp "$(install_manifest_path)" "${ROUTEFLUX_INSTALL_MANIFEST_TMP}"
+fi
+
+ensure_openwrt_dependencies
 
 if xray_is_ready; then
 	log "Detected existing Xray runtime"
@@ -300,6 +610,8 @@ else
 	log "Bundled Xray installed"
 fi
 
+install_zapret_bundle "${resolved_arch}" "${tmp_dir}"
+
 log "Downloading RouteFlux release asset"
 download_file "${asset_url}" "${asset_path}"
 
@@ -314,6 +626,7 @@ fi
 
 harden_secret_storage
 ensure_xray_log_retention
+persist_install_manifest
 
 rm -f "$(root_path "tmp/luci-indexcache")"
 rm -rf "$(root_path "tmp/luci-modulecache")"

@@ -33,10 +33,13 @@ func TestLuCIACLReadPermissionsUseSafeWhitelist(t *testing.T) {
 
 	wantRead := map[string]struct{}{
 		"/usr/bin/routeflux --json status":             {},
+		"/usr/bin/routeflux --json diagnostics":        {},
 		"/usr/bin/routeflux --json list subscriptions": {},
 		"/usr/bin/routeflux --json dns get":            {},
 		"/usr/bin/routeflux --json firewall get":       {},
 		"/usr/bin/routeflux --json services list":      {},
+		"/usr/bin/routeflux --json zapret get":         {},
+		"/usr/bin/routeflux --json zapret status":      {},
 	}
 
 	if len(payload.App.Read.File) != len(wantRead) {

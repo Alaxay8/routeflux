@@ -51,8 +51,10 @@ type TrafficSummary struct {
 type StatusResponse struct {
 	State              domain.RuntimeState  `json:"state"`
 	Settings           domain.Settings      `json:"settings"`
+	ActiveTransport    string               `json:"active_transport"`
 	ActiveSubscription *SubscriptionSummary `json:"active_subscription,omitempty"`
 	ActiveNode         *NodeSummary         `json:"active_node,omitempty"`
+	Zapret             domain.ZapretStatus  `json:"zapret"`
 }
 
 // NodeSummaryFromDomain converts a runtime node to its safe public shape.
@@ -124,8 +126,10 @@ func SubscriptionSummariesFromDomain(subscriptions []domain.Subscription, includ
 // StatusResponseFromSnapshot converts runtime status to its safe public shape.
 func StatusResponseFromSnapshot(snapshot app.StatusSnapshot) StatusResponse {
 	result := StatusResponse{
-		State:    snapshot.State,
-		Settings: snapshot.Settings,
+		State:           snapshot.State,
+		Settings:        snapshot.Settings,
+		ActiveTransport: string(snapshot.ActiveTransport),
+		Zapret:          snapshot.Zapret,
 	}
 
 	if snapshot.ActiveSubscription != nil {

@@ -9,11 +9,14 @@ import (
 const autoHealthStatePersistInterval = 5 * time.Minute
 
 type autoHealthStateKey struct {
-	ActiveSubscriptionID string
-	ActiveNodeID         string
-	Mode                 domain.SelectionMode
-	Connected            bool
-	LastSwitchAt         time.Time
+	ActiveSubscriptionID  string
+	ActiveNodeID          string
+	Mode                  domain.SelectionMode
+	Connected             bool
+	ActiveTransport       domain.TransportMode
+	ZapretTestActive      bool
+	LastSwitchAt          time.Time
+	LastTransportSwitchAt time.Time
 }
 
 type autoHealthStateCache struct {
@@ -65,7 +68,7 @@ func (s *Service) rememberAutoHealthState(state domain.RuntimeState, persisted b
 	s.autoHealthStateMu.Lock()
 	defer s.autoHealthStateMu.Unlock()
 
-	if state.Mode != domain.SelectionModeAuto || state.ActiveSubscriptionID == "" {
+	if state.Mode != domain.SelectionModeAuto || state.ActiveSubscriptionID == "" || state.ZapretTest.Active {
 		s.autoHealthState = nil
 		return
 	}
@@ -116,11 +119,14 @@ func (s *Service) currentTime() time.Time {
 
 func autoHealthStateKeyFromState(state domain.RuntimeState) autoHealthStateKey {
 	return autoHealthStateKey{
-		ActiveSubscriptionID: state.ActiveSubscriptionID,
-		ActiveNodeID:         state.ActiveNodeID,
-		Mode:                 state.Mode,
-		Connected:            state.Connected,
-		LastSwitchAt:         state.LastSwitchAt,
+		ActiveSubscriptionID:  state.ActiveSubscriptionID,
+		ActiveNodeID:          state.ActiveNodeID,
+		Mode:                  state.Mode,
+		Connected:             state.Connected,
+		ActiveTransport:       effectiveActiveTransport(state),
+		ZapretTestActive:      state.ZapretTest.Active,
+		LastSwitchAt:          state.LastSwitchAt,
+		LastTransportSwitchAt: state.LastTransportSwitchAt,
 	}
 }
 

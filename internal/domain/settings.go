@@ -73,6 +73,7 @@ type Settings struct {
 	LatencyThreshold    Duration         `json:"latency_threshold"`
 	DNS                 DNSSettings      `json:"dns"`
 	Firewall            FirewallSettings `json:"firewall"`
+	Zapret              ZapretSettings   `json:"zapret"`
 	AutoMode            bool             `json:"auto_mode"`
 	Mode                SelectionMode    `json:"mode"`
 	LogLevel            string           `json:"log_level"`
@@ -201,7 +202,7 @@ type FirewallSettings struct {
 // DefaultSettings returns the baseline configuration used on first start.
 func DefaultSettings() Settings {
 	return Settings{
-		SchemaVersion:       8,
+		SchemaVersion:       9,
 		RefreshInterval:     NewDuration(time.Hour),
 		HealthCheckInterval: NewDuration(30 * time.Second),
 		SwitchCooldown:      NewDuration(5 * time.Minute),
@@ -219,6 +220,7 @@ func DefaultSettings() Settings {
 			ModeDrafts:           FirewallModeDrafts{},
 			BlockQUIC:            false,
 		},
+		Zapret:   DefaultZapretSettings(),
 		AutoMode: false,
 		Mode:     SelectionModeManual,
 		LogLevel: "info",
@@ -309,7 +311,7 @@ func nodeRequiresTransparentQUICBlock(node *Node) bool {
 // CloneFirewallSelectorSet deep-copies one firewall selector set.
 func CloneFirewallSelectorSet(value FirewallSelectorSet) FirewallSelectorSet {
 	return FirewallSelectorSet{
-		Services: append([]string(nil), value.Services...),
+		Services: canonicalFirewallTargetServices(value.Services),
 		Domains:  append([]string(nil), value.Domains...),
 		CIDRs:    append([]string(nil), value.CIDRs...),
 	}
@@ -328,7 +330,7 @@ func CloneFirewallSplitSettings(value FirewallSplitSettings) FirewallSplitSettin
 // CloneFirewallModeDraft deep-copies one firewall mode draft.
 func CloneFirewallModeDraft(draft FirewallModeDraft) FirewallModeDraft {
 	return FirewallModeDraft{
-		TargetServices: append([]string(nil), draft.TargetServices...),
+		TargetServices: canonicalFirewallTargetServices(draft.TargetServices),
 		TargetCIDRs:    append([]string(nil), draft.TargetCIDRs...),
 		TargetDomains:  append([]string(nil), draft.TargetDomains...),
 		SourceCIDRs:    append([]string(nil), draft.SourceCIDRs...),
@@ -351,6 +353,30 @@ func CloneFirewallModeDrafts(drafts FirewallModeDrafts) FirewallModeDrafts {
 		Targets: CloneFirewallModeDraft(drafts.Targets),
 		Split:   CloneFirewallSplitDraft(drafts.Split),
 	}
+}
+
+func canonicalFirewallTargetServices(values []string) []string {
+	if len(values) == 0 {
+		return nil
+	}
+
+	out := make([]string, 0, len(values))
+	seen := make(map[string]struct{}, len(values))
+	for _, value := range values {
+		normalized := canonicalFirewallTargetAlias(value)
+		if normalized == "" {
+			continue
+		}
+		if _, ok := seen[normalized]; ok {
+			continue
+		}
+		seen[normalized] = struct{}{}
+		out = append(out, normalized)
+	}
+	if len(out) == 0 {
+		return nil
+	}
+	return out
 }
 
 // FirewallSelectorSetFromTargets converts parsed mixed selectors into a selector set.
@@ -429,6 +455,11 @@ func CanonicalFirewallSettings(settings FirewallSettings) FirewallSettings {
 	settings.Hosts = append([]string(nil), settings.Hosts...)
 	settings.TargetServiceCatalog = CloneFirewallTargetCatalog(settings.TargetServiceCatalog)
 	return settings
+}
+
+// CanonicalZapretSettings normalizes Zapret settings for persisted compatibility.
+func CanonicalZapretSettings(settings ZapretSettings) ZapretSettings {
+	return NormalizeZapretSettings(settings)
 }
 
 // ParseDurationValue accepts either a Go duration string or an integer nanosecond value.

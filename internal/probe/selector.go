@@ -17,6 +17,8 @@ type ScoreConfig struct {
 	FailureWeight      float64
 	RecoveryBonus      float64
 	MaxLatencyBaseline time.Duration
+	MaxSuccessStreak   int
+	MaxRecoveryWindow  int
 }
 
 // DefaultScoreConfig returns the default scoring configuration.
@@ -29,6 +31,8 @@ func DefaultScoreConfig() ScoreConfig {
 		FailureWeight:      40,
 		RecoveryBonus:      10,
 		MaxLatencyBaseline: 2 * time.Second,
+		MaxSuccessStreak:   20,
+		MaxRecoveryWindow:  20,
 	}
 }
 
@@ -45,9 +49,11 @@ func CalculateScore(health domain.NodeHealth, cfg ScoreConfig) domain.ScoreResul
 	}
 
 	if health.Healthy {
+		successStreak := clampPositive(health.ConsecutiveSuccesses, cfg.MaxSuccessStreak)
+		recoveryWindow := clampPositive(health.SuccessCount-health.FailureCount, cfg.MaxRecoveryWindow)
 		score += cfg.HealthyBonus
-		score += float64(health.ConsecutiveSuccesses) * cfg.SuccessWeight
-		score += float64(health.SuccessCount-health.FailureCount) * cfg.RecoveryBonus
+		score += float64(successStreak) * cfg.SuccessWeight
+		score += float64(recoveryWindow) * cfg.RecoveryBonus
 		score -= latency.Seconds() * 1000 * cfg.LatencyWeight
 	} else {
 		reason = "unhealthy"
@@ -62,6 +68,16 @@ func CalculateScore(health domain.NodeHealth, cfg ScoreConfig) domain.ScoreResul
 		Score:   score,
 		Reason:  reason,
 	}
+}
+
+func clampPositive(value, limit int) int {
+	if value < 0 {
+		return 0
+	}
+	if limit > 0 && value > limit {
+		return limit
+	}
+	return value
 }
 
 // SelectBestNode chooses the highest scored node.

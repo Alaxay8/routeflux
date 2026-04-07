@@ -96,7 +96,7 @@ func TestFirewallViewPersistsOnlyOffAndBypassModes(t *testing.T) {
 	}
 }
 
-func TestLuCIMenuKeepsSubscriptionsRoutingAndAbout(t *testing.T) {
+func TestLuCIMenuKeepsSubscriptionsRoutingZapretDiagnosticsAndAbout(t *testing.T) {
 	t.Parallel()
 
 	root, err := filepath.Abs(filepath.Join("..", ".."))
@@ -121,16 +121,20 @@ func TestLuCIMenuKeepsSubscriptionsRoutingAndAbout(t *testing.T) {
 		t.Fatalf("unmarshal menu json: %v", err)
 	}
 
-	if len(payload) != 4 {
-		t.Fatalf("expected root + 3 LuCI entries, got %d", len(payload))
+	if len(payload) != 6 {
+		t.Fatalf("expected root + 5 LuCI entries, got %d", len(payload))
 	}
 
 	rootEntry, ok := payload["admin/services/routeflux"]
 	if !ok {
 		t.Fatal("missing RouteFlux root menu entry")
 	}
-	if rootEntry.Action.Path != "admin/services/routeflux/subscriptions" {
+	if rootEntry.Action.Path != "admin/services/routeflux/firewall" {
 		t.Fatalf("root RouteFlux alias path mismatch: %q", rootEntry.Action.Path)
+	}
+
+	if _, exists := payload["admin/services/routeflux/overview"]; exists {
+		t.Fatal("overview menu entry must be removed")
 	}
 
 	subscriptionsEntry, ok := payload["admin/services/routeflux/subscriptions"]
@@ -149,6 +153,22 @@ func TestLuCIMenuKeepsSubscriptionsRoutingAndAbout(t *testing.T) {
 		t.Fatalf("unexpected routing title %q", routingEntry.Title)
 	}
 
+	zapretEntry, ok := payload["admin/services/routeflux/zapret"]
+	if !ok {
+		t.Fatal("missing zapret menu entry")
+	}
+	if zapretEntry.Title != "Zapret" {
+		t.Fatalf("unexpected zapret title %q", zapretEntry.Title)
+	}
+
+	diagnosticsEntry, ok := payload["admin/services/routeflux/diagnostics"]
+	if !ok {
+		t.Fatal("missing diagnostics menu entry")
+	}
+	if diagnosticsEntry.Title != "Diagnostics" {
+		t.Fatalf("unexpected diagnostics title %q", diagnosticsEntry.Title)
+	}
+
 	aboutEntry, ok := payload["admin/services/routeflux/about"]
 	if !ok {
 		t.Fatal("missing about menu entry")
@@ -161,7 +181,6 @@ func TestLuCIMenuKeepsSubscriptionsRoutingAndAbout(t *testing.T) {
 		"admin/services/routeflux/overview",
 		"admin/services/routeflux/dns",
 		"admin/services/routeflux/settings",
-		"admin/services/routeflux/diagnostics",
 		"admin/services/routeflux/logs",
 		"admin/services/routeflux/services",
 	} {

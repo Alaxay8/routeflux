@@ -109,16 +109,6 @@ var firewallTargetServicePresets = map[string]FirewallTargetDefinition{
 			"g.whatsapp.net",
 		},
 	},
-	"telegram-web": {
-		Domains: []string{
-			"telegram.org",
-			"t.me",
-			"telegram.me",
-			"web.telegram.org",
-			"desktop.telegram.org",
-			"core.telegram.org",
-		},
-	},
 	"telegram": {
 		Domains: []string{
 			"telegram.org",
@@ -198,9 +188,13 @@ var firewallTargetDomainFamilies = map[string]string{
 	"twitter.com":           "twitter",
 	"gemini.google.com":     "gemini",
 	"notebooklm.google.com": "notebooklm",
-	"telegram.org":          "telegram-web",
-	"web.telegram.org":      "telegram-web",
+	"telegram.org":          "telegram",
+	"web.telegram.org":      "telegram",
 	"facetime.apple.com":    "facetime",
+}
+
+var deprecatedFirewallTargetAliases = map[string]string{
+	"telegram-web": "telegram",
 }
 
 // FirewallTargets stores validated transparent proxy selectors.
@@ -610,7 +604,7 @@ func validateFirewallTargetDependencies(name string, customCatalog map[string]Fi
 }
 
 func appendFirewallServiceDomains(registry map[string]FirewallTargetDefinition, out *[]string, seen map[string]struct{}, service string, visiting map[string]struct{}) {
-	service = strings.TrimSpace(strings.ToLower(service))
+	service = canonicalFirewallTargetAlias(service)
 	definition, ok := registry[service]
 	if !ok {
 		return
@@ -635,7 +629,7 @@ func appendFirewallServiceDomains(registry map[string]FirewallTargetDefinition, 
 }
 
 func appendFirewallServiceCIDRs(registry map[string]FirewallTargetDefinition, out *[]string, seen map[string]struct{}, service string, visiting map[string]struct{}) {
-	service = strings.TrimSpace(strings.ToLower(service))
+	service = canonicalFirewallTargetAlias(service)
 	definition, ok := registry[service]
 	if !ok {
 		return
@@ -660,7 +654,7 @@ func appendFirewallServiceCIDRs(registry map[string]FirewallTargetDefinition, ou
 }
 
 func normalizeFirewallTargetService(value string, registry map[string]FirewallTargetDefinition) (string, bool) {
-	value = strings.TrimSpace(strings.ToLower(value))
+	value = canonicalFirewallTargetAlias(value)
 	if value == "" {
 		return "", false
 	}
@@ -671,12 +665,13 @@ func normalizeFirewallTargetService(value string, registry map[string]FirewallTa
 }
 
 func isBuiltinFirewallTargetService(name string) bool {
+	name = canonicalFirewallTargetAlias(name)
 	_, ok := firewallTargetServicePresets[name]
 	return ok
 }
 
 func normalizeFirewallTargetAlias(value string) (string, error) {
-	value = strings.TrimSpace(strings.ToLower(value))
+	value = canonicalFirewallTargetAlias(value)
 	if value == "" {
 		return "", fmt.Errorf("target service name cannot be empty")
 	}
@@ -697,6 +692,14 @@ func normalizeFirewallTargetAlias(value string) (string, error) {
 	}
 
 	return value, nil
+}
+
+func canonicalFirewallTargetAlias(value string) string {
+	value = strings.TrimSpace(strings.ToLower(value))
+	if replacement, ok := deprecatedFirewallTargetAliases[value]; ok {
+		return replacement
+	}
+	return value
 }
 
 func normalizeFirewallIPv4Selector(value string) (string, bool, error) {

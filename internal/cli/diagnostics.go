@@ -24,6 +24,7 @@ type diagnosticsSnapshot struct {
 	RuntimeError          string                `json:"runtime_error,omitempty"`
 	TransparentQUICPolicy string                `json:"transparent_quic_policy"`
 	IPv6                  diagnosticsIPv6Status `json:"ipv6"`
+	Zapret                domain.ZapretStatus   `json:"zapret"`
 	Files                 diagnosticsFiles      `json:"files"`
 }
 
@@ -47,6 +48,9 @@ type diagnosticsFiles struct {
 	StateFile         diagnosticsPathStatus `json:"state_file"`
 	XrayConfig        diagnosticsPathStatus `json:"xray_config"`
 	XrayService       diagnosticsPathStatus `json:"xray_service"`
+	ZapretService     diagnosticsPathStatus `json:"zapret_service"`
+	ZapretHostlist    diagnosticsPathStatus `json:"zapret_hostlist"`
+	ZapretMarker      diagnosticsPathStatus `json:"zapret_marker"`
 	NFTBinary         diagnosticsPathStatus `json:"nft_binary"`
 	FirewallRules     diagnosticsPathStatus `json:"firewall_rules"`
 }
@@ -101,6 +105,7 @@ func buildDiagnosticsSnapshot(ctx context.Context, opts *rootOptions) (diagnosti
 		Runtime:               runtimeStatus,
 		TransparentQUICPolicy: diagnosticsTransparentQUICPolicy(status.Settings.Firewall, status.ActiveNode),
 		IPv6:                  buildDiagnosticsIPv6Status(status.Settings.Firewall, ipv6Status),
+		Zapret:                status.Zapret,
 		Files: diagnosticsFiles{
 			RoutefluxBinary:   inspectPath(routefluxBinaryPath),
 			RoutefluxRoot:     inspectPath(rootDir),
@@ -109,6 +114,9 @@ func buildDiagnosticsSnapshot(ctx context.Context, opts *rootOptions) (diagnosti
 			StateFile:         inspectPath(filepath.Join(rootDir, "state.json")),
 			XrayConfig:        inspectPath(openwrt.XrayConfigPath()),
 			XrayService:       inspectPath(openwrt.XrayServicePath()),
+			ZapretService:     inspectPath(openwrt.ZapretServicePath()),
+			ZapretHostlist:    inspectPath(openwrt.ZapretHostlistPath()),
+			ZapretMarker:      inspectPath(openwrt.ZapretMarkerPath()),
 			NFTBinary:         inspectPath("/usr/sbin/nft"),
 			FirewallRules:     inspectPath(openwrt.FirewallRulesPath()),
 		},
@@ -171,6 +179,7 @@ func renderDiagnosticsText(snapshot diagnosticsSnapshot) string {
 	lines := []string{
 		fmt.Sprintf("connected=%t", snapshot.Status.State.Connected),
 		fmt.Sprintf("mode=%s", snapshot.Status.State.Mode),
+		fmt.Sprintf("transport=%s", snapshot.Status.ActiveTransport),
 		fmt.Sprintf("transparent-quic-policy=%s", snapshot.TransparentQUICPolicy),
 		fmt.Sprintf("ipv6-available=%t", snapshot.IPv6.Available),
 		fmt.Sprintf("ipv6-configured-disabled=%t", snapshot.IPv6.ConfiguredDisabled),
@@ -185,6 +194,12 @@ func renderDiagnosticsText(snapshot diagnosticsSnapshot) string {
 		fmt.Sprintf("backend-service-state=%s", snapshot.Runtime.ServiceState),
 		fmt.Sprintf("backend-config=%s", snapshot.Runtime.ConfigPath),
 		fmt.Sprintf("backend-error=%s", snapshot.RuntimeError),
+		fmt.Sprintf("zapret-installed=%t", snapshot.Zapret.Installed),
+		fmt.Sprintf("zapret-managed=%t", snapshot.Zapret.Managed),
+		fmt.Sprintf("zapret-active=%t", snapshot.Zapret.Active),
+		fmt.Sprintf("zapret-service-active=%t", snapshot.Zapret.ServiceActive),
+		fmt.Sprintf("zapret-service-state=%s", snapshot.Zapret.ServiceState),
+		fmt.Sprintf("zapret-last-reason=%s", snapshot.Zapret.LastReason),
 		fmt.Sprintf("last-success=%s", formatLocalTimestamp(snapshot.Status.State.LastSuccessAt)),
 		fmt.Sprintf("last-failure=%s", snapshot.Status.State.LastFailureReason),
 		describeDiagnosticFile("routeflux-binary", snapshot.Files.RoutefluxBinary),
@@ -194,6 +209,9 @@ func renderDiagnosticsText(snapshot diagnosticsSnapshot) string {
 		describeDiagnosticFile("state-file", snapshot.Files.StateFile),
 		describeDiagnosticFile("xray-config", snapshot.Files.XrayConfig),
 		describeDiagnosticFile("xray-service", snapshot.Files.XrayService),
+		describeDiagnosticFile("zapret-service", snapshot.Files.ZapretService),
+		describeDiagnosticFile("zapret-hostlist", snapshot.Files.ZapretHostlist),
+		describeDiagnosticFile("zapret-marker", snapshot.Files.ZapretMarker),
 		describeDiagnosticFile("nft-binary", snapshot.Files.NFTBinary),
 		describeDiagnosticFile("firewall-rules", snapshot.Files.FirewallRules),
 	}

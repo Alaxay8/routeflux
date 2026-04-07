@@ -209,7 +209,7 @@ func TestFirewallExplainOutputsFriendlyGuide(t *testing.T) {
 		"bypass: Send all other traffic through RouteFlux while keeping selected resources direct and optionally excluding whole LAN devices.",
 		"anti-target: deprecated alias for bypass.",
 		"split: advanced CLI-only mode for explicit proxy, bypass, and excluded-device lists.",
-		"Service presets: discord, facetime, gemini, gemini-mobile, instagram, netflix, notebooklm, notebooklm-mobile, telegram, telegram-web, twitter, whatsapp, youtube.",
+		"Service presets: discord, facetime, gemini, gemini-mobile, instagram, netflix, notebooklm, notebooklm-mobile, telegram, twitter, whatsapp, youtube.",
 		"Popular root domains like youtube.com, instagram.com, netflix.com, x.com, gemini.google.com, and notebooklm.google.com still auto-expand to the domain families they need.",
 		"Gemini and NotebookLM mobile presets are broader and still best-effort because Google apps can use extra shared infrastructure and direct IPv4 endpoints.",
 		"hosts: Send all traffic from selected LAN devices through RouteFlux.",

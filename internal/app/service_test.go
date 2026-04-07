@@ -3380,6 +3380,17 @@ type recordingIPv6Manager struct {
 	err     error
 }
 
+type recordingZapretManager struct {
+	applyDomains [][]string
+	applyCIDRs   [][]string
+	applyStatus  domain.ZapretStatus
+	applyErr     error
+	status       domain.ZapretStatus
+	statusErr    error
+	disableCalls int
+	disableErr   error
+}
+
 func (f *recordingFirewaller) Validate(_ context.Context, settings domain.FirewallSettings) error {
 	f.validated = append(f.validated, settings)
 	return f.validateErr
@@ -3402,6 +3413,38 @@ func (m *recordingIPv6Manager) Apply(_ context.Context, disabled bool) error {
 
 func (m *recordingIPv6Manager) Status(context.Context) (domain.IPv6Status, error) {
 	return m.status, m.err
+}
+
+func (m *recordingZapretManager) Apply(_ context.Context, domains, cidrs []string) (domain.ZapretStatus, error) {
+	m.applyDomains = append(m.applyDomains, append([]string(nil), domains...))
+	m.applyCIDRs = append(m.applyCIDRs, append([]string(nil), cidrs...))
+	if m.applyStatus == (domain.ZapretStatus{}) && m.status != (domain.ZapretStatus{}) {
+		m.applyStatus = m.status
+	}
+	if m.applyStatus == (domain.ZapretStatus{}) {
+		m.applyStatus = domain.ZapretStatus{
+			Installed:    true,
+			Managed:      true,
+			Active:       true,
+			ServiceState: "running",
+		}
+	}
+	if m.status == (domain.ZapretStatus{}) {
+		m.status = m.applyStatus
+	}
+	return m.applyStatus, m.applyErr
+}
+
+func (m *recordingZapretManager) Disable(context.Context) error {
+	m.disableCalls++
+	return m.disableErr
+}
+
+func (m *recordingZapretManager) Status(context.Context) (domain.ZapretStatus, error) {
+	if m.status == (domain.ZapretStatus{}) && m.applyStatus != (domain.ZapretStatus{}) {
+		return m.applyStatus, m.statusErr
+	}
+	return m.status, m.statusErr
 }
 
 type fakeChecker struct {

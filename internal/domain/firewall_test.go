@@ -250,7 +250,6 @@ func TestFirewallTargetServiceNamesIsSorted(t *testing.T) {
 		"notebooklm",
 		"notebooklm-mobile",
 		"telegram",
-		"telegram-web",
 		"twitter",
 		"whatsapp",
 		"youtube",
@@ -258,6 +257,23 @@ func TestFirewallTargetServiceNamesIsSorted(t *testing.T) {
 
 	if got := FirewallTargetServiceNames(); !reflect.DeepEqual(got, want) {
 		t.Fatalf("unexpected service names:\nwant: %+v\n got: %+v", want, got)
+	}
+}
+
+func TestExpandFirewallTargetDomainsSupportsDeprecatedTelegramWebAlias(t *testing.T) {
+	t.Parallel()
+
+	got := ExpandFirewallTargetDomains(nil, []string{"telegram-web"}, nil)
+	want := []string{
+		"telegram.org",
+		"t.me",
+		"telegram.me",
+		"web.telegram.org",
+		"desktop.telegram.org",
+		"core.telegram.org",
+	}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("unexpected telegram-web expansion:\nwant: %+v\n got: %+v", want, got)
 	}
 }
 

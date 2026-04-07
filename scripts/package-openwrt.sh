@@ -57,6 +57,12 @@ cp "${ROOT_DIR}/luci-app-routeflux/htdocs/luci-static/resources/view/routeflux/s
 	"${DATA_DIR}/www/luci-static/resources/view/routeflux/subscriptions.js"
 cp "${ROOT_DIR}/luci-app-routeflux/htdocs/luci-static/resources/view/routeflux/firewall.js" \
 	"${DATA_DIR}/www/luci-static/resources/view/routeflux/firewall.js"
+cp "${ROOT_DIR}/luci-app-routeflux/htdocs/luci-static/resources/view/routeflux/overview.js" \
+	"${DATA_DIR}/www/luci-static/resources/view/routeflux/overview.js"
+cp "${ROOT_DIR}/luci-app-routeflux/htdocs/luci-static/resources/view/routeflux/diagnostics.js" \
+	"${DATA_DIR}/www/luci-static/resources/view/routeflux/diagnostics.js"
+cp "${ROOT_DIR}/luci-app-routeflux/htdocs/luci-static/resources/view/routeflux/zapret.js" \
+	"${DATA_DIR}/www/luci-static/resources/view/routeflux/zapret.js"
 cp "${ROOT_DIR}/luci-app-routeflux/htdocs/luci-static/resources/view/routeflux/about.js" \
 	"${DATA_DIR}/www/luci-static/resources/view/routeflux/about.js"
 
@@ -99,10 +105,8 @@ if [ -z "${IPKG_INSTROOT:-}" ]; then
 	chmod 0755 /etc/init.d/routeflux >/dev/null 2>&1 || true
 	chmod 0755 /usr/libexec/routeflux-cron >/dev/null 2>&1 || true
 	rm -f \
-		/www/luci-static/resources/view/routeflux/overview.js \
 		/www/luci-static/resources/view/routeflux/dns.js \
 		/www/luci-static/resources/view/routeflux/settings.js \
-		/www/luci-static/resources/view/routeflux/diagnostics.js \
 		/www/luci-static/resources/view/routeflux/logs.js \
 		/www/luci-static/resources/view/routeflux/services.js \
 		>/dev/null 2>&1 || true

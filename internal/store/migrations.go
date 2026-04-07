@@ -74,6 +74,12 @@ func decodeSettings(data []byte, path string) (domain.Settings, error) {
 		LegacySourceCIDRs    *[]string                                   `json:"source_cidrs"`
 	}
 
+	type rawZapretSettings struct {
+		Enabled                  *bool                   `json:"enabled"`
+		Selectors                *rawFirewallSelectorSet `json:"selectors"`
+		FailbackSuccessThreshold *int                    `json:"failback_success_threshold"`
+	}
+
 	type rawSettings struct {
 		SchemaVersion       *int                  `json:"schema_version"`
 		RefreshInterval     *domain.Duration      `json:"refresh_interval"`
@@ -82,6 +88,7 @@ func decodeSettings(data []byte, path string) (domain.Settings, error) {
 		LatencyThreshold    *domain.Duration      `json:"latency_threshold"`
 		DNS                 *rawDNSSettings       `json:"dns"`
 		Firewall            *rawFirewallSettings  `json:"firewall"`
+		Zapret              *rawZapretSettings    `json:"zapret"`
 		AutoMode            *bool                 `json:"auto_mode"`
 		Mode                *domain.SelectionMode `json:"mode"`
 		LogLevel            *string               `json:"log_level"`
@@ -141,22 +148,22 @@ func decodeSettings(data []byte, path string) (domain.Settings, error) {
 		}
 	}
 
-	if raw.Firewall != nil {
-		decodeSelectorSet := func(dst *domain.FirewallSelectorSet, rawSet *rawFirewallSelectorSet) {
-			if rawSet == nil {
-				return
-			}
-			if rawSet.Services != nil {
-				dst.Services = append([]string(nil), (*rawSet.Services)...)
-			}
-			if rawSet.Domains != nil {
-				dst.Domains = append([]string(nil), (*rawSet.Domains)...)
-			}
-			if rawSet.CIDRs != nil {
-				dst.CIDRs = append([]string(nil), (*rawSet.CIDRs)...)
-			}
+	decodeSelectorSet := func(dst *domain.FirewallSelectorSet, rawSet *rawFirewallSelectorSet) {
+		if rawSet == nil {
+			return
 		}
+		if rawSet.Services != nil {
+			dst.Services = append([]string(nil), (*rawSet.Services)...)
+		}
+		if rawSet.Domains != nil {
+			dst.Domains = append([]string(nil), (*rawSet.Domains)...)
+		}
+		if rawSet.CIDRs != nil {
+			dst.CIDRs = append([]string(nil), (*rawSet.CIDRs)...)
+		}
+	}
 
+	if raw.Firewall != nil {
 		if raw.Firewall.Enabled != nil {
 			settings.Firewall.Enabled = *raw.Firewall.Enabled
 		}
@@ -277,6 +284,20 @@ func decodeSettings(data []byte, path string) (domain.Settings, error) {
 		}
 	}
 
+	if raw.Zapret != nil {
+		if raw.Zapret.Enabled != nil {
+			settings.Zapret.Enabled = *raw.Zapret.Enabled
+		}
+		if raw.Zapret.Selectors != nil {
+			decodeSelectorSet(&settings.Zapret.Selectors, raw.Zapret.Selectors)
+			settings.Zapret.Selectors.CIDRs = nil
+		}
+		if raw.Zapret.FailbackSuccessThreshold != nil {
+			settings.Zapret.FailbackSuccessThreshold = *raw.Zapret.FailbackSuccessThreshold
+		}
+		settings.Zapret = domain.CanonicalZapretSettings(settings.Zapret)
+	}
+
 	if raw.AutoMode != nil && raw.Mode == nil && *raw.AutoMode {
 		settings.Mode = domain.SelectionModeAuto
 	}
@@ -286,17 +307,34 @@ func decodeSettings(data []byte, path string) (domain.Settings, error) {
 }
 
 func decodeState(data []byte, path string) (domain.RuntimeState, error) {
+	type rawZapretTestRestoreState struct {
+		ActiveSubscriptionID *string               `json:"active_subscription_id"`
+		ActiveNodeID         *string               `json:"active_node_id"`
+		Mode                 *domain.SelectionMode `json:"mode"`
+		Connected            *bool                 `json:"connected"`
+		ActiveTransport      *domain.TransportMode `json:"active_transport"`
+	}
+
+	type rawZapretTestState struct {
+		Active  *bool                      `json:"active"`
+		Restore *rawZapretTestRestoreState `json:"restore"`
+	}
+
 	type rawState struct {
-		SchemaVersion        *int                          `json:"schema_version"`
-		ActiveSubscriptionID *string                       `json:"active_subscription_id"`
-		ActiveNodeID         *string                       `json:"active_node_id"`
-		Mode                 *domain.SelectionMode         `json:"mode"`
-		Connected            *bool                         `json:"connected"`
-		LastRefreshAt        *map[string]time.Time         `json:"last_refresh_at"`
-		Health               *map[string]domain.NodeHealth `json:"health"`
-		LastSwitchAt         *time.Time                    `json:"last_switch_at"`
-		LastSuccessAt        *time.Time                    `json:"last_success_at"`
-		LastFailureReason    *string                       `json:"last_failure_reason"`
+		SchemaVersion              *int                          `json:"schema_version"`
+		ActiveSubscriptionID       *string                       `json:"active_subscription_id"`
+		ActiveNodeID               *string                       `json:"active_node_id"`
+		Mode                       *domain.SelectionMode         `json:"mode"`
+		Connected                  *bool                         `json:"connected"`
+		ActiveTransport            *domain.TransportMode         `json:"active_transport"`
+		LastRefreshAt              *map[string]time.Time         `json:"last_refresh_at"`
+		Health                     *map[string]domain.NodeHealth `json:"health"`
+		LastSwitchAt               *time.Time                    `json:"last_switch_at"`
+		LastTransportSwitchAt      *time.Time                    `json:"last_transport_switch_at"`
+		LastSuccessAt              *time.Time                    `json:"last_success_at"`
+		LastFailureReason          *string                       `json:"last_failure_reason"`
+		LastTransportFailureReason *string                       `json:"last_transport_failure_reason"`
+		ZapretTest                 *rawZapretTestState           `json:"zapret_test"`
 	}
 
 	var raw rawState
@@ -325,6 +363,9 @@ func decodeState(data []byte, path string) (domain.RuntimeState, error) {
 	if raw.Connected != nil {
 		state.Connected = *raw.Connected
 	}
+	if raw.ActiveTransport != nil {
+		state.ActiveTransport = domain.NormalizeTransportMode(*raw.ActiveTransport)
+	}
 	if raw.LastRefreshAt != nil {
 		state.LastRefreshAt = *raw.LastRefreshAt
 	}
@@ -334,11 +375,39 @@ func decodeState(data []byte, path string) (domain.RuntimeState, error) {
 	if raw.LastSwitchAt != nil {
 		state.LastSwitchAt = *raw.LastSwitchAt
 	}
+	if raw.LastTransportSwitchAt != nil {
+		state.LastTransportSwitchAt = *raw.LastTransportSwitchAt
+	}
 	if raw.LastSuccessAt != nil {
 		state.LastSuccessAt = *raw.LastSuccessAt
 	}
 	if raw.LastFailureReason != nil {
 		state.LastFailureReason = *raw.LastFailureReason
+	}
+	if raw.LastTransportFailureReason != nil {
+		state.LastTransportFailureReason = *raw.LastTransportFailureReason
+	}
+	if raw.ZapretTest != nil {
+		if raw.ZapretTest.Active != nil {
+			state.ZapretTest.Active = *raw.ZapretTest.Active
+		}
+		if raw.ZapretTest.Restore != nil {
+			if raw.ZapretTest.Restore.ActiveSubscriptionID != nil {
+				state.ZapretTest.Restore.ActiveSubscriptionID = *raw.ZapretTest.Restore.ActiveSubscriptionID
+			}
+			if raw.ZapretTest.Restore.ActiveNodeID != nil {
+				state.ZapretTest.Restore.ActiveNodeID = *raw.ZapretTest.Restore.ActiveNodeID
+			}
+			if raw.ZapretTest.Restore.Mode != nil {
+				state.ZapretTest.Restore.Mode = *raw.ZapretTest.Restore.Mode
+			}
+			if raw.ZapretTest.Restore.Connected != nil {
+				state.ZapretTest.Restore.Connected = *raw.ZapretTest.Restore.Connected
+			}
+			if raw.ZapretTest.Restore.ActiveTransport != nil {
+				state.ZapretTest.Restore.ActiveTransport = domain.NormalizeTransportMode(*raw.ZapretTest.Restore.ActiveTransport)
+			}
+		}
 	}
 
 	if state.LastRefreshAt == nil {
@@ -347,6 +416,14 @@ func decodeState(data []byte, path string) (domain.RuntimeState, error) {
 	if state.Health == nil {
 		state.Health = make(map[string]domain.NodeHealth)
 	}
+	if raw.ActiveTransport == nil {
+		if state.Connected {
+			state.ActiveTransport = domain.TransportModeProxy
+		} else {
+			state.ActiveTransport = domain.TransportModeDirect
+		}
+	}
+	state.ActiveTransport = domain.NormalizeTransportMode(state.ActiveTransport)
 
 	state.SchemaVersion = domain.DefaultRuntimeState().SchemaVersion
 	return state, nil
