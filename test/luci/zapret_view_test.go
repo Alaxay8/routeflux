@@ -52,6 +52,24 @@ func TestZapretViewUsesDedicatedCommands(t *testing.T) {
 	}
 }
 
+func TestZapretViewUsesGreenSelectedChoiceState(t *testing.T) {
+	t.Parallel()
+
+	source := readZapretViewSource(t)
+
+	for _, want := range []string{
+		"routeflux-zapret-choice-indicator",
+		"routeflux-zapret-choice-control",
+		"rgba(34, 197, 94, 0.52)",
+		"rgba(220, 252, 231, 0.99)",
+		"content:\"\\\\2713\"",
+	} {
+		if !strings.Contains(source, want) {
+			t.Fatalf("zapret view missing green choice marker %q", want)
+		}
+	}
+}
+
 func readZapretViewSource(t *testing.T) string {
 	t.Helper()
 

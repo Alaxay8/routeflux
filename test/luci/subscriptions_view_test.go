@@ -65,6 +65,22 @@ func TestSubscriptionsViewShowsRemainingTrafficMeter(t *testing.T) {
 	}
 }
 
+func TestSubscriptionsViewShowsSecurityColumnInNodeTable(t *testing.T) {
+	t.Parallel()
+
+	source := readSubscriptionsViewSource(t)
+
+	for _, want := range []string{
+		"formatSecurityLabel",
+		"responsiveTableCell(_('Security')",
+		"E('th', { 'class': 'th' }, [ _('Security') ])",
+	} {
+		if !strings.Contains(source, want) {
+			t.Fatalf("subscriptions view missing security marker %q", want)
+		}
+	}
+}
+
 func TestSubscriptionsViewKeepsOverviewSummaryAndCoreActions(t *testing.T) {
 	t.Parallel()
 

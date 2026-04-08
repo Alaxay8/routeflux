@@ -433,10 +433,16 @@ return view.extend({
 				'.routeflux-zapret-panel > * { position:relative; z-index:1; }',
 				'.routeflux-zapret-panel h3 { margin:0; color:var(--routeflux-zapret-ink); font-size:clamp(24px, 1.1vw + 18px, 34px); line-height:1.12; letter-spacing:-0.03em; }',
 				'.routeflux-zapret-choice-grid, .routeflux-zapret-editor-grid { display:grid; gap:14px; }',
-				'.routeflux-zapret-choice { display:flex; gap:12px; align-items:flex-start; padding:16px 18px; border:1px solid rgba(120, 141, 167, 0.34); border-radius:18px; background:var(--routeflux-zapret-surface-bg); box-shadow:0 14px 30px rgba(15, 23, 42, 0.08), inset 0 1px 0 rgba(255, 255, 255, 0.9); transition:transform .18s ease, border-color .18s ease, box-shadow .18s ease, background .18s ease; }',
-				'.routeflux-zapret-choice:hover { transform:translateY(-1px); border-color:rgba(29, 118, 216, 0.42); box-shadow:0 16px 32px rgba(15, 23, 42, 0.12), inset 0 1px 0 rgba(255, 255, 255, 0.94); }',
-				'.routeflux-zapret-choice-selected { border-color:rgba(29, 118, 216, 0.58); background:linear-gradient(180deg, rgba(255, 255, 255, 0.99) 0%, rgba(236, 245, 255, 0.99) 100%); box-shadow:0 18px 34px rgba(14, 116, 144, 0.16), inset 0 1px 0 rgba(255, 255, 255, 0.96); }',
-				'.routeflux-zapret-choice input { margin-top:4px; accent-color:#0f6bdc; }',
+				'.routeflux-zapret-choice { position:relative; display:flex; gap:12px; align-items:flex-start; padding:16px 18px; border:1px solid rgba(120, 141, 167, 0.34); border-radius:18px; background:var(--routeflux-zapret-surface-bg); box-shadow:0 14px 30px rgba(15, 23, 42, 0.08), inset 0 1px 0 rgba(255, 255, 255, 0.9); transition:transform .18s ease, border-color .18s ease, box-shadow .18s ease, background .18s ease; cursor:pointer; }',
+				'.routeflux-zapret-choice:hover { transform:translateY(-1px); border-color:rgba(34, 197, 94, 0.34); box-shadow:0 16px 32px rgba(15, 23, 42, 0.12), inset 0 1px 0 rgba(255, 255, 255, 0.94); }',
+				'.routeflux-zapret-choice-selected { border-color:rgba(34, 197, 94, 0.52); background:linear-gradient(180deg, rgba(255, 255, 255, 0.99) 0%, rgba(220, 252, 231, 0.99) 100%); box-shadow:0 18px 34px rgba(21, 128, 61, 0.16), inset 0 1px 0 rgba(255, 255, 255, 0.96); }',
+				'.routeflux-zapret-choice-control { position:absolute; width:1px; height:1px; margin:-1px; padding:0; border:0; overflow:hidden; clip:rect(0, 0, 0, 0); clip-path:inset(50%); white-space:nowrap; }',
+				'.routeflux-zapret-choice-indicator { position:relative; flex:0 0 auto; width:26px; height:26px; margin-top:2px; border:1.5px solid rgba(71, 85, 105, 0.42); border-radius:999px; background:linear-gradient(180deg, rgba(255, 255, 255, 0.99) 0%, rgba(241, 245, 249, 0.99) 100%); box-shadow:inset 0 1px 0 rgba(255, 255, 255, 0.95), 0 10px 18px rgba(15, 23, 42, 0.08); transition:border-color .18s ease, box-shadow .18s ease, background .18s ease; }',
+				'.routeflux-zapret-choice-indicator::after { content:""; position:absolute; inset:0; display:flex; align-items:center; justify-content:center; border-radius:999px; color:transparent; transform:scale(0.62); transition:transform .18s ease, background .18s ease, color .18s ease, box-shadow .18s ease; }',
+				'.routeflux-zapret-choice-control:focus-visible + .routeflux-zapret-choice-indicator { outline:2px solid rgba(34, 197, 94, 0.28); outline-offset:3px; }',
+				'.routeflux-zapret-choice-selected .routeflux-zapret-choice-indicator { border-color:rgba(22, 163, 74, 0.54); background:linear-gradient(180deg, rgba(240, 253, 244, 0.99) 0%, rgba(220, 252, 231, 0.99) 100%); box-shadow:inset 0 1px 0 rgba(255, 255, 255, 0.96), 0 12px 20px rgba(21, 128, 61, 0.12); }',
+				'.routeflux-zapret-choice-selected .routeflux-zapret-choice-indicator::after { content:"\\2713"; background:linear-gradient(180deg, #22c55e 0%, #15803d 100%); color:#ffffff; font-size:15px; font-weight:900; transform:scale(1); box-shadow:0 10px 18px rgba(21, 128, 61, 0.28); }',
+				'.routeflux-zapret-choice-copy { flex:1 1 auto; min-width:0; }',
 				'.routeflux-zapret-choice-title { display:block; font-weight:800; font-size:clamp(18px, 0.55vw + 15px, 24px); color:var(--routeflux-zapret-ink); letter-spacing:-0.02em; }',
 				'.routeflux-zapret-choice-description { display:block; margin-top:6px; color:var(--routeflux-zapret-ink-muted); line-height:1.55; font-size:15px; }',
 				'.routeflux-zapret-editor-head { display:grid; gap:10px; margin-bottom:16px; }',
@@ -474,13 +480,15 @@ return view.extend({
 						E('div', { 'class': 'routeflux-zapret-choice-grid', 'style': 'margin-top:16px;' }, [
 							E('label', { 'class': choiceClass(this.formState.enabled === true) }, [
 								E('input', {
+									'class': 'routeflux-zapret-choice-control',
 									'type': 'radio',
 									'name': 'routeflux-zapret-fallback',
 									'value': 'enabled',
 									'checked': this.formState.enabled === true ? 'checked' : null,
 									'change': ui.createHandlerFn(this, 'handleFallbackChoice')
 								}),
-								E('div', {}, [
+								E('span', { 'class': 'routeflux-zapret-choice-indicator', 'aria-hidden': 'true' }, []),
+								E('div', { 'class': 'routeflux-zapret-choice-copy' }, [
 									E('span', { 'class': 'routeflux-zapret-choice-title' }, [ _('Enabled') ]),
 									E('span', { 'class': 'routeflux-zapret-choice-description' }, [
 										_('Allow RouteFlux to switch into Zapret after proxy failure and return to proxy only after stable health checks pass.')
@@ -489,13 +497,15 @@ return view.extend({
 							]),
 							E('label', { 'class': choiceClass(this.formState.enabled !== true) }, [
 								E('input', {
+									'class': 'routeflux-zapret-choice-control',
 									'type': 'radio',
 									'name': 'routeflux-zapret-fallback',
 									'value': 'disabled',
 									'checked': this.formState.enabled !== true ? 'checked' : null,
 									'change': ui.createHandlerFn(this, 'handleFallbackChoice')
 								}),
-								E('div', {}, [
+								E('span', { 'class': 'routeflux-zapret-choice-indicator', 'aria-hidden': 'true' }, []),
+								E('div', { 'class': 'routeflux-zapret-choice-copy' }, [
 									E('span', { 'class': 'routeflux-zapret-choice-title' }, [ _('Disabled') ]),
 									E('span', { 'class': 'routeflux-zapret-choice-description' }, [
 										_('Keep Zapret available for manual testing only and let RouteFlux fail open if proxy routing disappears.')

@@ -793,10 +793,12 @@ return view.extend({
 
 	handleModeChange: function(ev) {
 		this.formState.mode = trim(ev.currentTarget.value);
+		this.renderIntoRoot();
 	},
 
 	handleDNSChoiceChange: function(ev) {
 		this.formState.dns_choice = trim(ev.currentTarget.value);
+		this.renderIntoRoot();
 	},
 
 	handleServiceChoiceChange: function(ev) {
@@ -1128,10 +1130,16 @@ return view.extend({
 			'.routeflux-routing-panel > * { position:relative; z-index:1; }',
 			'.routeflux-routing-panel h3 { margin:0; color:var(--routeflux-routing-ink); font-size:clamp(24px, 1.1vw + 18px, 34px); line-height:1.12; letter-spacing:-0.03em; }',
 			'.routeflux-routing-mode-grid, .routeflux-routing-dns-grid { display:grid; gap:14px; }',
-			'.routeflux-routing-choice { display:flex; gap:12px; align-items:flex-start; padding:16px 18px; border:1px solid rgba(120, 141, 167, 0.34); border-radius:18px; background:var(--routeflux-routing-surface-bg); box-shadow:0 14px 30px rgba(15, 23, 42, 0.08), inset 0 1px 0 rgba(255, 255, 255, 0.9); transition:transform .18s ease, border-color .18s ease, box-shadow .18s ease, background .18s ease; }',
-			'.routeflux-routing-choice:hover { transform:translateY(-1px); border-color:rgba(29, 118, 216, 0.42); box-shadow:0 16px 32px rgba(15, 23, 42, 0.12), inset 0 1px 0 rgba(255, 255, 255, 0.94); }',
-			'.routeflux-routing-choice-selected { border-color:rgba(29, 118, 216, 0.58); background:linear-gradient(180deg, rgba(255, 255, 255, 0.99) 0%, rgba(236, 245, 255, 0.99) 100%); box-shadow:0 18px 34px rgba(14, 116, 144, 0.16), inset 0 1px 0 rgba(255, 255, 255, 0.96); }',
-			'.routeflux-routing-choice input { margin-top:4px; accent-color:#0f6bdc; }',
+			'.routeflux-routing-choice { position:relative; display:flex; gap:12px; align-items:flex-start; padding:16px 18px; border:1px solid rgba(120, 141, 167, 0.34); border-radius:18px; background:var(--routeflux-routing-surface-bg); box-shadow:0 14px 30px rgba(15, 23, 42, 0.08), inset 0 1px 0 rgba(255, 255, 255, 0.9); transition:transform .18s ease, border-color .18s ease, box-shadow .18s ease, background .18s ease; cursor:pointer; }',
+			'.routeflux-routing-choice:hover { transform:translateY(-1px); border-color:rgba(34, 197, 94, 0.34); box-shadow:0 16px 32px rgba(15, 23, 42, 0.12), inset 0 1px 0 rgba(255, 255, 255, 0.94); }',
+			'.routeflux-routing-choice-selected { border-color:rgba(34, 197, 94, 0.52); background:linear-gradient(180deg, rgba(255, 255, 255, 0.99) 0%, rgba(220, 252, 231, 0.99) 100%); box-shadow:0 18px 34px rgba(21, 128, 61, 0.16), inset 0 1px 0 rgba(255, 255, 255, 0.96); }',
+			'.routeflux-routing-choice-control { position:absolute; width:1px; height:1px; margin:-1px; padding:0; border:0; overflow:hidden; clip:rect(0, 0, 0, 0); clip-path:inset(50%); white-space:nowrap; }',
+			'.routeflux-routing-choice-indicator { position:relative; flex:0 0 auto; width:26px; height:26px; margin-top:2px; border:1.5px solid rgba(71, 85, 105, 0.42); border-radius:999px; background:linear-gradient(180deg, rgba(255, 255, 255, 0.99) 0%, rgba(241, 245, 249, 0.99) 100%); box-shadow:inset 0 1px 0 rgba(255, 255, 255, 0.95), 0 10px 18px rgba(15, 23, 42, 0.08); transition:border-color .18s ease, box-shadow .18s ease, background .18s ease; }',
+			'.routeflux-routing-choice-indicator::after { content:""; position:absolute; inset:0; display:flex; align-items:center; justify-content:center; border-radius:999px; color:transparent; transform:scale(0.62); transition:transform .18s ease, background .18s ease, color .18s ease, box-shadow .18s ease; }',
+			'.routeflux-routing-choice-control:focus-visible + .routeflux-routing-choice-indicator { outline:2px solid rgba(34, 197, 94, 0.28); outline-offset:3px; }',
+			'.routeflux-routing-choice-selected .routeflux-routing-choice-indicator { border-color:rgba(22, 163, 74, 0.54); background:linear-gradient(180deg, rgba(240, 253, 244, 0.99) 0%, rgba(220, 252, 231, 0.99) 100%); box-shadow:inset 0 1px 0 rgba(255, 255, 255, 0.96), 0 12px 20px rgba(21, 128, 61, 0.12); }',
+			'.routeflux-routing-choice-selected .routeflux-routing-choice-indicator::after { content:"\\2713"; background:linear-gradient(180deg, #22c55e 0%, #15803d 100%); color:#ffffff; font-size:15px; font-weight:900; transform:scale(1); box-shadow:0 10px 18px rgba(21, 128, 61, 0.28); }',
+			'.routeflux-routing-choice-copy { flex:1 1 auto; min-width:0; }',
 			'.routeflux-routing-choice-title { display:block; font-weight:800; font-size:clamp(18px, 0.55vw + 15px, 24px); color:var(--routeflux-routing-ink); letter-spacing:-0.02em; }',
 			'.routeflux-routing-choice-description { display:block; margin-top:6px; color:var(--routeflux-routing-ink-muted); line-height:1.55; font-size:15px; }',
 			'.routeflux-routing-editor-head { display:grid; gap:10px; margin-bottom:16px; }',
@@ -1202,6 +1210,7 @@ return view.extend({
 					E('div', { 'class': 'routeflux-routing-mode-grid' }, [
 						E('label', { 'class': choiceClass(this.formState.mode === 'disabled') }, [
 							E('input', {
+								'class': 'routeflux-routing-choice-control',
 								'type': 'radio',
 								'name': 'routeflux-routing-mode',
 								'value': 'disabled',
@@ -1210,7 +1219,8 @@ return view.extend({
 									this.handleModeChange(ev);
 								}, this)
 							}),
-							E('span', {}, [
+							E('span', { 'class': 'routeflux-routing-choice-indicator', 'aria-hidden': 'true' }, []),
+							E('span', { 'class': 'routeflux-routing-choice-copy' }, [
 								E('span', { 'class': 'routeflux-routing-choice-title' }, [ _('Off') ]),
 								E('span', { 'class': 'routeflux-routing-choice-description' }, [
 									_('Keep RouteFlux connected if you want, but do not intercept router traffic from LuCI.')
@@ -1219,6 +1229,7 @@ return view.extend({
 						]),
 						E('label', { 'class': choiceClass(this.formState.mode === 'bypass') }, [
 							E('input', {
+								'class': 'routeflux-routing-choice-control',
 								'type': 'radio',
 								'name': 'routeflux-routing-mode',
 								'value': 'bypass',
@@ -1227,7 +1238,8 @@ return view.extend({
 									this.handleModeChange(ev);
 								}, this)
 							}),
-							E('span', {}, [
+							E('span', { 'class': 'routeflux-routing-choice-indicator', 'aria-hidden': 'true' }, []),
+							E('span', { 'class': 'routeflux-routing-choice-copy' }, [
 								E('span', { 'class': 'routeflux-routing-choice-title' }, [ _('Bypass') ]),
 								E('span', { 'class': 'routeflux-routing-choice-description' }, [
 									_('Proxy everything except the services, domains, IPv4 targets, and optional device exclusions listed below.')
@@ -1241,6 +1253,7 @@ return view.extend({
 					E('div', { 'class': 'routeflux-routing-dns-grid' }, [
 						E('label', { 'class': choiceClass(this.formState.dns_choice === 'system') }, [
 							E('input', {
+								'class': 'routeflux-routing-choice-control',
 								'type': 'radio',
 								'name': 'routeflux-routing-dns',
 								'value': 'system',
@@ -1249,7 +1262,8 @@ return view.extend({
 									this.handleDNSChoiceChange(ev);
 								}, this)
 							}),
-							E('span', {}, [
+							E('span', { 'class': 'routeflux-routing-choice-indicator', 'aria-hidden': 'true' }, []),
+							E('span', { 'class': 'routeflux-routing-choice-copy' }, [
 								E('span', { 'class': 'routeflux-routing-choice-title' }, [ _('System DNS') ]),
 								E('span', { 'class': 'routeflux-routing-choice-description' }, [
 									_('Leave DNS exactly as the router already handles it.')
@@ -1258,6 +1272,7 @@ return view.extend({
 						]),
 						E('label', { 'class': choiceClass(this.formState.dns_choice === 'default') }, [
 							E('input', {
+								'class': 'routeflux-routing-choice-control',
 								'type': 'radio',
 								'name': 'routeflux-routing-dns',
 								'value': 'default',
@@ -1266,7 +1281,8 @@ return view.extend({
 									this.handleDNSChoiceChange(ev);
 								}, this)
 							}),
-							E('span', {}, [
+							E('span', { 'class': 'routeflux-routing-choice-indicator', 'aria-hidden': 'true' }, []),
+							E('span', { 'class': 'routeflux-routing-choice-copy' }, [
 								E('span', { 'class': 'routeflux-routing-choice-title' }, [ _('RouteFlux Recommended DNS') ]),
 								E('span', { 'class': 'routeflux-routing-choice-description' }, [
 									_('Use the everyday RouteFlux DNS profile: encrypted public DNS with local names kept on the router.')

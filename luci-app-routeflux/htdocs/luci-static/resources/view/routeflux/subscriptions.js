@@ -290,6 +290,21 @@ function notificationParagraph(message) {
 	return E('p', {}, [ message ]);
 }
 
+function formatSecurityLabel(value) {
+	var normalized = trim(value).toLowerCase();
+
+	if (normalized === '')
+		return '-';
+
+	if (normalized === 'tls' || normalized === 'xtls' || normalized === 'utls')
+		return normalized.toUpperCase();
+
+	if (normalized === 'reality')
+		return 'Reality';
+
+	return titleWords(normalized.replace(/[-_]+/g, ' '));
+}
+
 function normalizeCommandError(value, fallback) {
 	var text = trim(value || '');
 	var lines;
@@ -1021,6 +1036,7 @@ return view.extend({
 				responsiveTableCell(_('Address'), address, 'routeflux-node-cell-address'),
 				responsiveTableCell(_('Protocol'), firstNonEmpty([ node.protocol ], '-')),
 				responsiveTableCell(_('Transport'), firstNonEmpty([ node.transport ], '-')),
+				responsiveTableCell(_('Security'), formatSecurityLabel(node.security)),
 				responsiveTableCell(_('Actions'), [
 					E('div', { 'class': 'routeflux-node-actions' }, [
 						E('button', {
@@ -1042,6 +1058,7 @@ return view.extend({
 					E('th', { 'class': 'th' }, [ _('Address') ]),
 					E('th', { 'class': 'th' }, [ _('Protocol') ]),
 					E('th', { 'class': 'th' }, [ _('Transport') ]),
+					E('th', { 'class': 'th' }, [ _('Security') ]),
 					E('th', { 'class': 'th right routeflux-node-heading-actions' }, [ _('Actions') ])
 				])
 			].concat(rows))
@@ -1179,7 +1196,7 @@ return view.extend({
 			'.routeflux-traffic-meter-fill { height:100%; border-radius:inherit; background:linear-gradient(90deg, #22c55e 0%, #14b8a6 100%); }',
 			'.routeflux-traffic-shell-unlimited .routeflux-traffic-primary { color:#17603d; }',
 			'.routeflux-node-table-wrap { width:100%; max-width:100%; overflow-x:auto; -webkit-overflow-scrolling:touch; }',
-			'.routeflux-node-table { width:100%; min-width:760px; table-layout:fixed; }',
+			'.routeflux-node-table { width:100%; min-width:860px; table-layout:fixed; }',
 			'.routeflux-node-table .th, .routeflux-node-table .td { vertical-align:middle; overflow-wrap:anywhere; word-break:break-word; }',
 			'.routeflux-node-heading-actions { text-align:right; }',
 			'.routeflux-node-actions { display:flex; justify-content:flex-end; }',

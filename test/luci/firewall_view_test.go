@@ -47,6 +47,48 @@ func TestFirewallViewDefinesReadableContrastTheme(t *testing.T) {
 	}
 }
 
+func TestFirewallViewUsesGreenSelectedChoiceState(t *testing.T) {
+	t.Parallel()
+
+	source := readFirewallViewSource(t)
+
+	for _, want := range []string{
+		"routeflux-routing-choice-indicator",
+		"routeflux-routing-choice-control",
+		"rgba(34, 197, 94, 0.52)",
+		"rgba(220, 252, 231, 0.99)",
+		"content:\"\\\\2713\"",
+	} {
+		if !strings.Contains(source, want) {
+			t.Fatalf("routing view missing green choice marker %q", want)
+		}
+	}
+}
+
+func TestFirewallViewReRendersAfterRoutingChoiceChange(t *testing.T) {
+	t.Parallel()
+
+	source := readFirewallViewSource(t)
+
+	modeStart := strings.Index(source, "handleModeChange: function(ev) {")
+	dnsStart := strings.Index(source, "handleDNSChoiceChange: function(ev) {")
+	serviceStart := strings.Index(source, "handleServiceChoiceChange: function(ev) {")
+	if modeStart < 0 || dnsStart < 0 || serviceStart < 0 {
+		t.Fatal("routing view missing expected change handlers")
+	}
+
+	modeBlock := source[modeStart:dnsStart]
+	dnsBlock := source[dnsStart:serviceStart]
+
+	if !strings.Contains(modeBlock, "this.renderIntoRoot();") {
+		t.Fatal("handleModeChange must re-render the routing cards")
+	}
+
+	if !strings.Contains(dnsBlock, "this.renderIntoRoot();") {
+		t.Fatal("handleDNSChoiceChange must re-render the dns cards")
+	}
+}
+
 func TestFirewallViewKeepsIntroOnThemeColors(t *testing.T) {
 	t.Parallel()
 
