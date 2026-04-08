@@ -101,6 +101,36 @@ func TestRenderDiagnosticsTextIncludesIPv6FailState(t *testing.T) {
 	}
 }
 
+func TestRenderDiagnosticsTextIncludesDNSRuntime(t *testing.T) {
+	t.Parallel()
+
+	text := renderDiagnosticsText(diagnosticsSnapshot{
+		Status: api.StatusResponse{
+			State: domain.DefaultRuntimeState(),
+		},
+		DNS: domain.DNSRuntimeStatus{
+			Available:           true,
+			Active:              true,
+			LocalDNSListen:      "127.0.0.1",
+			LocalDNSPort:        1053,
+			DNSMasqSnippetPath:  "/tmp/dnsmasq.d/routeflux-dns.conf",
+			DNSMasqSnippetFound: true,
+			SystemResolvers:     []string{"185.154.74.2", "8.8.8.8"},
+		},
+	})
+
+	for _, want := range []string{
+		"dns-runtime-active=true",
+		"dns-runtime-listen=127.0.0.1:1053",
+		"dns-runtime-snippet=/tmp/dnsmasq.d/routeflux-dns.conf",
+		"dns-runtime-system-resolvers=185.154.74.2, 8.8.8.8",
+	} {
+		if !strings.Contains(text, want) {
+			t.Fatalf("expected diagnostics text to include %q, got %q", want, text)
+		}
+	}
+}
+
 func TestDiagnosticsTransparentQUICPolicyMarksIncompatibleNodeAsBlocked(t *testing.T) {
 	t.Parallel()
 

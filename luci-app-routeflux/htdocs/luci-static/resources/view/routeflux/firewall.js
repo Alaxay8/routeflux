@@ -1314,7 +1314,7 @@ return view.extend({
 							E('span', { 'class': 'routeflux-routing-choice-copy' }, [
 								E('span', { 'class': 'routeflux-routing-choice-title' }, [ _('RouteFlux Recommended DNS') ]),
 								E('span', { 'class': 'routeflux-routing-choice-description' }, [
-									_('Use the everyday RouteFlux DNS profile: encrypted public DNS with local names kept on the router.')
+									_('Use the everyday RouteFlux DNS profile: encrypted public DNS with local names kept on the router. On OpenWrt while connected, router and LAN public DNS also follow this profile through the local Xray DNS runtime.')
 								])
 							])
 						])

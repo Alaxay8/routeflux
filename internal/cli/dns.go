@@ -15,11 +15,13 @@ func newDNSCmd(opts *rootOptions) *cobra.Command {
 		Use:   "dns",
 		Short: "Easy DNS settings for RouteFlux",
 		Long: strings.TrimSpace(`
-DNS controls how RouteFlux tells Xray to resolve domain names.
+DNS controls how RouteFlux resolves public DNS while the proxy runtime is active.
 
 Think of it like this:
 - mode answers "where should DNS go?"
 - transport answers "how should it travel?"
+
+On OpenWrt, RouteFlux can also point router and LAN DNS at a local Xray DNS runtime while a node is connected.
 
 Use this command if you want DNS help in plain language instead of raw settings keys.
 `),
@@ -27,6 +29,7 @@ Use this command if you want DNS help in plain language instead of raw settings 
 routeflux dns get
 routeflux dns explain
 routeflux dns default
+routeflux dns apply --mode split --transport doh --servers "1.1.1.1,1.0.0.1" --bootstrap "" --direct-domains "domain:lan,full:router.lan"
 routeflux dns set default
 routeflux dns set mode system
 routeflux dns set servers "dns.google,1.1.1.1"
@@ -40,6 +43,7 @@ routeflux dns set mode split
 	cmd.AddCommand(
 		newDNSGetCmd(opts),
 		newDNSDefaultCmd(opts),
+		newDNSApplyCmd(opts),
 		newDNSSetCmd(opts),
 		newDNSExplainCmd(opts),
 	)
@@ -132,6 +136,77 @@ If you just want the recommended setup, use:
 	}
 }
 
+func newDNSApplyCmd(opts *rootOptions) *cobra.Command {
+	var mode string
+	var transport string
+	var servers string
+	var bootstrap string
+	var directDomains string
+
+	cmd := &cobra.Command{
+		Use:   "apply",
+		Short: "Replace the full DNS profile in one step",
+		Long: strings.TrimSpace(`
+Apply a complete DNS profile atomically.
+
+Unlike repeated "dns set" calls, this updates mode, transport, servers, bootstrap,
+and split DNS direct-domains together, then reapplies the runtime only once.
+
+This is the safe path for LuCI and scripted profile changes while connected.
+`),
+		Example: strings.TrimSpace(`
+routeflux dns apply --mode split --transport doh --servers "1.1.1.1,1.0.0.1" --bootstrap "" --direct-domains "domain:lan,full:router.lan"
+routeflux dns apply --mode system --transport plain --servers "" --bootstrap "" --direct-domains ""
+`),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			required := []string{"mode", "transport", "servers", "bootstrap", "direct-domains"}
+			missing := make([]string, 0, len(required))
+			for _, name := range required {
+				if !cmd.Flags().Changed(name) {
+					missing = append(missing, "--"+name)
+				}
+			}
+			if len(missing) > 0 {
+				return fmt.Errorf("dns apply requires %s", strings.Join(missing, ", "))
+			}
+
+			parsedMode, err := domain.ParseDNSMode(mode)
+			if err != nil {
+				return err
+			}
+			parsedTransport, err := domain.ParseDNSTransport(transport)
+			if err != nil {
+				return err
+			}
+
+			settings, err := opts.service.UpdateDNS(cmd.Context(), domain.DNSSettings{
+				Mode:          parsedMode,
+				Transport:     parsedTransport,
+				Servers:       parseListCSV(servers),
+				Bootstrap:     parseListCSV(bootstrap),
+				DirectDomains: parseListCSV(directDomains),
+			})
+			if err != nil {
+				return err
+			}
+
+			if opts.jsonOutput {
+				return printOutput(cmd, true, settings.DNS, "")
+			}
+
+			return printOutput(cmd, false, nil, "Applied DNS settings atomically.")
+		},
+	}
+
+	cmd.Flags().StringVar(&mode, "mode", "", "DNS mode: system, remote, split, disabled")
+	cmd.Flags().StringVar(&transport, "transport", "", "DNS transport: plain, doh")
+	cmd.Flags().StringVar(&servers, "servers", "", "Comma-separated upstream DNS servers")
+	cmd.Flags().StringVar(&bootstrap, "bootstrap", "", "Comma-separated bootstrap DNS servers")
+	cmd.Flags().StringVar(&directDomains, "direct-domains", "", "Comma-separated split DNS direct domains")
+
+	return cmd
+}
+
 func newDNSDefaultCmd(opts *rootOptions) *cobra.Command {
 	return &cobra.Command{
 		Use:   "default",
@@ -145,6 +220,9 @@ This sets:
 - servers=1.1.1.1,1.0.0.1
 - bootstrap=(empty)
 - direct-domains=domain:lan,full:router.lan
+
+On OpenWrt, while a node is connected, this also routes router and LAN public DNS
+through the local Xray DNS runtime and returns to system DNS on disconnect.
 `),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			return applyDefaultDNSProfile(cmd, opts)
@@ -183,7 +261,7 @@ Other options:
 
 Easiest starting point:
 - routeflux dns set default
-  Good for most users: local names stay local, public DNS is encrypted.
+  Good for most users: local names stay local, public DNS is encrypted, and on OpenWrt the router/LAN DNS follows it while connected.
 `))
 		},
 	}
@@ -220,7 +298,7 @@ func renderDNSSettingsText(dns domain.DNSSettings) string {
 	if isDefaultDNSProfile(dns) {
 		lines = append(lines,
 			"profile=routeflux-default",
-			"profile-help=Encrypted DNS for public domains, local names stay local.",
+			"profile-help=Encrypted public DNS with local names kept local. On OpenWrt while connected, router and LAN DNS follow this profile.",
 		)
 	}
 
@@ -232,9 +310,9 @@ func dnsModeHelp(mode domain.DNSMode) string {
 	case domain.DNSModeSystem:
 		return "Leave DNS as it is. The router keeps using its usual DNS."
 	case domain.DNSModeRemote:
-		return "Send every DNS request to the DNS servers you chose."
+		return "Send every DNS request to the DNS servers you chose. On OpenWrt while connected, router and LAN DNS can follow this too."
 	case domain.DNSModeSplit:
-		return "Keep local home names on the router, send the rest to your chosen DNS."
+		return "Keep local home names on the router, send the rest to your chosen DNS. On OpenWrt while connected, router and LAN public DNS use the local Xray DNS runtime."
 	case domain.DNSModeDisabled:
 		return "Do not write DNS settings into the Xray config."
 	default:
@@ -281,6 +359,7 @@ What it does:
 - Uses encrypted DNS over HTTPS
 - Sends public DNS through Cloudflare
 - Keeps home-network names like .lan local
+- On OpenWrt while connected, routes router and LAN public DNS through the local Xray DNS runtime
 
 Profile:
 - mode=split
@@ -289,4 +368,22 @@ Profile:
 - bootstrap=(empty)
 - direct-domains=domain:lan,full:router.lan
 `))
+}
+
+func parseListCSV(raw string) []string {
+	if strings.TrimSpace(raw) == "" {
+		return nil
+	}
+
+	parts := strings.Split(raw, ",")
+	out := make([]string, 0, len(parts))
+	for _, part := range parts {
+		part = strings.TrimSpace(part)
+		if part == "" {
+			continue
+		}
+		out = append(out, part)
+	}
+
+	return out
 }

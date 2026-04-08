@@ -114,6 +114,20 @@ type DNSSettings struct {
 	DirectDomains []string     `json:"direct_domains"`
 }
 
+// DNSRuntimeStatus reports the effective OpenWrt DNS runtime managed by RouteFlux.
+type DNSRuntimeStatus struct {
+	Available           bool     `json:"available"`
+	Active              bool     `json:"active"`
+	LocalDNSListen      string   `json:"local_dns_listen,omitempty"`
+	LocalDNSPort        int      `json:"local_dns_port,omitempty"`
+	DNSMasqSnippetPath  string   `json:"dnsmasq_snippet_path,omitempty"`
+	DNSMasqSnippetFound bool     `json:"dnsmasq_snippet_found"`
+	ResolvFile          string   `json:"resolv_file,omitempty"`
+	SystemResolvers     []string `json:"system_resolvers,omitempty"`
+	DegradedReason      string   `json:"degraded_reason,omitempty"`
+	Error               string   `json:"error,omitempty"`
+}
+
 // FirewallMode controls the active transparent-routing strategy.
 type FirewallMode string
 

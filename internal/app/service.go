@@ -50,6 +50,14 @@ type Firewaller interface {
 	Disable(ctx context.Context) error
 }
 
+// DNSManager applies RouteFlux-managed LAN/router DNS integration.
+type DNSManager interface {
+	SystemResolvers(ctx context.Context) ([]string, error)
+	Apply(ctx context.Context, settings domain.DNSSettings, listen string, port int) error
+	Disable(ctx context.Context) error
+	Status(ctx context.Context) (domain.DNSRuntimeStatus, error)
+}
+
 // HostResolver resolves node hostnames before backend apply.
 type HostResolver interface {
 	LookupIPAddr(ctx context.Context, host string) ([]net.IPAddr, error)
@@ -95,6 +103,7 @@ type applyNodeSelectionOptions struct {
 type Service struct {
 	store                   Store
 	backend                 backend.Backend
+	dns                     DNSManager
 	firewall                Firewaller
 	httpClient              *http.Client
 	subscriptionTLS12Client *http.Client
@@ -121,6 +130,7 @@ type Service struct {
 type Dependencies struct {
 	Store              Store
 	Backend            backend.Backend
+	DNSManager         DNSManager
 	Firewaller         Firewaller
 	HTTPClient         *http.Client
 	Checker            probe.Checker
@@ -155,6 +165,8 @@ const (
 	backendReadyCheckDelay                = 250 * time.Millisecond
 	backendEgressProbeTimeout             = 12 * time.Second
 	backendEgressProbeRetryDelay          = 250 * time.Millisecond
+	localDNSListen                        = "127.0.0.1"
+	localDNSPort                          = 1053
 )
 
 var subscriptionShareLinkPattern = regexp.MustCompile(`(?i)(vless|vmess|trojan|ss)://[^"'<>]+`)
@@ -186,6 +198,7 @@ func NewService(deps Dependencies) *Service {
 	service := &Service{
 		store:                   deps.Store,
 		backend:                 deps.Backend,
+		dns:                     deps.DNSManager,
 		firewall:                deps.Firewaller,
 		httpClient:              ensureSubscriptionHTTPClient(deps.HTTPClient),
 		subscriptionTLS12Client: ensureSubscriptionTLS12HTTPClient(deps.HTTPClient),
@@ -450,13 +463,17 @@ func (s *Service) InspectXrayConfig(subscriptionID, nodeID string) (json.RawMess
 	if err != nil {
 		return nil, fmt.Errorf("load settings: %w", err)
 	}
+	runtimeSettings, err := s.prepareRuntimeDNSSettings(context.Background(), settings)
+	if err != nil {
+		return nil, fmt.Errorf("prepare runtime dns settings: %w", err)
+	}
 
 	sub, node, err := s.subscriptionNode(subscriptionID, nodeID)
 	if err != nil {
 		return nil, err
 	}
 
-	rendered, err := s.backend.GenerateConfig(s.backendConfigRequest(settings, node, domain.SelectionModeManual, 10808, 10809, firewallEnabled(settings.Firewall)))
+	rendered, err := s.backend.GenerateConfig(s.backendConfigRequest(runtimeSettings, node, domain.SelectionModeManual, 10808, 10809, firewallEnabled(settings.Firewall), s.dns != nil && localDNSRuntimeEnabled(settings.DNS)))
 	if err != nil {
 		return nil, fmt.Errorf("generate xray config for %s/%s: %w", sub.ID, node.ID, err)
 	}
@@ -480,6 +497,10 @@ func (s *Service) InspectSpeed(ctx context.Context, subscriptionID, nodeID strin
 	if err != nil {
 		return speedtest.Result{}, fmt.Errorf("load settings: %w", err)
 	}
+	runtimeSettings, err := s.prepareRuntimeDNSSettings(ctx, settings)
+	if err != nil {
+		return speedtest.Result{}, fmt.Errorf("prepare runtime dns settings: %w", err)
+	}
 
 	_, node, err := s.subscriptionNode(subscriptionID, nodeID)
 	if err != nil {
@@ -495,7 +516,7 @@ func (s *Service) InspectSpeed(ctx context.Context, subscriptionID, nodeID strin
 		return speedtest.Result{}, fmt.Errorf("allocate speed test HTTP port: %w", err)
 	}
 
-	rendered, err := s.backend.GenerateConfig(s.backendConfigRequest(settings, node, domain.SelectionModeManual, socksPort, httpPort, false))
+	rendered, err := s.backend.GenerateConfig(s.backendConfigRequest(runtimeSettings, node, domain.SelectionModeManual, socksPort, httpPort, false, s.dns != nil && localDNSRuntimeEnabled(settings.DNS)))
 	if err != nil {
 		return speedtest.Result{}, fmt.Errorf("generate speed test config: %w", err)
 	}
@@ -815,6 +836,15 @@ func (s *Service) RuntimeStatus(ctx context.Context) (backend.RuntimeStatus, err
 	}
 
 	return s.backend.Status(ctx)
+}
+
+// DNSStatus returns the current RouteFlux-managed DNS runtime status, if available.
+func (s *Service) DNSStatus(ctx context.Context) (domain.DNSRuntimeStatus, error) {
+	if s.dns == nil {
+		return domain.DNSRuntimeStatus{}, nil
+	}
+
+	return s.dns.Status(ctx)
 }
 
 // IPv6Status returns the current RouteFlux-managed IPv6 state, if available.
@@ -1926,6 +1956,13 @@ func (s *Service) ApplyDefaultDNS(ctx context.Context) (domain.Settings, error) 
 	})
 }
 
+// UpdateDNS replaces the full DNS profile in one step and reapplies runtime state once.
+func (s *Service) UpdateDNS(ctx context.Context, dns domain.DNSSettings) (domain.Settings, error) {
+	return runStoreWriteLockedResult(s, func() (domain.Settings, error) {
+		return s.updateDNS(ctx, dns)
+	})
+}
+
 func (s *Service) applyDefaultDNS(ctx context.Context) (domain.Settings, error) {
 	settings, err := s.store.LoadSettings()
 	if err != nil {
@@ -1933,6 +1970,40 @@ func (s *Service) applyDefaultDNS(ctx context.Context) (domain.Settings, error) 
 	}
 
 	settings.DNS = domain.DefaultDNSSettings()
+	if err := s.store.SaveSettings(settings); err != nil {
+		return domain.Settings{}, fmt.Errorf("save settings: %w", err)
+	}
+
+	if err := s.reapplyCurrentConnection(ctx); err != nil {
+		return domain.Settings{}, err
+	}
+
+	return settings, nil
+}
+
+func (s *Service) updateDNS(ctx context.Context, dns domain.DNSSettings) (domain.Settings, error) {
+	settings, err := s.store.LoadSettings()
+	if err != nil {
+		return domain.Settings{}, fmt.Errorf("load settings: %w", err)
+	}
+
+	mode, err := domain.ParseDNSMode(string(dns.Mode))
+	if err != nil {
+		return domain.Settings{}, err
+	}
+	transport, err := domain.ParseDNSTransport(string(dns.Transport))
+	if err != nil {
+		return domain.Settings{}, err
+	}
+
+	settings.DNS = domain.DNSSettings{
+		Mode:          mode,
+		Transport:     transport,
+		Servers:       normalizeStringList(dns.Servers),
+		Bootstrap:     normalizeStringList(dns.Bootstrap),
+		DirectDomains: normalizeStringList(dns.DirectDomains),
+	}
+
 	if err := s.store.SaveSettings(settings); err != nil {
 		return domain.Settings{}, fmt.Errorf("save settings: %w", err)
 	}
@@ -2495,7 +2566,7 @@ func (s *Service) subscriptionNode(subscriptionID, nodeID string) (domain.Subscr
 	return sub, node, nil
 }
 
-func (s *Service) backendConfigRequest(settings domain.Settings, node domain.Node, mode domain.SelectionMode, socksPort, httpPort int, transparent bool) backend.ConfigRequest {
+func (s *Service) backendConfigRequest(settings domain.Settings, node domain.Node, mode domain.SelectionMode, socksPort, httpPort int, transparent bool, localDNS bool) backend.ConfigRequest {
 	req := backend.ConfigRequest{
 		Mode:                        mode,
 		Nodes:                       []domain.Node{node},
@@ -2504,6 +2575,9 @@ func (s *Service) backendConfigRequest(settings domain.Settings, node domain.Nod
 		DNS:                         settings.DNS,
 		SOCKSPort:                   socksPort,
 		HTTPPort:                    httpPort,
+		LocalDNSEnabled:             localDNS,
+		LocalDNSListen:              localDNSListen,
+		LocalDNSPort:                localDNSPort,
 		TransparentProxy:            transparent,
 		TransparentSelectiveCapture: transparentSelectiveCapture(settings.Firewall),
 		TransparentBlockQUIC:        domain.EffectiveTransparentBlockQUIC(settings.Firewall, &node),
@@ -2526,6 +2600,68 @@ func (s *Service) backendConfigRequest(settings domain.Settings, node domain.Nod
 	}
 
 	return req
+}
+
+func localDNSRuntimeEnabled(settings domain.DNSSettings) bool {
+	mode, err := domain.ParseDNSMode(string(settings.Mode))
+	if err != nil {
+		return false
+	}
+
+	return mode == domain.DNSModeRemote || mode == domain.DNSModeSplit
+}
+
+func dnsSettingsNeedSystemBootstrap(settings domain.DNSSettings) bool {
+	if len(settings.Bootstrap) > 0 {
+		return false
+	}
+
+	transport, err := domain.ParseDNSTransport(string(settings.Transport))
+	if err != nil || transport != domain.DNSTransportDoH {
+		return false
+	}
+
+	for _, server := range settings.Servers {
+		host := dnsServerHost(server)
+		if host == "" || net.ParseIP(host) != nil {
+			continue
+		}
+		return true
+	}
+
+	return false
+}
+
+func dnsServerHost(server string) string {
+	server = strings.TrimSpace(server)
+	if server == "" {
+		return ""
+	}
+
+	if parsed, err := url.Parse(server); err == nil && parsed.Host != "" {
+		return parsed.Hostname()
+	}
+	if parsed, err := url.Parse("//" + server); err == nil {
+		return parsed.Hostname()
+	}
+	return ""
+}
+
+func (s *Service) prepareRuntimeDNSSettings(ctx context.Context, settings domain.Settings) (domain.Settings, error) {
+	if s.dns == nil || !localDNSRuntimeEnabled(settings.DNS) || !dnsSettingsNeedSystemBootstrap(settings.DNS) {
+		return settings, nil
+	}
+
+	resolvers, err := s.dns.SystemResolvers(ctx)
+	if err != nil {
+		return domain.Settings{}, fmt.Errorf("detect system dns resolvers: %w", err)
+	}
+	if len(resolvers) == 0 {
+		return domain.Settings{}, fmt.Errorf("detect system dns resolvers: no upstream resolvers found")
+	}
+
+	settings.DNS.Bootstrap = append([]string(nil), resolvers...)
+	return settings, nil
 }
 
 func transparentSelectiveCapture(settings domain.FirewallSettings) bool {
@@ -2570,6 +2706,10 @@ func (s *Service) applyNodeSelection(ctx context.Context, sub domain.Subscriptio
 	if err := s.ensureManagedIPv6State(ctx, settings); err != nil {
 		return err
 	}
+	runtimeSettings, err := s.prepareRuntimeDNSSettings(ctx, settings)
+	if err != nil {
+		return fmt.Errorf("prepare runtime dns settings: %w", err)
+	}
 	if state.ActiveTransport == domain.TransportModeZapret && s.zapret != nil {
 		if err := s.zapret.Disable(ctx); err != nil {
 			return fmt.Errorf("disable zapret: %w", err)
@@ -2596,7 +2736,7 @@ func (s *Service) applyNodeSelection(ctx context.Context, sub domain.Subscriptio
 		}
 
 		s.logInfo("apply backend config", "subscription", sub.ID, "node", node.ID, "mode", mode, "resolved_address", resolvedNode.Address)
-		if err := s.backend.ApplyConfig(ctx, s.backendConfigRequest(settings, resolvedNode, mode, 10808, 10809, firewallEnabled(settings.Firewall))); err != nil {
+		if err := s.backend.ApplyConfig(ctx, s.backendConfigRequest(runtimeSettings, resolvedNode, mode, 10808, 10809, firewallEnabled(settings.Firewall), s.dns != nil && localDNSRuntimeEnabled(settings.DNS))); err != nil {
 			s.logWarn("apply backend config failed", "subscription", sub.ID, "node", node.ID, "mode", mode, "error", err.Error())
 			return s.handleNodeSelectionFailure(ctx, sub, node, mode, opts, fmt.Sprintf("apply backend config: %v", err), fmt.Errorf("apply backend config: %w", err))
 		}
@@ -2605,6 +2745,16 @@ func (s *Service) applyNodeSelection(ctx context.Context, sub domain.Subscriptio
 		}
 		if reason, err := s.ensureBackendEgress(ctx, settings, sub.ID, node.ID, mode); err != nil {
 			return s.handlePostApplyVerificationFailure(ctx, sub, node, mode, opts, rollbackSnapshot, reason, err)
+		}
+	}
+
+	if s.dns != nil {
+		if localDNSRuntimeEnabled(settings.DNS) {
+			if err := s.dns.Apply(ctx, settings.DNS, localDNSListen, localDNSPort); err != nil {
+				return s.handleNodeSelectionFailure(ctx, sub, node, mode, opts, fmt.Sprintf("apply dns runtime: %v", err), fmt.Errorf("apply dns runtime: %w", err))
+			}
+		} else if err := s.dns.Disable(ctx); err != nil {
+			return s.handleNodeSelectionFailure(ctx, sub, node, mode, opts, fmt.Sprintf("disable dns runtime: %v", err), fmt.Errorf("disable dns runtime: %w", err))
 		}
 	}
 
@@ -3139,6 +3289,18 @@ func parseStringList(raw string) []string {
 	return out
 }
 
+func normalizeStringList(values []string) []string {
+	out := make([]string, 0, len(values))
+	for _, value := range values {
+		value = strings.TrimSpace(value)
+		if value == "" {
+			continue
+		}
+		out = append(out, value)
+	}
+	return out
+}
+
 func normalizeFirewallSources(sources []string) []string {
 	out := make([]string, 0, len(sources))
 	for _, source := range sources {
@@ -3192,6 +3354,11 @@ func clearZapretTestState(state *domain.RuntimeState) {
 }
 
 func (s *Service) stopProxyTransport(ctx context.Context) error {
+	if s.dns != nil {
+		if err := s.dns.Disable(ctx); err != nil {
+			return fmt.Errorf("disable dns runtime: %w", err)
+		}
+	}
 	if s.backend != nil {
 		if err := s.backend.Stop(ctx); err != nil {
 			return fmt.Errorf("stop backend: %w", err)

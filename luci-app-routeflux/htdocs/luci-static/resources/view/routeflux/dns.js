@@ -464,29 +464,27 @@ return view.extend({
 		var servers = parseList(document.querySelector('#routeflux-dns-servers').value);
 		var bootstrap = parseList(document.querySelector('#routeflux-dns-bootstrap').value);
 		var directDomains = parseList(document.querySelector('#routeflux-dns-direct-domains').value);
-		var commands = [];
+		var changed;
 
-		if (trim(current.mode) !== mode)
-			commands.push([ 'dns', 'set', 'mode', mode ]);
+		changed = trim(current.mode) !== mode ||
+			trim(current.transport) !== transport ||
+			!listEquals(current.servers, servers) ||
+			!listEquals(current.bootstrap, bootstrap) ||
+			!listEquals(current.direct_domains, directDomains);
 
-		if (trim(current.transport) !== transport)
-			commands.push([ 'dns', 'set', 'transport', transport ]);
-
-		if (!listEquals(current.servers, servers))
-			commands.push([ 'dns', 'set', 'servers', listCSV(servers) ]);
-
-		if (!listEquals(current.bootstrap, bootstrap))
-			commands.push([ 'dns', 'set', 'bootstrap', listCSV(bootstrap) ]);
-
-		if (!listEquals(current.direct_domains, directDomains))
-			commands.push([ 'dns', 'set', 'direct-domains', listCSV(directDomains) ]);
-
-		if (commands.length === 0) {
+		if (!changed) {
 			ui.addNotification(null, notificationParagraph(_('No DNS changes to save.')), 'info');
 			return Promise.resolve();
 		}
 
-		return this.runCommands(commands, _('DNS settings saved.'));
+		return this.runCommands([[
+			'dns', 'apply',
+			'--mode=' + mode,
+			'--transport=' + transport,
+			'--servers=' + listCSV(servers),
+			'--bootstrap=' + listCSV(bootstrap),
+			'--direct-domains=' + listCSV(directDomains)
+		]], _('DNS settings saved.'));
 	},
 
 	handleRestoreDefault: function(ev) {
@@ -593,7 +591,7 @@ return view.extend({
 						])
 					]),
 					E('div', { 'class': 'cbi-value-description' }, [
-						_('System leaves DNS alone, remote sends everything upstream, split keeps local names local, and disabled skips RouteFlux DNS config.')
+						_('System leaves DNS alone, remote sends everything upstream, split keeps local names local, and disabled skips RouteFlux DNS config. On OpenWrt while connected, remote and split can also steer router/LAN public DNS through the local Xray DNS runtime.')
 					])
 				]),
 				E('div', { 'class': 'cbi-value' }, [
@@ -605,7 +603,7 @@ return view.extend({
 						])
 					]),
 					E('div', { 'class': 'cbi-value-description' }, [
-						_('DoH is the currently working encrypted DNS transport in the RouteFlux backend.')
+						_('DoH encrypts upstream public DNS. On OpenWrt while connected, the router and LAN can also use it through the local Xray DNS runtime.')
 					])
 				]),
 				E('div', { 'class': 'cbi-value' }, [

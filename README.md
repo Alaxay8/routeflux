@@ -165,6 +165,8 @@ On OpenWrt, enable the service when you want auto refresh, failover monitoring, 
 
 ### DNS and firewall helpers
 
+On OpenWrt, `routeflux dns set default` or `routeflux dns set mode remote|split` now affects the real router and LAN DNS path while a node is connected. RouteFlux points `dnsmasq` at a local Xray DNS runtime, keeps `.lan` style names local in split mode, and returns to system DNS on disconnect.
+
 ```bash
 routeflux dns get
 routeflux dns set default

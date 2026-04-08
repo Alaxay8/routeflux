@@ -17,6 +17,7 @@ type Generator struct{}
 const (
 	transparentTCPInboundTag = "transparent-in"
 	transparentUDPInboundTag = "transparent-udp-in"
+	localDNSInboundTag       = "dns-in"
 )
 
 // NewGenerator creates a config generator instance.
@@ -72,6 +73,20 @@ func (Generator) Generate(req backend.ConfigRequest) ([]byte, error) {
 			DomainStrategy: "AsIs",
 			Rules:          []xrayRouteRule{},
 		},
+	}
+
+	if req.LocalDNSEnabled {
+		cfg.Inbounds = append(cfg.Inbounds, localDNSInbound(req.LocalDNSListen, req.LocalDNSPort))
+		cfg.Outbounds = append(cfg.Outbounds, xrayCommonOutbound{
+			Tag:      "dns-out",
+			Protocol: "dns",
+			Settings: map[string]any{"nonIPQuery": "skip"},
+		})
+		cfg.Routing.Rules = append(cfg.Routing.Rules, xrayRouteRule{
+			Type:        "field",
+			InboundTag:  []string{localDNSInboundTag},
+			OutboundTag: "dns-out",
+		})
 	}
 
 	if rule, err := directDNSRouteRule(req.DNS); err != nil {
@@ -265,6 +280,20 @@ func transparentInbound(tag string, port int, network string, tproxyMode string)
 			"sockopt": map[string]any{
 				"tproxy": tproxyMode,
 			},
+		},
+	}
+}
+
+func localDNSInbound(listen string, port int) xrayInbound {
+	return xrayInbound{
+		Tag:      localDNSInboundTag,
+		Listen:   firstNonEmpty(listen, "127.0.0.1"),
+		Port:     fallbackPort(port, 1053),
+		Protocol: "dokodemo-door",
+		Settings: map[string]any{
+			"address": "1.1.1.1",
+			"port":    53,
+			"network": "tcp,udp",
 		},
 	}
 }

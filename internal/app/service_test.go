@@ -3018,6 +3018,201 @@ func TestApplyDefaultDNSReappliesCurrentConnection(t *testing.T) {
 	}
 }
 
+func TestUpdateDNSReappliesCurrentConnectionOnce(t *testing.T) {
+	t.Parallel()
+
+	store := &memoryStore{
+		settings: domain.DefaultSettings(),
+		state:    domain.DefaultRuntimeState(),
+		subs: []domain.Subscription{
+			{
+				ID: "sub-1",
+				Nodes: []domain.Node{
+					{
+						ID:       "node-1",
+						Name:     "Germany",
+						Protocol: domain.ProtocolVLESS,
+						Address:  "de.example.com",
+						Port:     443,
+						UUID:     "11111111-1111-1111-1111-111111111111",
+					},
+				},
+			},
+		},
+	}
+	store.state.Connected = true
+	store.state.Mode = domain.SelectionModeManual
+	store.state.ActiveSubscriptionID = "sub-1"
+	store.state.ActiveNodeID = "node-1"
+
+	runtimeBackend := &recordingBackend{}
+	service := NewService(Dependencies{
+		Store:   store,
+		Backend: runtimeBackend,
+	})
+
+	updated, err := service.UpdateDNS(context.Background(), domain.DNSSettings{
+		Mode:          domain.DNSModeSplit,
+		Transport:     domain.DNSTransportDoH,
+		Servers:       []string{"1.1.1.1", "1.0.0.1"},
+		Bootstrap:     nil,
+		DirectDomains: []string{"domain:lan", "full:router.lan"},
+	})
+	if err != nil {
+		t.Fatalf("update dns: %v", err)
+	}
+
+	if len(runtimeBackend.requests) != 1 {
+		t.Fatalf("expected one backend reapply, got %d", len(runtimeBackend.requests))
+	}
+	got := runtimeBackend.requests[0].DNS
+	if got.Mode != domain.DNSModeSplit || got.Transport != domain.DNSTransportDoH {
+		t.Fatalf("unexpected request dns mode/transport: %+v", got)
+	}
+	if len(got.Servers) != 2 || got.Servers[0] != "1.1.1.1" || got.Servers[1] != "1.0.0.1" {
+		t.Fatalf("unexpected request dns servers: %+v", got.Servers)
+	}
+	if len(updated.DNS.DirectDomains) != 2 || updated.DNS.DirectDomains[0] != "domain:lan" || updated.DNS.DirectDomains[1] != "full:router.lan" {
+		t.Fatalf("unexpected stored direct domains: %+v", updated.DNS.DirectDomains)
+	}
+}
+
+func TestConnectManualAppliesLocalDNSRuntime(t *testing.T) {
+	t.Parallel()
+
+	store := &memoryStore{
+		settings: domain.DefaultSettings(),
+		state:    domain.DefaultRuntimeState(),
+		subs: []domain.Subscription{
+			{
+				ID: "sub-1",
+				Nodes: []domain.Node{
+					{
+						ID:       "node-1",
+						Name:     "Germany",
+						Protocol: domain.ProtocolVLESS,
+						Address:  "de.example.com",
+						Port:     443,
+						UUID:     "11111111-1111-1111-1111-111111111111",
+					},
+				},
+			},
+		},
+	}
+	runtimeBackend := &recordingBackend{}
+	dnsManager := &recordingDNSManager{}
+	service := NewService(Dependencies{
+		Store:      store,
+		Backend:    runtimeBackend,
+		DNSManager: dnsManager,
+	})
+
+	if err := service.ConnectManual(context.Background(), "sub-1", "node-1"); err != nil {
+		t.Fatalf("connect manual: %v", err)
+	}
+
+	if len(runtimeBackend.requests) != 1 {
+		t.Fatalf("expected one backend request, got %d", len(runtimeBackend.requests))
+	}
+	req := runtimeBackend.requests[0]
+	if !req.LocalDNSEnabled || req.LocalDNSListen != "127.0.0.1" || req.LocalDNSPort != 1053 {
+		t.Fatalf("unexpected local dns request: %+v", req)
+	}
+	if dnsManager.applyCalls != 1 {
+		t.Fatalf("expected dns manager apply once, got %d", dnsManager.applyCalls)
+	}
+	if dnsManager.lastListen != "127.0.0.1" || dnsManager.lastPort != 1053 {
+		t.Fatalf("unexpected dns runtime endpoint: listen=%q port=%d", dnsManager.lastListen, dnsManager.lastPort)
+	}
+}
+
+func TestDisconnectDisablesDNSBeforeStoppingBackendAndFirewall(t *testing.T) {
+	t.Parallel()
+
+	store := &memoryStore{
+		settings: domain.DefaultSettings(),
+		state: domain.RuntimeState{
+			Connected:            true,
+			Mode:                 domain.SelectionModeManual,
+			ActiveSubscriptionID: "sub-1",
+			ActiveNodeID:         "node-1",
+			ActiveTransport:      domain.TransportModeProxy,
+		},
+	}
+	order := []string{}
+	runtimeBackend := &recordingBackend{order: &order}
+	dnsManager := &recordingDNSManager{order: &order}
+	firewall := &recordingFirewaller{order: &order}
+	service := NewService(Dependencies{
+		Store:      store,
+		Backend:    runtimeBackend,
+		DNSManager: dnsManager,
+		Firewaller: firewall,
+	})
+
+	if err := service.Disconnect(context.Background()); err != nil {
+		t.Fatalf("disconnect: %v", err)
+	}
+
+	if got, want := strings.Join(order, ","), "dns.disable,backend.stop,firewall.disable"; got != want {
+		t.Fatalf("unexpected teardown order: got %q want %q", got, want)
+	}
+}
+
+func TestConnectManualDNSManagerFailureTearsDownRuntime(t *testing.T) {
+	t.Parallel()
+
+	store := &memoryStore{
+		settings: domain.DefaultSettings(),
+		state:    domain.DefaultRuntimeState(),
+		subs: []domain.Subscription{
+			{
+				ID: "sub-1",
+				Nodes: []domain.Node{
+					{
+						ID:       "node-1",
+						Name:     "Germany",
+						Protocol: domain.ProtocolVLESS,
+						Address:  "de.example.com",
+						Port:     443,
+						UUID:     "11111111-1111-1111-1111-111111111111",
+					},
+				},
+			},
+		},
+	}
+	order := []string{}
+	runtimeBackend := &recordingBackend{order: &order}
+	dnsManager := &recordingDNSManager{
+		order:    &order,
+		applyErr: errors.New("dns apply failed"),
+	}
+	firewall := &recordingFirewaller{order: &order}
+	service := NewService(Dependencies{
+		Store:      store,
+		Backend:    runtimeBackend,
+		DNSManager: dnsManager,
+		Firewaller: firewall,
+	})
+
+	err := service.ConnectManual(context.Background(), "sub-1", "node-1")
+	if err == nil {
+		t.Fatal("expected connect manual to fail")
+	}
+	if !strings.Contains(err.Error(), "apply dns runtime") {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if runtimeBackend.stopCalls != 1 {
+		t.Fatalf("expected backend stop on dns failure, got %d", runtimeBackend.stopCalls)
+	}
+	if dnsManager.disableCalls != 1 {
+		t.Fatalf("expected dns manager disable on dns failure, got %d", dnsManager.disableCalls)
+	}
+	if firewall.disableCalls != 1 {
+		t.Fatalf("expected firewall disable on dns failure, got %d", firewall.disableCalls)
+	}
+}
+
 func TestRefreshSubscriptionParsesJSONArrayOfConfigs(t *testing.T) {
 	t.Parallel()
 
@@ -3309,6 +3504,7 @@ type recordingBackend struct {
 	rollbackErr          error
 	rollbackSnapshot     backend.RollbackSnapshot
 	lastRollbackSnapshot backend.RollbackSnapshot
+	order                *[]string
 }
 
 func (b *recordingBackend) GenerateConfig(req backend.ConfigRequest) ([]byte, error) {
@@ -3344,6 +3540,9 @@ func (b *recordingBackend) Start(context.Context) error {
 
 func (b *recordingBackend) Stop(context.Context) error {
 	b.stopCalls++
+	if b.order != nil {
+		*b.order = append(*b.order, "backend.stop")
+	}
 	return nil
 }
 
@@ -3372,6 +3571,23 @@ type recordingFirewaller struct {
 	validated    []domain.FirewallSettings
 	disableCalls int
 	validateErr  error
+	order        *[]string
+}
+
+type recordingDNSManager struct {
+	applyCalls   int
+	disableCalls int
+	systemCalls  int
+	applyErr     error
+	disableErr   error
+	systemErr    error
+	system       []string
+	status       domain.DNSRuntimeStatus
+	statusErr    error
+	lastSettings domain.DNSSettings
+	lastListen   string
+	lastPort     int
+	order        *[]string
 }
 
 type recordingIPv6Manager struct {
@@ -3403,7 +3619,44 @@ func (f *recordingFirewaller) Apply(_ context.Context, settings domain.FirewallS
 
 func (f *recordingFirewaller) Disable(context.Context) error {
 	f.disableCalls++
+	if f.order != nil {
+		*f.order = append(*f.order, "firewall.disable")
+	}
 	return nil
+}
+
+func (m *recordingDNSManager) SystemResolvers(context.Context) ([]string, error) {
+	m.systemCalls++
+	if m.systemErr != nil {
+		return nil, m.systemErr
+	}
+	if len(m.system) == 0 {
+		return []string{"185.154.74.2", "8.8.8.8"}, nil
+	}
+	return append([]string(nil), m.system...), nil
+}
+
+func (m *recordingDNSManager) Apply(_ context.Context, settings domain.DNSSettings, listen string, port int) error {
+	m.applyCalls++
+	m.lastSettings = settings
+	m.lastListen = listen
+	m.lastPort = port
+	if m.order != nil {
+		*m.order = append(*m.order, "dns.apply")
+	}
+	return m.applyErr
+}
+
+func (m *recordingDNSManager) Disable(context.Context) error {
+	m.disableCalls++
+	if m.order != nil {
+		*m.order = append(*m.order, "dns.disable")
+	}
+	return m.disableErr
+}
+
+func (m *recordingDNSManager) Status(context.Context) (domain.DNSRuntimeStatus, error) {
+	return m.status, m.statusErr
 }
 
 func (m *recordingIPv6Manager) Apply(_ context.Context, disabled bool) error {

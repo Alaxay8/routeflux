@@ -19,13 +19,14 @@ import (
 const routefluxBinaryPath = "/usr/bin/routeflux"
 
 type diagnosticsSnapshot struct {
-	Status                api.StatusResponse    `json:"status"`
-	Runtime               backend.RuntimeStatus `json:"runtime"`
-	RuntimeError          string                `json:"runtime_error,omitempty"`
-	TransparentQUICPolicy string                `json:"transparent_quic_policy"`
-	IPv6                  diagnosticsIPv6Status `json:"ipv6"`
-	Zapret                domain.ZapretStatus   `json:"zapret"`
-	Files                 diagnosticsFiles      `json:"files"`
+	Status                api.StatusResponse      `json:"status"`
+	Runtime               backend.RuntimeStatus   `json:"runtime"`
+	RuntimeError          string                  `json:"runtime_error,omitempty"`
+	DNS                   domain.DNSRuntimeStatus `json:"dns"`
+	TransparentQUICPolicy string                  `json:"transparent_quic_policy"`
+	IPv6                  diagnosticsIPv6Status   `json:"ipv6"`
+	Zapret                domain.ZapretStatus     `json:"zapret"`
+	Files                 diagnosticsFiles        `json:"files"`
 }
 
 type diagnosticsIPv6Status struct {
@@ -93,6 +94,7 @@ func buildDiagnosticsSnapshot(ctx context.Context, opts *rootOptions) (diagnosti
 	}
 
 	runtimeStatus, runtimeErr := opts.service.RuntimeStatus(ctx)
+	dnsStatus, dnsErr := opts.service.DNSStatus(ctx)
 	ipv6Status, ipv6Err := opts.service.IPv6Status(ctx)
 
 	rootDir := opts.rootDir
@@ -103,6 +105,7 @@ func buildDiagnosticsSnapshot(ctx context.Context, opts *rootOptions) (diagnosti
 	snapshot := diagnosticsSnapshot{
 		Status:                api.StatusResponseFromSnapshot(status),
 		Runtime:               runtimeStatus,
+		DNS:                   dnsStatus,
 		TransparentQUICPolicy: diagnosticsTransparentQUICPolicy(status.Settings.Firewall, status.ActiveNode),
 		IPv6:                  buildDiagnosticsIPv6Status(status.Settings.Firewall, ipv6Status),
 		Zapret:                status.Zapret,
@@ -124,6 +127,9 @@ func buildDiagnosticsSnapshot(ctx context.Context, opts *rootOptions) (diagnosti
 
 	if runtimeErr != nil {
 		snapshot.RuntimeError = runtimeErr.Error()
+	}
+	if dnsErr != nil && snapshot.DNS.Error == "" {
+		snapshot.DNS.Error = dnsErr.Error()
 	}
 	if ipv6Err != nil {
 		snapshot.IPv6.Error = ipv6Err.Error()
@@ -194,6 +200,23 @@ func renderDiagnosticsText(snapshot diagnosticsSnapshot) string {
 		fmt.Sprintf("backend-service-state=%s", snapshot.Runtime.ServiceState),
 		fmt.Sprintf("backend-config=%s", snapshot.Runtime.ConfigPath),
 		fmt.Sprintf("backend-error=%s", snapshot.RuntimeError),
+		fmt.Sprintf("dns-runtime-available=%t", snapshot.DNS.Available),
+		fmt.Sprintf("dns-runtime-active=%t", snapshot.DNS.Active),
+		fmt.Sprintf("dns-runtime-listen=%s", strings.Trim(strings.Join([]string{
+			snapshot.DNS.LocalDNSListen,
+			func() string {
+				if snapshot.DNS.LocalDNSPort <= 0 {
+					return ""
+				}
+				return fmt.Sprintf("%d", snapshot.DNS.LocalDNSPort)
+			}(),
+		}, ":"), ":")),
+		fmt.Sprintf("dns-runtime-snippet=%s", snapshot.DNS.DNSMasqSnippetPath),
+		fmt.Sprintf("dns-runtime-snippet-found=%t", snapshot.DNS.DNSMasqSnippetFound),
+		fmt.Sprintf("dns-runtime-resolv-file=%s", snapshot.DNS.ResolvFile),
+		fmt.Sprintf("dns-runtime-system-resolvers=%s", strings.Join(snapshot.DNS.SystemResolvers, ", ")),
+		fmt.Sprintf("dns-runtime-degraded=%s", snapshot.DNS.DegradedReason),
+		fmt.Sprintf("dns-runtime-error=%s", snapshot.DNS.Error),
 		fmt.Sprintf("zapret-installed=%t", snapshot.Zapret.Installed),
 		fmt.Sprintf("zapret-managed=%t", snapshot.Zapret.Managed),
 		fmt.Sprintf("zapret-active=%t", snapshot.Zapret.Active),

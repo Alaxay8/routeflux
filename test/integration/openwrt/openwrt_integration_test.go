@@ -87,6 +87,12 @@ func TestOpenWrtEndToEnd(t *testing.T) {
 	if err := harness.AssertXrayRunning(ctx); err != nil {
 		t.Fatalf("assert xray running after connect: %v", err)
 	}
+	if err := harness.ApplyDefaultDNS(ctx); err != nil {
+		t.Fatalf("apply default dns: %v", err)
+	}
+	if err := harness.AssertDNSRuntimeActive(ctx); err != nil {
+		t.Fatalf("assert dns runtime active: %v", err)
+	}
 	if err := harness.EnableFirewallTargets(ctx, "1.1.1.1"); err != nil {
 		t.Fatalf("enable firewall targets: %v", err)
 	}
@@ -114,6 +120,9 @@ func TestOpenWrtEndToEnd(t *testing.T) {
 
 	if err := harness.Disconnect(ctx); err != nil {
 		t.Fatalf("disconnect routeflux: %v", err)
+	}
+	if err := harness.AssertDNSRuntimeDisabled(ctx); err != nil {
+		t.Fatalf("assert dns runtime disabled: %v", err)
 	}
 	if err := harness.AssertFirewallTableRemoved(ctx); err != nil {
 		t.Fatalf("assert firewall table removed: %v", err)
@@ -425,6 +434,60 @@ func (h *openWRTHarness) AssertXrayRunning(ctx context.Context) error {
 	}
 	if !strings.Contains(strings.ToLower(string(output)), "running") {
 		return fmt.Errorf("unexpected xray status: %s", strings.TrimSpace(string(output)))
+	}
+	return nil
+}
+
+func (h *openWRTHarness) ApplyDefaultDNS(ctx context.Context) error {
+	return h.sshCommand(ctx, routefluxRemoteBinary+" dns default")
+}
+
+func (h *openWRTHarness) AssertDNSRuntimeActive(ctx context.Context) error {
+	diagnostics, err := h.sshOutput(ctx, routefluxRemoteBinary+" --json diagnostics")
+	if err != nil {
+		return err
+	}
+
+	var snapshot struct {
+		DNS struct {
+			Active              bool   `json:"active"`
+			LocalDNSListen      string `json:"local_dns_listen"`
+			LocalDNSPort        int    `json:"local_dns_port"`
+			DNSMasqSnippetFound bool   `json:"dnsmasq_snippet_found"`
+		} `json:"dns"`
+	}
+	if err := json.Unmarshal(diagnostics, &snapshot); err != nil {
+		return fmt.Errorf("decode diagnostics dns status: %w", err)
+	}
+	if !snapshot.DNS.Active || !snapshot.DNS.DNSMasqSnippetFound || snapshot.DNS.LocalDNSListen != "127.0.0.1" || snapshot.DNS.LocalDNSPort != 1053 {
+		return fmt.Errorf("unexpected active dns runtime status: %s", strings.TrimSpace(string(diagnostics)))
+	}
+	if err := h.sshCommand(ctx, "netstat -lnp | grep -q '127.0.0.1:1053'"); err != nil {
+		return fmt.Errorf("local dns listener not found: %w", err)
+	}
+	return nil
+}
+
+func (h *openWRTHarness) AssertDNSRuntimeDisabled(ctx context.Context) error {
+	diagnostics, err := h.sshOutput(ctx, routefluxRemoteBinary+" --json diagnostics")
+	if err != nil {
+		return err
+	}
+
+	var snapshot struct {
+		DNS struct {
+			Active              bool `json:"active"`
+			DNSMasqSnippetFound bool `json:"dnsmasq_snippet_found"`
+		} `json:"dns"`
+	}
+	if err := json.Unmarshal(diagnostics, &snapshot); err != nil {
+		return fmt.Errorf("decode diagnostics dns status: %w", err)
+	}
+	if snapshot.DNS.Active || snapshot.DNS.DNSMasqSnippetFound {
+		return fmt.Errorf("unexpected disabled dns runtime status: %s", strings.TrimSpace(string(diagnostics)))
+	}
+	if err := h.sshCommand(ctx, "! netstat -lnp | grep -q '127.0.0.1:1053'"); err != nil {
+		return fmt.Errorf("local dns listener still present: %w", err)
 	}
 	return nil
 }

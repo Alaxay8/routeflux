@@ -120,10 +120,16 @@ func (o *rootOptions) initService() error {
 	firewall := openwrt.NewFirewallManager()
 	ipv6Manager := openwrt.NewIPv6Manager()
 	zapretManager := openwrt.NewZapretManager()
+	var dnsManager app.DNSManager
+	if openwrt.IsOpenWrt() {
+		manager := openwrt.NewDNSRuntimeManager()
+		dnsManager = manager
+	}
 	var runtimeBackend backend.Backend = xray.NewRuntimeBackend(configPath, controller).WithLogger(logger)
 	o.service = app.NewService(app.Dependencies{
 		Store:              fileStore,
 		Backend:            runtimeBackend,
+		DNSManager:         dnsManager,
 		Firewaller:         firewall,
 		IPv6Manager:        ipv6Manager,
 		ZapretManager:      zapretManager,

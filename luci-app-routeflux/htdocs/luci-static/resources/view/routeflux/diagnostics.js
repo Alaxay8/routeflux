@@ -458,6 +458,7 @@ return view.extend({
 		var status = diagnostics.status || {};
 		var state = status.state || {};
 		var runtime = diagnostics.runtime || {};
+		var dns = diagnostics.dns || {};
 		var ipv6 = diagnostics.ipv6 || {};
 		var zapret = diagnostics.zapret || {};
 		var files = diagnostics.files || {};
@@ -527,6 +528,7 @@ return view.extend({
 			}),
 			this.renderCard(_('Transport'), firstNonEmpty([ status.active_transport ], _('direct'))),
 			this.renderCard(_('Backend'), backendLabel(runtime, diagnostics.runtime_error)),
+			this.renderCard(_('DNS Runtime'), dns.active === true ? _('Active') : (dns.available === true ? _('Inactive') : _('Unavailable'))),
 			this.renderCard(_('Active Provider'), activeProvider),
 			this.renderCard(_('Active Node'), activeNodeName),
 			this.renderCard(_('Zapret'), zapret.test_active === true
@@ -541,6 +543,11 @@ return view.extend({
 
 		if (trim(diagnostics.runtime_error) !== '')
 			warningRows.push(_('Backend status error: %s').format(diagnostics.runtime_error));
+
+		if (trim(dns.error) !== '')
+			warningRows.push(_('DNS runtime error: %s').format(dns.error));
+		else if (trim(dns.degraded_reason) !== '')
+			warningRows.push(_('DNS runtime degraded: %s').format(dns.degraded_reason));
 
 		if (trim(state.last_failure_reason) !== '')
 			warningRows.push(_('Last failure: %s').format(state.last_failure_reason));
@@ -618,6 +625,30 @@ return view.extend({
 									E('li', {}, [ _('RouteFlux service state: %s').format(firstNonEmpty([ runtime.service_state ], _('unknown'))) ]),
 									E('li', {}, [ _('Zapret service state: %s').format(firstNonEmpty([ zapret.service_state ], '-')) ]),
 									E('li', {}, [ _('Zapret service owner: %s').format(zapret.managed === true ? _('RouteFlux') : _('External or inactive')) ])
+								])
+							])
+						])
+					]),
+					E('details', { 'class': 'routeflux-diagnostics-advanced' }, [
+						E('summary', {}, [ _('DNS runtime details') ]),
+						E('div', { 'class': 'routeflux-diagnostics-advanced-grid' }, [
+							E('div', { 'class': 'routeflux-overview-grid' }, [
+								this.renderCard(_('DNS Runtime'), dns.active === true ? _('Active') : _('Inactive')),
+								this.renderCard(_('Local DNS Listener'), firstNonEmpty([
+									trim(dns.local_dns_listen) !== '' && dns.local_dns_port
+										? dns.local_dns_listen + ':' + dns.local_dns_port
+										: ''
+								], '-')),
+								this.renderCard(_('dnsmasq Override'), dns.dnsmasq_snippet_found === true ? _('Present') : _('Missing')),
+								this.renderCard(_('System Resolvers'), firstNonEmpty([ (dns.system_resolvers || []).join(', ') ], '-'))
+							]),
+							E('div', { 'class': 'routeflux-diagnostics-summary-shell' }, [
+								E('h4', {}, [ _('DNS runtime notes') ]),
+								E('ul', { 'class': 'routeflux-diagnostics-summary-list' }, [
+									E('li', {}, [ _('dnsmasq snippet: %s').format(firstNonEmpty([ dns.dnsmasq_snippet_path ], '-')) ]),
+									E('li', {}, [ _('resolv-file: %s').format(firstNonEmpty([ dns.resolv_file ], '-')) ]),
+									E('li', {}, [ _('degraded reason: %s').format(firstNonEmpty([ dns.degraded_reason ], '-')) ]),
+									E('li', {}, [ _('runtime error: %s').format(firstNonEmpty([ dns.error ], '-')) ])
 								])
 							])
 						])
