@@ -93,6 +93,30 @@ func TestSubscriptionsViewKeepsOverviewSummaryAndCoreActions(t *testing.T) {
 	}
 }
 
+func TestSubscriptionsViewUsesStyledAddSubscriptionPanel(t *testing.T) {
+	t.Parallel()
+
+	source := readSubscriptionsViewSource(t)
+
+	for _, want := range []string{
+		"routeflux-add-panel",
+		"routeflux-add-panel-head",
+		"routeflux-add-kicker",
+		"routeflux-add-field-shell",
+		"routeflux-add-format-list",
+		"routeflux-add-format-badge",
+		"Accepted input",
+		"http(s) URL",
+		"VLESS / VMess / Trojan / SS",
+		"base64 payload",
+		"Xray / 3x-ui JSON",
+	} {
+		if !strings.Contains(source, want) {
+			t.Fatalf("subscriptions view missing add panel marker %q", want)
+		}
+	}
+}
+
 func readSubscriptionsViewSource(t *testing.T) string {
 	t.Helper()
 

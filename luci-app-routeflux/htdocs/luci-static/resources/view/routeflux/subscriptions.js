@@ -414,7 +414,6 @@ function responsiveTableCell(label, content, extraClass) {
 
 function emptyAddDraft() {
 	return {
-		'name': '',
 		'source': ''
 	};
 }
@@ -738,7 +737,6 @@ return view.extend({
 
 	handleAdd: function(ev) {
 		var source;
-		var name;
 		var argv;
 		var message;
 
@@ -746,19 +744,15 @@ return view.extend({
 			ev.preventDefault();
 
 		source = trim(this.addDraft && this.addDraft.source);
-		name = trim(this.addDraft && this.addDraft.name);
 		argv = [ 'add' ];
 
 		if (source === '') {
-			message = _('Paste a subscription URL, share link, or 3x-ui/Xray JSON first.');
+			message = _('Paste a subscription URL or raw import data first.');
 			this.setPageError(message);
 			ui.addNotification(null, notificationParagraph(message));
 			this.renderIntoRoot();
 			return Promise.resolve();
 		}
-
-		if (name !== '')
-			argv.push('--name', name);
 
 		if (source.match(/^https?:\/\//i))
 			argv.push('--url', source);
@@ -1196,10 +1190,28 @@ return view.extend({
 			'.routeflux-page-banner-info { background:rgba(224, 242, 254, 0.6); border-color:rgba(56, 189, 248, 0.32); color:#0f3f57; }',
 			'.routeflux-page-banner-warning { background:rgba(254, 242, 242, 0.7); border-color:rgba(239, 68, 68, 0.28); color:#6e1f1f; }',
 			'.routeflux-page-status-actions { display:flex; justify-content:flex-end; margin-top:10px; }',
-			'.routeflux-add-grid { display:grid; grid-template-columns:minmax(220px, 320px) minmax(0, 1fr); gap:12px; margin-bottom:12px; }',
-			'.routeflux-add-actions { display:flex; flex-wrap:wrap; gap:10px; }',
+			'.routeflux-add-panel { position:relative; overflow:hidden; padding:18px; border:1px solid rgba(96, 165, 250, 0.22); border-radius:20px; background:linear-gradient(180deg, rgba(255, 255, 255, 0.055) 0%, rgba(59, 130, 246, 0.04) 100%), var(--background-color-high, rgba(255, 255, 255, 0.94)); box-shadow:0 18px 34px rgba(15, 23, 42, 0.12), inset 0 1px 0 rgba(255, 255, 255, 0.08); }',
+			'.routeflux-add-panel::before { content:""; position:absolute; inset:0 auto auto 0; width:100%; height:1px; background:linear-gradient(90deg, rgba(56, 189, 248, 0.64) 0%, rgba(96, 165, 250, 0.08) 100%); }',
+			'.routeflux-add-panel > * { position:relative; z-index:1; }',
+			'.routeflux-add-panel-head { display:grid; gap:8px; margin-bottom:14px; }',
+			'.routeflux-add-kicker { display:inline-flex; align-items:center; width:max-content; max-width:100%; padding:5px 11px; border-radius:999px; background:rgba(14, 165, 233, 0.14); color:#38bdf8; font-size:11px; font-weight:800; letter-spacing:.1em; text-transform:uppercase; }',
+			'.routeflux-add-panel-head h3 { margin:0; font-size:clamp(22px, 0.85vw + 18px, 30px); letter-spacing:-0.03em; }',
+			'.routeflux-add-panel-copy { margin:0; color:var(--text-color-medium, #586677); line-height:1.6; max-width:72ch; }',
+			'.routeflux-add-grid { display:grid; grid-template-columns:minmax(0, 1fr); gap:14px; margin-bottom:12px; }',
+			'.routeflux-add-field { min-width:0; }',
+			'.routeflux-add-field-label { display:block; margin-bottom:8px; color:var(--text-color-high, #17263a); font-size:13px; font-weight:800; letter-spacing:.01em; }',
+			'.routeflux-add-field-shell { position:relative; border:1px solid rgba(96, 165, 250, 0.24); border-radius:18px; background:linear-gradient(180deg, rgba(255, 255, 255, 0.04) 0%, rgba(148, 163, 184, 0.05) 100%); box-shadow:inset 0 1px 0 rgba(255, 255, 255, 0.04), 0 12px 24px rgba(15, 23, 42, 0.1); transition:border-color .18s ease, box-shadow .18s ease, transform .18s ease; }',
+			'.routeflux-add-field-shell:focus-within { border-color:rgba(56, 189, 248, 0.64); box-shadow:0 0 0 1px rgba(56, 189, 248, 0.22), 0 18px 34px rgba(14, 165, 233, 0.14); transform:translateY(-1px); }',
 			'.routeflux-add-grid .cbi-value-field, .routeflux-add-grid .cbi-input-text, .routeflux-add-grid .cbi-input-textarea { width:100%; max-width:100%; box-sizing:border-box; }',
-			'.routeflux-add-grid textarea { min-height:140px; width:100%; max-width:100%; }',
+			'.routeflux-add-grid .cbi-input-textarea { display:block; min-height:168px; padding:16px 18px; border:0; border-radius:18px; background:transparent; color:var(--text-color-high, #17263a); line-height:1.6; resize:vertical; box-shadow:none; }',
+			'.routeflux-add-grid .cbi-input-textarea::placeholder { color:var(--text-color-medium, #66758a); opacity:0.9; }',
+			'.routeflux-add-grid .cbi-input-textarea:focus { outline:none; box-shadow:none; }',
+			'.routeflux-add-format-list { display:flex; flex-wrap:wrap; gap:8px; margin:12px 0 10px; }',
+			'.routeflux-add-format-badge { display:inline-flex; align-items:center; min-height:30px; padding:0 12px; border-radius:999px; border:1px solid rgba(125, 145, 168, 0.3); background:rgba(148, 163, 184, 0.1); color:var(--text-color-medium, #5c6b7f); font-size:12px; font-weight:700; letter-spacing:.01em; }',
+			'.routeflux-add-hint { margin:0; color:var(--text-color-medium, #586677); line-height:1.65; }',
+			'.routeflux-add-actions { display:flex; flex-wrap:wrap; gap:10px; margin-top:16px; }',
+			'.routeflux-add-actions .cbi-button { min-height:48px; padding:0 18px; border-radius:14px; }',
+			'.routeflux-add-actions .cbi-button-apply { box-shadow:0 14px 28px rgba(14, 165, 233, 0.14); }',
 			'.routeflux-node-details { margin-top:12px; }',
 			'.routeflux-node-details summary { cursor:pointer; margin-bottom:10px; }',
 			'.routeflux-provider-group { margin-bottom:22px; }',
@@ -1207,7 +1219,7 @@ return view.extend({
 			'.routeflux-provider-group-title { font-size:clamp(20px, 1.3vw + 15px, 26px); font-weight:600; overflow-wrap:anywhere; word-break:break-word; }',
 			'.routeflux-provider-group-meta { color:var(--text-color-medium, #666); }',
 			'@media (max-width: 980px) { .routeflux-subscription-header, .routeflux-provider-group-header, .routeflux-add-grid { grid-template-columns:minmax(0, 1fr); } .routeflux-subscription-controls { justify-items:stretch; min-width:0; } .routeflux-subscription-actions, .routeflux-node-actions { justify-content:flex-start; } .routeflux-action-status-group { text-align:left; } }',
-			'@media (max-width: 700px) { .routeflux-actions, .routeflux-add-actions, .routeflux-page-status-actions { flex-direction:column; } .routeflux-actions .cbi-button, .routeflux-add-actions .cbi-button, .routeflux-page-status-actions .cbi-button { width:100%; } .routeflux-meta-table, .routeflux-meta-table .tr, .routeflux-meta-table .td { display:block; width:100%; box-sizing:border-box; } .routeflux-meta-table .tr { padding:10px 0; border-top:1px solid rgba(98, 112, 129, 0.22); } .routeflux-meta-table .tr:first-child { padding-top:0; border-top:0; } .routeflux-meta-label { width:100%; padding-bottom:4px; } .routeflux-meta-value { padding-top:0; } }',
+			'@media (max-width: 700px) { .routeflux-actions, .routeflux-add-actions, .routeflux-page-status-actions { flex-direction:column; } .routeflux-actions .cbi-button, .routeflux-add-actions .cbi-button, .routeflux-page-status-actions .cbi-button { width:100%; } .routeflux-meta-table, .routeflux-meta-table .tr, .routeflux-meta-table .td { display:block; width:100%; box-sizing:border-box; } .routeflux-meta-table .tr { padding:10px 0; border-top:1px solid rgba(98, 112, 129, 0.22); } .routeflux-meta-table .tr:first-child { padding-top:0; border-top:0; } .routeflux-meta-label { width:100%; padding-bottom:4px; } .routeflux-meta-value { padding-top:0; } .routeflux-add-panel { padding:16px; border-radius:18px; } .routeflux-add-grid .cbi-input-textarea { min-height:152px; padding:14px 15px; } }',
 			'@media (max-width: 560px) { .routeflux-subscription-actions, .routeflux-node-actions { flex-direction:column; align-items:stretch; } .routeflux-subscription-actions .cbi-button, .routeflux-node-actions .cbi-button { width:100%; } .routeflux-node-table, .routeflux-node-table .tr, .routeflux-node-table .td { display:block; width:100%; box-sizing:border-box; } .routeflux-node-table { min-width:0; } .routeflux-node-table .cbi-section-table-titles { display:none; } .routeflux-node-table .routeflux-node-row { margin-bottom:12px; padding:12px 14px; border:1px solid var(--border-color-medium); border-radius:12px; background:linear-gradient(180deg, var(--background-color-high) 0%, var(--background-color-low) 100%); box-shadow:0 8px 18px hsla(var(--border-color-low-hsl), 0.35), inset 0 1px 0 hsla(var(--background-color-high-hsl), 0.28); } .routeflux-node-table .routeflux-node-row:last-child { margin-bottom:0; } .routeflux-node-table .td { padding:8px 0; border-top:1px solid var(--border-color-low); text-align:left; } .routeflux-node-table .td:first-child { padding-top:0; border-top:0; } .routeflux-node-table .td:last-child { padding-bottom:0; } .routeflux-node-table .td::before { content:attr(data-title); display:block; margin-bottom:4px; color:var(--text-color-medium, #586677); font-size:10px; text-transform:uppercase; letter-spacing:.12em; font-weight:700; } }'
 		]));
 
@@ -1238,35 +1250,35 @@ return view.extend({
 		content.push(this.renderSummarySection(status, presentation));
 		content.push(this.renderPageActions(status, subscriptions, presentation));
 
-		content.push(E('div', { 'class': 'cbi-section' }, [
-			E('h3', {}, [ _('Add Subscription') ]),
+		content.push(E('div', { 'class': 'cbi-section routeflux-add-panel' }, [
+			E('div', { 'class': 'routeflux-add-panel-head' }, [
+				E('span', { 'class': 'routeflux-add-kicker' }, [ _('Import') ]),
+				E('h3', {}, [ _('Add Subscription') ]),
+				E('p', { 'class': 'routeflux-add-panel-copy' }, [
+					_('Drop in the source exactly as you received it. RouteFlux will detect the format and normalize it into router-ready profiles.')
+				])
+			]),
 			E('div', { 'class': 'routeflux-add-grid' }, [
-				E('div', { 'class': 'cbi-value' }, [
-					E('label', { 'class': 'cbi-value-title', 'for': 'routeflux-add-name' }, [ _('Display Name (optional)') ]),
-					E('div', { 'class': 'cbi-value-field' }, [
-						E('input', {
-							'id': 'routeflux-add-name',
-							'class': 'cbi-input-text',
-							'type': 'text',
-							'placeholder': _('Optional provider name'),
-							'value': this.addDraft.name,
-							'input': L.bind(function(ev) {
-								this.handleDraftInput('name', ev);
-							}, this)
-						})
-					])
-				]),
-				E('div', { 'class': 'cbi-value' }, [
-					E('label', { 'class': 'cbi-value-title', 'for': 'routeflux-add-source' }, [ _('Subscription URL, share link, or 3x-ui/Xray JSON') ]),
-					E('div', { 'class': 'cbi-value-field' }, [
+				E('div', { 'class': 'routeflux-add-field' }, [
+					E('label', { 'class': 'routeflux-add-field-label', 'for': 'routeflux-add-source' }, [ _('Subscription URL or raw import data') ]),
+					E('div', { 'class': 'routeflux-add-field-shell' }, [
 						E('textarea', {
 							'id': 'routeflux-add-source',
 							'class': 'cbi-input-textarea',
-							'placeholder': _('Paste a subscription URL, VLESS/VMess/Trojan link, or 3x-ui/Xray JSON here.'),
+							'placeholder': _('Paste an http(s) subscription URL, VLESS/VMess/Trojan/SS links, base64 payload, or Xray/3x-ui JSON.'),
 							'input': L.bind(function(ev) {
 								this.handleDraftInput('source', ev);
 							}, this)
 						}, [ this.addDraft.source ])
+					]),
+					E('div', { 'class': 'routeflux-add-format-list' }, [
+						E('span', { 'class': 'routeflux-add-format-badge' }, [ _('http(s) URL') ]),
+						E('span', { 'class': 'routeflux-add-format-badge' }, [ _('VLESS / VMess / Trojan / SS') ]),
+						E('span', { 'class': 'routeflux-add-format-badge' }, [ _('base64 payload') ]),
+						E('span', { 'class': 'routeflux-add-format-badge' }, [ _('Xray / 3x-ui JSON') ])
+					]),
+					E('p', { 'class': 'routeflux-add-hint' }, [
+						_('Accepted input: an http(s) subscription URL; one or more VLESS, VMess, Trojan, or Shadowsocks links; a base64-encoded subscription payload; or an Xray/3x-ui JSON object or array with outbounds, protocol, config, or link.')
 					])
 				])
 			]),
