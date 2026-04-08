@@ -65,18 +65,39 @@ func TestSubscriptionsViewShowsRemainingTrafficMeter(t *testing.T) {
 	}
 }
 
-func TestSubscriptionsViewShowsSecurityColumnInNodeTable(t *testing.T) {
+func TestSubscriptionsViewShowsCompactStackColumnInNodeTable(t *testing.T) {
 	t.Parallel()
 
 	source := readSubscriptionsViewSource(t)
 
 	for _, want := range []string{
 		"formatSecurityLabel",
-		"responsiveTableCell(_('Security')",
-		"E('th', { 'class': 'th' }, [ _('Security') ])",
+		"renderNodeStackCell",
+		"responsiveTableCell(_('Stack')",
+		"E('th', { 'class': 'th' }, [ _('Stack') ])",
 	} {
 		if !strings.Contains(source, want) {
-			t.Fatalf("subscriptions view missing security marker %q", want)
+			t.Fatalf("subscriptions view missing compact stack marker %q", want)
+		}
+	}
+}
+
+func TestSubscriptionsViewShowsPingControlsAndStates(t *testing.T) {
+	t.Parallel()
+
+	source := readSubscriptionsViewSource(t)
+
+	for _, want := range []string{
+		"Check Ping",
+		"Ping",
+		"Recheck",
+		"Last known",
+		"Not checked",
+		"routeflux.subscriptions.ping.latest",
+		"'inspect', 'ping'",
+	} {
+		if !strings.Contains(source, want) {
+			t.Fatalf("subscriptions view missing ping marker %q", want)
 		}
 	}
 }

@@ -99,6 +99,7 @@ type Service struct {
 	httpClient              *http.Client
 	subscriptionTLS12Client *http.Client
 	checker                 probe.Checker
+	inspectPingCheck        func(ctx context.Context, node domain.Node) probe.Result
 	speedTester             speedtest.Tester
 	logger                  *slog.Logger
 	resolver                HostResolver

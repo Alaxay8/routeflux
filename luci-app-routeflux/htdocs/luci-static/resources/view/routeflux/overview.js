@@ -6,6 +6,7 @@
 'require routeflux.ui as routefluxUI';
 
 var routefluxBinary = '/usr/bin/routeflux';
+var pingOverviewSessionKey = 'routeflux.overview.ping.latest';
 
 function trim(value) {
 	if (value == null)
@@ -289,6 +290,96 @@ function notificationParagraph(message) {
 	return E('p', {}, [ message ]);
 }
 
+function summarizePingError(value) {
+	var text = trim(value);
+
+	if (text === '')
+		return '';
+
+	text = text.split(/\r?\n/)[0];
+	if (text.length > 96)
+		return text.slice(0, 93) + '...';
+
+	return text;
+}
+
+function seededPingForNode(status, nodeId) {
+	var healthMap = status && status.state && status.state.health;
+	var health = healthMap && healthMap[nodeId];
+	var rawLatency;
+
+	if (!health)
+		return null;
+
+	rawLatency = firstNonEmpty([ health.last_latency, health.average_latency ], '');
+
+	return {
+		'source': 'seed',
+		'healthy': health.healthy === true,
+		'latency_ms': routefluxUI.durationToMilliseconds(rawLatency),
+		'checked_at': trim(health.last_checked_at),
+		'error': summarizePingError(health.last_failure_reason)
+	};
+}
+
+function livePingForNode(subscriptionId, nodeId) {
+	var cache = routefluxUI.readSessionJSON(pingOverviewSessionKey);
+	var results;
+
+	if (!cache || trim(cache.subscription_id) !== trim(subscriptionId))
+		return null;
+
+	results = cache.results_by_id || {};
+	return results[trim(nodeId)] || null;
+}
+
+function resolveActivePing(status) {
+	var activeSubscription = status && status.active_subscription;
+	var activeNode = status && status.active_node;
+	var subscriptionId = trim(activeSubscription && activeSubscription.id);
+	var nodeId = trim(activeNode && activeNode.id);
+
+	if (subscriptionId === '' || nodeId === '')
+		return null;
+
+	return livePingForNode(subscriptionId, nodeId) || seededPingForNode(status, nodeId);
+}
+
+function activePingPrimaryLabel(result) {
+	var latencyLabel = routefluxUI.formatLatencyMS(result && result.latency_ms);
+
+	if (!result)
+		return _('Not checked');
+
+	if (result.source === 'seed') {
+		if (result.healthy === false)
+			return _('Last known: Unavailable');
+		if (latencyLabel !== '')
+			return _('Last known: %s').format(latencyLabel);
+		return _('Not checked');
+	}
+
+	if (result.healthy === false)
+		return _('Unavailable');
+
+	if (latencyLabel !== '')
+		return latencyLabel;
+
+	return _('Not checked');
+}
+
+function activePingSecondaryLabel(result) {
+	var checkedAt = trim(result && result.checked_at);
+
+	if (checkedAt === '')
+		return '';
+
+	if (result && result.source === 'seed')
+		return _('Last check: %s').format(routefluxUI.formatTimestamp(checkedAt));
+
+	return _('Checked: %s').format(routefluxUI.formatTimestamp(checkedAt));
+}
+
 return view.extend({
 	load: function() {
 		return this.requestPageData();
@@ -470,6 +561,7 @@ return view.extend({
 
 		var connected = state.connected === true;
 		var activeEntry = presentationForSubscription(activeSubscription, presentation);
+		var activePing = resolveActivePing(status);
 		var provider = trim(activeSubscription.id) !== ''
 			? (activeEntry ? activeEntry.provider_title : providerTitle(activeSubscription))
 			: _('Not selected');
@@ -501,7 +593,9 @@ return view.extend({
 			E('style', { 'type': 'text/css' }, [
 				'.routeflux-actions { display:flex; flex-wrap:wrap; gap:10px; align-items:flex-end; margin-bottom:16px; }',
 				'.routeflux-actions > * { margin:0; }',
-				'.routeflux-actions select { min-width:260px; }'
+				'.routeflux-actions select { min-width:260px; }',
+				'.routeflux-active-ping-primary { font-weight:700; }',
+				'.routeflux-active-ping-meta { margin-top:4px; color:var(--text-color-medium, #586677); font-size:12px; line-height:1.4; overflow-wrap:anywhere; word-break:break-word; }'
 			]),
 			E('h2', {}, [ _('RouteFlux') ]),
 			E('p', { 'class': 'cbi-section-descr' }, [
@@ -517,6 +611,13 @@ return view.extend({
 				this.renderCard(_('Provider'), provider),
 				this.renderCard(_('Profile'), profile),
 				this.renderCard(_('Node'), nodeName),
+				this.renderCard(_('Active Ping'), [
+					E('div', { 'class': 'routeflux-active-ping-primary' }, [ activePingPrimaryLabel(activePing) ]),
+					activePingSecondaryLabel(activePing) !== '' ? E('div', { 'class': 'routeflux-active-ping-meta' }, [ activePingSecondaryLabel(activePing) ]) : '',
+					activePing && activePing.error ? E('div', { 'class': 'routeflux-active-ping-meta', 'title': activePing.error }, [ activePing.error ]) : ''
+				], {
+					'tone': activePing ? routefluxUI.statusTone(activePing.healthy === true) : ''
+				}),
 				this.renderCard(_('DNS'), firstNonEmpty([ dns.mode ], _('system'))),
 				this.renderCard(_('Firewall'), firewallMode),
 				this.renderCard(_('Last Refresh'), routefluxUI.formatTimestamp(activeSubscription.last_updated_at) || _('Never'))

@@ -13,6 +13,7 @@ import (
 	"github.com/Alaxay8/routeflux/internal/backend"
 	"github.com/Alaxay8/routeflux/internal/backend/xray"
 	"github.com/Alaxay8/routeflux/internal/domain"
+	"github.com/Alaxay8/routeflux/internal/probe"
 	"github.com/Alaxay8/routeflux/internal/speedtest"
 )
 
@@ -297,6 +298,202 @@ func TestInspectSpeedProvidesEnoughTimeForRouterRun(t *testing.T) {
 
 	if _, err := service.InspectSpeed(context.Background(), "sub-1", "node-1"); err != nil {
 		t.Fatalf("inspect speed: %v", err)
+	}
+}
+
+func TestInspectPingSingleNodeUsesOriginalAddressAndPort(t *testing.T) {
+	t.Parallel()
+
+	store := &memoryStore{
+		subs: []domain.Subscription{
+			{
+				ID:          "sub-1",
+				DisplayName: "Demo VPN",
+				Nodes: []domain.Node{
+					{
+						ID:             "node-1",
+						SubscriptionID: "sub-1",
+						Name:           "Node 1",
+						Address:        "edge.example.com",
+						Port:           443,
+					},
+				},
+			},
+		},
+		settings: domain.DefaultSettings(),
+		state:    domain.DefaultRuntimeState(),
+	}
+
+	service := NewService(Dependencies{Store: store})
+	checkedAt := time.Date(2026, 4, 8, 8, 15, 0, 0, time.UTC)
+	var checkedNode domain.Node
+	service.inspectPingCheck = func(_ context.Context, node domain.Node) probe.Result {
+		checkedNode = node
+		return probe.Result{
+			NodeID:  node.ID,
+			Healthy: true,
+			Latency: 74 * time.Millisecond,
+			Checked: checkedAt,
+		}
+	}
+
+	result, err := service.InspectPing(context.Background(), "sub-1", "node-1")
+	if err != nil {
+		t.Fatalf("inspect ping: %v", err)
+	}
+
+	if checkedNode.Address != "edge.example.com" || checkedNode.Port != 443 {
+		t.Fatalf("expected original node address and port, got %+v", checkedNode)
+	}
+	if result.SubscriptionID != "sub-1" {
+		t.Fatalf("unexpected subscription id: %+v", result)
+	}
+	if result.TimeoutMS != 2000 {
+		t.Fatalf("unexpected timeout metadata: %+v", result)
+	}
+	if len(result.Results) != 1 {
+		t.Fatalf("expected one ping result, got %+v", result.Results)
+	}
+	if result.Results[0].NodeID != "node-1" || !result.Results[0].Healthy {
+		t.Fatalf("unexpected ping result: %+v", result.Results[0])
+	}
+	if result.Results[0].LatencyMS != 74 {
+		t.Fatalf("unexpected latency: %+v", result.Results[0])
+	}
+	if result.Results[0].CheckedAt != checkedAt {
+		t.Fatalf("unexpected checked time: %+v", result.Results[0])
+	}
+	if result.Results[0].Error != "" {
+		t.Fatalf("expected empty error, got %+v", result.Results[0])
+	}
+}
+
+func TestInspectPingSubscriptionKeepsStableNodeOrderOnMixedResults(t *testing.T) {
+	t.Parallel()
+
+	store := &memoryStore{
+		subs: []domain.Subscription{
+			{
+				ID:          "sub-1",
+				DisplayName: "Demo VPN",
+				Nodes: []domain.Node{
+					{ID: "node-1", SubscriptionID: "sub-1", Name: "Node 1", Address: "one.example.com", Port: 443},
+					{ID: "node-2", SubscriptionID: "sub-1", Name: "Node 2", Address: "two.example.com", Port: 8443},
+					{ID: "node-3", SubscriptionID: "sub-1", Name: "Node 3", Address: "three.example.com", Port: 2053},
+				},
+			},
+		},
+		settings: domain.DefaultSettings(),
+		state:    domain.DefaultRuntimeState(),
+	}
+
+	service := NewService(Dependencies{Store: store})
+	service.inspectPingCheck = func(_ context.Context, node domain.Node) probe.Result {
+		switch node.ID {
+		case "node-1":
+			return probe.Result{
+				NodeID:  node.ID,
+				Healthy: true,
+				Latency: 28 * time.Millisecond,
+				Checked: time.Date(2026, 4, 8, 8, 16, 0, 0, time.UTC),
+			}
+		case "node-2":
+			return probe.Result{
+				NodeID:  node.ID,
+				Healthy: false,
+				Latency: 2 * time.Second,
+				Checked: time.Date(2026, 4, 8, 8, 16, 1, 0, time.UTC),
+				Err:     fmt.Errorf("dial tcp 203.0.113.2:8443: i/o timeout"),
+			}
+		default:
+			return probe.Result{
+				NodeID:  node.ID,
+				Healthy: true,
+				Latency: 65 * time.Millisecond,
+				Checked: time.Date(2026, 4, 8, 8, 16, 2, 0, time.UTC),
+			}
+		}
+	}
+
+	result, err := service.InspectPing(context.Background(), "sub-1", "")
+	if err != nil {
+		t.Fatalf("inspect ping: %v", err)
+	}
+
+	if len(result.Results) != 3 {
+		t.Fatalf("expected three results, got %+v", result.Results)
+	}
+	for i, want := range []string{"node-1", "node-2", "node-3"} {
+		if result.Results[i].NodeID != want {
+			t.Fatalf("expected stable node order %q at index %d, got %+v", want, i, result.Results)
+		}
+	}
+	if result.Results[1].Healthy {
+		t.Fatalf("expected second node to stay unhealthy, got %+v", result.Results[1])
+	}
+	if !strings.Contains(result.Results[1].Error, "i/o timeout") {
+		t.Fatalf("expected timeout error, got %+v", result.Results[1])
+	}
+}
+
+func TestInspectPingDoesNotMutateRuntimeState(t *testing.T) {
+	t.Parallel()
+
+	store := &memoryStore{
+		subs: []domain.Subscription{
+			{
+				ID:          "sub-1",
+				DisplayName: "Demo VPN",
+				Nodes: []domain.Node{
+					{ID: "node-1", SubscriptionID: "sub-1", Name: "Node 1", Address: "edge.example.com", Port: 443},
+				},
+			},
+		},
+		settings: domain.DefaultSettings(),
+		state: domain.RuntimeState{
+			SchemaVersion:        2,
+			ActiveSubscriptionID: "sub-active",
+			ActiveNodeID:         "node-active",
+			Mode:                 domain.SelectionModeManual,
+			Connected:            true,
+			Health: map[string]domain.NodeHealth{
+				"node-active": {
+					NodeID:              "node-active",
+					Healthy:             true,
+					LastLatency:         domain.NewDuration(35 * time.Millisecond),
+					AverageLatency:      domain.NewDuration(40 * time.Millisecond),
+					LastCheckedAt:       time.Date(2026, 4, 8, 7, 55, 0, 0, time.UTC),
+					LastFailureReason:   "",
+					ConsecutiveFailures: 0,
+				},
+			},
+		},
+	}
+
+	service := NewService(Dependencies{Store: store})
+	service.inspectPingCheck = func(_ context.Context, node domain.Node) probe.Result {
+		return probe.Result{
+			NodeID:  node.ID,
+			Healthy: true,
+			Latency: 80 * time.Millisecond,
+			Checked: time.Date(2026, 4, 8, 8, 20, 0, 0, time.UTC),
+		}
+	}
+
+	before := store.state
+	result, err := service.InspectPing(context.Background(), "sub-1", "")
+	if err != nil {
+		t.Fatalf("inspect ping: %v", err)
+	}
+
+	if len(result.Results) != 1 {
+		t.Fatalf("unexpected inspect ping result: %+v", result)
+	}
+	if !reflect.DeepEqual(store.state, before) {
+		t.Fatalf("expected runtime state to stay unchanged, got %+v", store.state)
+	}
+	if store.saveStateCalls != 0 {
+		t.Fatalf("expected no state persistence, got %d", store.saveStateCalls)
 	}
 }
 

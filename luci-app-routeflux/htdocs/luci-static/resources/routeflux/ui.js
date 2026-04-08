@@ -34,6 +34,42 @@ function normalizeChildren(value) {
 	return Array.isArray(value) ? value : [ value ];
 }
 
+function parseDurationMilliseconds(value) {
+	var normalized = trim(value);
+	var pattern = /(-?\d+(?:\.\d+)?)(ns|us|µs|ms|s|m|h)/g;
+	var unitMap = {
+		'ns': 0.000001,
+		'us': 0.001,
+		'µs': 0.001,
+		'ms': 1,
+		's': 1000,
+		'm': 60000,
+		'h': 3600000
+	};
+	var match;
+	var matchedLength = 0;
+	var total = 0;
+
+	if (typeof value === 'number' && isFinite(value))
+		return value;
+
+	if (normalized === '')
+		return null;
+
+	if (/^-?\d+(?:\.\d+)?$/.test(normalized))
+		return Number(normalized);
+
+	while ((match = pattern.exec(normalized)) !== null) {
+		matchedLength += match[0].length;
+		total += Number(match[1]) * unitMap[match[2]];
+	}
+
+	if (matchedLength !== normalized.length)
+		return null;
+
+	return total;
+}
+
 return baseclass.extend({
 	formatTimestamp: function(value) {
 		var normalized = trim(value);
@@ -52,6 +88,48 @@ return baseclass.extend({
 			pad2(parsed.getHours()) + ':' +
 			pad2(parsed.getMinutes()) + ':' +
 			pad2(parsed.getSeconds());
+	},
+
+	durationToMilliseconds: function(value) {
+		return parseDurationMilliseconds(value);
+	},
+
+	formatLatencyMS: function(value) {
+		var milliseconds = parseDurationMilliseconds(value);
+
+		if (milliseconds == null || !isFinite(milliseconds))
+			return '';
+
+		return Math.round(milliseconds) + ' ms';
+	},
+
+	readSessionJSON: function(key) {
+		var normalizedKey = trim(key);
+		var raw;
+
+		if (normalizedKey === '' || typeof window === 'undefined' || !window.sessionStorage)
+			return null;
+
+		try {
+			raw = window.sessionStorage.getItem(normalizedKey);
+			return raw ? JSON.parse(raw) : null;
+		}
+		catch (err) {
+			return null;
+		}
+	},
+
+	writeSessionJSON: function(key, value) {
+		var normalizedKey = trim(key);
+
+		if (normalizedKey === '' || typeof window === 'undefined' || !window.sessionStorage)
+			return;
+
+		try {
+			window.sessionStorage.setItem(normalizedKey, JSON.stringify(value));
+		}
+		catch (err) {
+		}
 	},
 
 	statusTone: function(connected) {

@@ -6,6 +6,8 @@
 'require routeflux.ui as routefluxUI';
 
 var routefluxBinary = '/usr/bin/routeflux';
+var pingSubscriptionSessionKey = 'routeflux.subscriptions.ping.latest';
+var pingOverviewSessionKey = 'routeflux.overview.ping.latest';
 
 function trim(value) {
 	if (value == null)
@@ -427,6 +429,49 @@ function responsiveTableCell(label, content, extraClass) {
 	}, Array.isArray(content) ? content : [ content ]);
 }
 
+function summarizePingError(value) {
+	var text = trim(value);
+
+	if (text === '')
+		return '';
+
+	text = text.split(/\r?\n/)[0];
+	if (text.length > 96)
+		return text.slice(0, 93) + '...';
+
+	return text;
+}
+
+function compactTimestamp(value) {
+	var formatted = routefluxUI.formatTimestamp(value);
+
+	if (formatted === '')
+		return '';
+
+	return formatted.slice(0, 16);
+}
+
+function renderNodeStackCell(node) {
+	var chips = [];
+	var protocol = trim(node && node.protocol);
+	var transport = trim(node && node.transport);
+	var security = formatSecurityLabel(node && node.security);
+
+	if (protocol !== '')
+		chips.push(E('span', { 'class': 'routeflux-node-stack-chip routeflux-node-stack-chip-primary' }, [ protocol.toUpperCase() ]));
+
+	if (transport !== '')
+		chips.push(E('span', { 'class': 'routeflux-node-stack-chip' }, [ transport.toUpperCase() ]));
+
+	if (security !== '' && security !== '-')
+		chips.push(E('span', { 'class': 'routeflux-node-stack-chip routeflux-node-stack-chip-accent' }, [ security ]));
+
+	if (chips.length === 0)
+		return '-';
+
+	return E('div', { 'class': 'routeflux-node-stack' }, chips);
+}
+
 function emptyAddDraft() {
 	return {
 		'source': ''
@@ -454,6 +499,7 @@ return view.extend({
 		this.pageLoading = false;
 		this.addDraft = emptyAddDraft();
 		this.subscriptionOpen = {};
+		this.livePingBySubscription = {};
 	},
 
 	setPageInfo: function(message) {
@@ -591,6 +637,14 @@ return view.extend({
 		return this.actionKey('node', subscriptionId, nodeId);
 	},
 
+	subscriptionPingActionKey: function(subscriptionId) {
+		return this.actionKey('subscription-ping', subscriptionId);
+	},
+
+	nodePingActionKey: function(subscriptionId, nodeId) {
+		return this.actionKey('node-ping', subscriptionId, nodeId);
+	},
+
 	hasPendingActionPrefix: function(prefix) {
 		var actions;
 		var keys;
@@ -649,6 +703,34 @@ return view.extend({
 			return direct;
 
 		return routefluxUI.pendingActionMessage(this, this.subscriptionActionKey(subscriptionId));
+	},
+
+	isSubscriptionPingBusy: function(subscriptionId) {
+		return routefluxUI.isPendingAction(this, this.subscriptionPingActionKey(subscriptionId)) ||
+			this.hasPendingActionPrefix(this.actionKey('node-ping', subscriptionId) + ':');
+	},
+
+	subscriptionPingBusyMessage: function(subscriptionId) {
+		var direct = routefluxUI.pendingActionMessage(this, this.subscriptionPingActionKey(subscriptionId));
+
+		if (direct !== '')
+			return direct;
+
+		return this.pendingMessageByPrefix(this.actionKey('node-ping', subscriptionId) + ':');
+	},
+
+	isNodePingBusy: function(subscriptionId, nodeId) {
+		return routefluxUI.isPendingAction(this, this.nodePingActionKey(subscriptionId, nodeId)) ||
+			routefluxUI.isPendingAction(this, this.subscriptionPingActionKey(subscriptionId));
+	},
+
+	nodePingBusyMessage: function(subscriptionId, nodeId) {
+		var direct = routefluxUI.pendingActionMessage(this, this.nodePingActionKey(subscriptionId, nodeId));
+
+		if (direct !== '')
+			return direct;
+
+		return routefluxUI.pendingActionMessage(this, this.subscriptionPingActionKey(subscriptionId));
 	},
 
 	isSubscriptionOpen: function(subscriptionId, fallback) {
@@ -921,6 +1003,205 @@ return view.extend({
 		);
 	},
 
+	normalizePingResult: function(result) {
+		var latencyMS = Number(result && result.latency_ms);
+
+		if (!isFinite(latencyMS))
+			latencyMS = null;
+
+		return {
+			'node_id': trim(result && result.node_id),
+			'healthy': result && result.healthy === true,
+			'latency_ms': latencyMS,
+			'checked_at': trim(result && result.checked_at),
+			'error': summarizePingError(result && result.error)
+		};
+	},
+
+	storeLatestPingSession: function(cache) {
+		if (!cache)
+			return;
+
+		routefluxUI.writeSessionJSON(pingSubscriptionSessionKey, cache);
+		routefluxUI.writeSessionJSON(pingOverviewSessionKey, cache);
+	},
+
+	applyPingPayload: function(subscriptionId, payload) {
+		var key = trim(subscriptionId);
+		var existing = this.livePingBySubscription[key] || {};
+		var resultsById = existing.results_by_id || {};
+		var results = Array.isArray(payload && payload.results) ? payload.results : [];
+		var i;
+		var normalized;
+		var cache;
+
+		for (i = 0; i < results.length; i++) {
+			normalized = this.normalizePingResult(results[i]);
+			if (normalized.node_id === '')
+				continue;
+
+			resultsById[normalized.node_id] = normalized;
+		}
+
+		cache = {
+			'subscription_id': key,
+			'timeout_ms': Number(payload && payload.timeout_ms) || 0,
+			'updated_at': (new Date()).toISOString(),
+			'results_by_id': resultsById
+		};
+
+		this.livePingBySubscription[key] = cache;
+		this.storeLatestPingSession(cache);
+	},
+
+	runPingAction: function(subscriptionId, nodeId, nodeCount) {
+		var key = trim(nodeId) !== ''
+			? this.nodePingActionKey(subscriptionId, nodeId)
+			: this.subscriptionPingActionKey(subscriptionId);
+		var argv = [ '--json', 'inspect', 'ping', '--subscription', subscriptionId ];
+		var pendingMessage = trim(nodeId) !== ''
+			? _('Checking ping...')
+			: _('Checking %d nodes...').format(nodeCount);
+
+		if (trim(nodeId) !== '')
+			argv.push('--node', nodeId);
+
+		return this.runAction(key, pendingMessage, L.bind(function() {
+			return this.execJSON(argv).then(L.bind(function(payload) {
+				this.applyPingPayload(subscriptionId, payload);
+				this.renderIntoRoot();
+				ui.addNotification(null, notificationParagraph(trim(nodeId) !== '' ? _('Ping updated.') : _('Ping check completed.')), 'info');
+				return payload;
+			}, this)).catch(L.bind(function(err) {
+				var message = err.message || String(err);
+
+				this.setPageError(message);
+				ui.addNotification(null, notificationParagraph(message));
+				this.renderIntoRoot();
+				return null;
+			}, this));
+		}, this));
+	},
+
+	handleCheckPing: function(subscriptionId, nodeCount, ev) {
+		if (ev && typeof ev.preventDefault === 'function')
+			ev.preventDefault();
+
+		return this.runPingAction(subscriptionId, '', Math.max(1, Number(nodeCount) || 0));
+	},
+
+	handleRecheckPing: function(subscriptionId, nodeId, ev) {
+		if (ev && typeof ev.preventDefault === 'function')
+			ev.preventDefault();
+
+		return this.runPingAction(subscriptionId, nodeId, 1);
+	},
+
+	seededPingForNode: function(status, nodeId) {
+		var healthMap = status && status.state && status.state.health;
+		var health = healthMap && healthMap[nodeId];
+		var rawLatency;
+		var latencyMS;
+
+		if (!health)
+			return null;
+
+		rawLatency = firstNonEmpty([ health.last_latency, health.average_latency ], '');
+		latencyMS = routefluxUI.durationToMilliseconds(rawLatency);
+
+		return {
+			'source': 'seed',
+			'healthy': health.healthy === true,
+			'latency_ms': latencyMS,
+			'checked_at': trim(health.last_checked_at),
+			'error': summarizePingError(health.last_failure_reason)
+		};
+	},
+
+	livePingForNode: function(subscriptionId, nodeId) {
+		var cache = this.livePingBySubscription[trim(subscriptionId)];
+		var results = cache && cache.results_by_id;
+
+		if (!results)
+			return null;
+
+		return results[trim(nodeId)] || null;
+	},
+
+	resolvePingForNode: function(subscriptionId, nodeId, status) {
+		return this.livePingForNode(subscriptionId, nodeId) || this.seededPingForNode(status, nodeId);
+	},
+
+	pingPrimaryLabel: function(result) {
+		var latencyLabel = routefluxUI.formatLatencyMS(result && result.latency_ms);
+
+		if (!result)
+			return _('Not checked');
+
+		if (result.healthy === false)
+			return _('Unavailable');
+
+		if (latencyLabel !== '')
+			return latencyLabel;
+
+		return _('Not checked');
+	},
+
+	pingStatusLabel: function(result) {
+		if (!result)
+			return '';
+
+		if (result.source === 'seed')
+			return _('Last known');
+
+		return _('Current');
+	},
+
+	pingTimestampLabel: function(result) {
+		var checkedAt = compactTimestamp(result && result.checked_at);
+
+		if (checkedAt === '')
+			return '';
+
+		return checkedAt;
+	},
+
+	renderPingCell: function(subscription, node, status) {
+		var ping = this.resolvePingForNode(subscription.id, node.id, status);
+		var nodeBusy = this.isNodeBusy(subscription.id, node.id);
+		var pingBusy = this.isNodePingBusy(subscription.id, node.id);
+		var busyMessage = this.nodePingBusyMessage(subscription.id, node.id);
+		var primaryClass = 'routeflux-ping-primary';
+		var content;
+
+		if (ping && ping.source === 'seed')
+			primaryClass += ' routeflux-ping-primary-seed';
+		else if (ping && ping.healthy === false)
+			primaryClass += ' routeflux-ping-primary-down';
+		else if (ping && ping.healthy === true)
+			primaryClass += ' routeflux-ping-primary-live';
+
+		content = [
+			E('div', { 'class': 'routeflux-ping-cell' }, [
+				E('div', { 'class': primaryClass }, [ this.pingPrimaryLabel(ping) ]),
+				this.pingStatusLabel(ping) !== '' ? E('div', { 'class': 'routeflux-ping-meta routeflux-ping-meta-status' }, [ this.pingStatusLabel(ping) ]) : '',
+				this.pingTimestampLabel(ping) !== '' ? E('div', { 'class': 'routeflux-ping-meta' }, [ this.pingTimestampLabel(ping) ]) : '',
+				ping && ping.error ? E('div', { 'class': 'routeflux-ping-detail', 'title': ping.error }, [ ping.error ]) : '',
+				E('div', { 'class': 'routeflux-ping-actions' }, [
+					E('button', {
+						'class': 'cbi-button cbi-button-action routeflux-node-button-compact',
+						'type': 'button',
+						'click': ui.createHandlerFn(this, 'handleRecheckPing', subscription.id, node.id),
+						'disabled': nodeBusy || pingBusy ? 'disabled' : null
+					}, [ _('Recheck') ])
+				]),
+				busyMessage !== '' ? E('div', { 'class': 'routeflux-action-status' }, [ busyMessage ]) : ''
+			])
+		];
+
+		return content;
+	},
+
 	renderCard: function(label, value, options) {
 		var settings = options || {};
 
@@ -1012,7 +1293,7 @@ return view.extend({
 		]);
 	},
 
-	renderNodeTable: function(subscription, activeSubscriptionId, activeNodeId) {
+	renderNodeTable: function(subscription, activeSubscriptionId, activeNodeId, status) {
 		var nodes = Array.isArray(subscription && subscription.nodes) ? subscription.nodes : [];
 
 		if (nodes.length === 0)
@@ -1034,13 +1315,12 @@ return view.extend({
 					isActive ? E('div', { 'class': 'routeflux-node-active-badge' }, [ badge(_('Active'), 'notice') ]) : ''
 				], 'routeflux-node-cell-primary'),
 				responsiveTableCell(_('Address'), address, 'routeflux-node-cell-address'),
-				responsiveTableCell(_('Protocol'), firstNonEmpty([ node.protocol ], '-')),
-				responsiveTableCell(_('Transport'), firstNonEmpty([ node.transport ], '-')),
-				responsiveTableCell(_('Security'), formatSecurityLabel(node.security)),
+				responsiveTableCell(_('Stack'), renderNodeStackCell(node), 'routeflux-node-cell-stack'),
+				responsiveTableCell(_('Ping'), this.renderPingCell(subscription, node, status), 'routeflux-node-cell-ping'),
 				responsiveTableCell(_('Actions'), [
 					E('div', { 'class': 'routeflux-node-actions' }, [
 						E('button', {
-							'class': 'cbi-button cbi-button-action',
+							'class': 'cbi-button cbi-button-action routeflux-node-button-compact',
 							'type': 'button',
 							'click': ui.createHandlerFn(this, 'handleConnectNode', subscription.id, node.id),
 							'disabled': nodeBusy ? 'disabled' : null
@@ -1056,22 +1336,23 @@ return view.extend({
 				E('tr', { 'class': 'tr cbi-section-table-titles' }, [
 					E('th', { 'class': 'th' }, [ _('Node') ]),
 					E('th', { 'class': 'th' }, [ _('Address') ]),
-					E('th', { 'class': 'th' }, [ _('Protocol') ]),
-					E('th', { 'class': 'th' }, [ _('Transport') ]),
-					E('th', { 'class': 'th' }, [ _('Security') ]),
+					E('th', { 'class': 'th' }, [ _('Stack') ]),
+					E('th', { 'class': 'th' }, [ _('Ping') ]),
 					E('th', { 'class': 'th right routeflux-node-heading-actions' }, [ _('Actions') ])
 				])
 			].concat(rows))
 		]);
 	},
 
-	renderSubscriptionCard: function(entry, activeSubscriptionId, activeNodeId) {
+	renderSubscriptionCard: function(entry, activeSubscriptionId, activeNodeId, status) {
 		var subscription = entry.subscription;
 		var displayName = entry.profile_label;
 		var providerName = entry.provider_title;
 		var isActive = subscription.id === activeSubscriptionId;
 		var subscriptionBusy = this.isSubscriptionBusy(subscription.id);
 		var busyMessage = this.subscriptionBusyMessage(subscription.id);
+		var pingBusy = this.isSubscriptionPingBusy(subscription.id);
+		var pingBusyMessage = this.subscriptionPingBusyMessage(subscription.id);
 		var nodesCount = Array.isArray(subscription.nodes) ? subscription.nodes.length : 0;
 		var metaRows = [
 			[ _('ID'), subscription.id ],
@@ -1115,13 +1396,20 @@ return view.extend({
 							'disabled': subscriptionBusy ? 'disabled' : null
 						}, [ _('Connect Auto') ]),
 						E('button', {
+							'class': 'cbi-button cbi-button-action',
+							'type': 'button',
+							'click': ui.createHandlerFn(this, 'handleCheckPing', subscription.id, nodesCount),
+							'disabled': subscriptionBusy || pingBusy ? 'disabled' : null
+						}, [ _('Check Ping') ]),
+						E('button', {
 							'class': 'cbi-button cbi-button-negative',
 							'type': 'button',
 							'click': ui.createHandlerFn(this, 'handleRemoveSubscription', subscription.id, displayName),
 							'disabled': subscriptionBusy ? 'disabled' : null
 						}, [ _('Remove') ])
 					]),
-					busyMessage !== '' ? E('div', { 'class': 'routeflux-action-status routeflux-action-status-group' }, [ busyMessage ]) : ''
+					busyMessage !== '' ? E('div', { 'class': 'routeflux-action-status routeflux-action-status-group' }, [ busyMessage ]) : '',
+					pingBusyMessage !== '' ? E('div', { 'class': 'routeflux-action-status routeflux-action-status-group routeflux-ping-status-group' }, [ pingBusyMessage ]) : ''
 				])
 			]),
 			E('table', { 'class': 'table routeflux-meta-table' }, metaRows),
@@ -1136,12 +1424,12 @@ return view.extend({
 				}, this)
 			}, [
 				E('summary', {}, [ _('Nodes (%d)').format(nodesCount) ]),
-				this.renderNodeTable(subscription, activeSubscriptionId, activeNodeId)
+				this.renderNodeTable(subscription, activeSubscriptionId, activeNodeId, status)
 			])
 		]);
 	},
 
-	renderProviderGroup: function(group, activeSubscriptionId, activeNodeId) {
+	renderProviderGroup: function(group, activeSubscriptionId, activeNodeId, status) {
 		var description = _('%d profile(s), %d node(s)').format(group.items.length, group.total_nodes);
 		var content = [
 			E('div', { 'class': 'routeflux-provider-group-header' }, [
@@ -1151,7 +1439,7 @@ return view.extend({
 		];
 
 		for (var i = 0; i < group.items.length; i++)
-			content.push(this.renderSubscriptionCard(group.items[i], activeSubscriptionId, activeNodeId));
+			content.push(this.renderSubscriptionCard(group.items[i], activeSubscriptionId, activeNodeId, status));
 
 		return E('div', { 'class': 'routeflux-provider-group' }, content);
 	},
@@ -1195,13 +1483,36 @@ return view.extend({
 			'.routeflux-traffic-meter { position:relative; width:min(100%, 260px); max-width:100%; height:10px; border-radius:999px; background:linear-gradient(180deg, rgba(148, 163, 184, 0.3) 0%, rgba(148, 163, 184, 0.18) 100%); overflow:hidden; box-shadow:inset 0 1px 1px rgba(15, 23, 42, 0.14); }',
 			'.routeflux-traffic-meter-fill { height:100%; border-radius:inherit; background:linear-gradient(90deg, #22c55e 0%, #14b8a6 100%); }',
 			'.routeflux-traffic-shell-unlimited .routeflux-traffic-primary { color:#17603d; }',
-			'.routeflux-node-table-wrap { width:100%; max-width:100%; overflow-x:auto; -webkit-overflow-scrolling:touch; }',
-			'.routeflux-node-table { width:100%; min-width:860px; table-layout:fixed; }',
+			'.routeflux-node-table-wrap { width:100%; max-width:100%; overflow-x:visible; }',
+			'.routeflux-node-table { width:100%; min-width:0; table-layout:fixed; }',
 			'.routeflux-node-table .th, .routeflux-node-table .td { vertical-align:middle; overflow-wrap:anywhere; word-break:break-word; }',
+			'.routeflux-node-table .th, .routeflux-node-table .td { padding-left:8px; padding-right:8px; }',
+			'.routeflux-node-table .th:nth-child(1), .routeflux-node-table .td:nth-child(1) { width:17%; }',
+			'.routeflux-node-table .th:nth-child(2), .routeflux-node-table .td:nth-child(2) { width:24%; }',
+			'.routeflux-node-table .th:nth-child(3), .routeflux-node-table .td:nth-child(3) { width:18%; }',
+			'.routeflux-node-table .th:nth-child(4), .routeflux-node-table .td:nth-child(4) { width:23%; }',
+			'.routeflux-node-table .th:nth-child(5), .routeflux-node-table .td:nth-child(5) { width:14%; }',
 			'.routeflux-node-heading-actions { text-align:right; }',
 			'.routeflux-node-actions { display:flex; justify-content:flex-end; }',
+			'.routeflux-node-cell-stack { min-width:0; }',
+			'.routeflux-node-stack { display:flex; flex-wrap:wrap; gap:4px; }',
+			'.routeflux-node-stack-chip { display:inline-flex; align-items:center; min-height:24px; padding:0 8px; border-radius:999px; background:rgba(148, 163, 184, 0.14); color:var(--text-color-high, #17263a); font-size:11px; font-weight:700; letter-spacing:.03em; }',
+			'.routeflux-node-stack-chip-primary { background:rgba(56, 189, 248, 0.18); color:#0f3f57; }',
+			'.routeflux-node-stack-chip-accent { background:rgba(34, 197, 94, 0.16); color:#17603d; }',
+			'.routeflux-node-cell-ping { width:23%; }',
+			'.routeflux-ping-cell { display:grid; gap:4px; }',
+			'.routeflux-ping-primary { color:var(--text-color-high, #17263a); font-size:13px; font-weight:700; }',
+			'.routeflux-ping-primary-live { color:#17603d; }',
+			'.routeflux-ping-primary-down { color:#8a1c1c; }',
+			'.routeflux-ping-primary-seed { color:#40556d; }',
+			'.routeflux-ping-meta, .routeflux-ping-detail { color:var(--text-color-medium, #586677); font-size:11px; line-height:1.35; }',
+			'.routeflux-ping-meta-status { text-transform:uppercase; letter-spacing:.08em; font-weight:700; }',
+			'.routeflux-ping-detail { overflow-wrap:anywhere; word-break:break-word; }',
+			'.routeflux-ping-actions { display:flex; justify-content:flex-start; }',
+			'.routeflux-node-button-compact { min-height:32px; padding:0 10px; font-size:12px; }',
 			'.routeflux-action-status { margin-top:8px; color:var(--text-color-medium, #586677); font-size:12px; line-height:1.4; }',
 			'.routeflux-action-status-group { width:100%; text-align:right; }',
+			'.routeflux-ping-status-group { color:#0f3f57; }',
 			'.routeflux-page-status { margin-bottom:14px; }',
 			'.routeflux-page-banner { padding:10px 12px; border:1px solid rgba(98, 112, 129, 0.34); border-radius:12px; margin-bottom:10px; line-height:1.45; }',
 			'.routeflux-page-banner-info { background:rgba(224, 242, 254, 0.6); border-color:rgba(56, 189, 248, 0.32); color:#0f3f57; }',
@@ -1235,7 +1546,7 @@ return view.extend({
 			'.routeflux-provider-group-header { display:grid; grid-template-columns:minmax(0, 1fr) auto; gap:8px 12px; align-items:end; margin:12px 0 8px; }',
 			'.routeflux-provider-group-title { font-size:clamp(20px, 1.3vw + 15px, 26px); font-weight:600; overflow-wrap:anywhere; word-break:break-word; }',
 			'.routeflux-provider-group-meta { color:var(--text-color-medium, #666); }',
-			'@media (max-width: 980px) { .routeflux-subscription-header, .routeflux-provider-group-header, .routeflux-add-grid { grid-template-columns:minmax(0, 1fr); } .routeflux-subscription-controls { justify-items:stretch; min-width:0; } .routeflux-subscription-actions, .routeflux-node-actions { justify-content:flex-start; } .routeflux-action-status-group { text-align:left; } }',
+			'@media (max-width: 980px) { .routeflux-subscription-header, .routeflux-provider-group-header, .routeflux-add-grid { grid-template-columns:minmax(0, 1fr); } .routeflux-subscription-controls { justify-items:stretch; min-width:0; } .routeflux-subscription-actions, .routeflux-node-actions { justify-content:flex-start; } .routeflux-action-status-group { text-align:left; } .routeflux-node-table .th, .routeflux-node-table .td { padding-left:6px; padding-right:6px; } .routeflux-node-button-compact { min-height:30px; padding:0 8px; font-size:11px; } }',
 			'@media (max-width: 700px) { .routeflux-actions, .routeflux-add-actions, .routeflux-page-status-actions { flex-direction:column; } .routeflux-actions .cbi-button, .routeflux-add-actions .cbi-button, .routeflux-page-status-actions .cbi-button { width:100%; } .routeflux-meta-table, .routeflux-meta-table .tr, .routeflux-meta-table .td { display:block; width:100%; box-sizing:border-box; } .routeflux-meta-table .tr { padding:10px 0; border-top:1px solid rgba(98, 112, 129, 0.22); } .routeflux-meta-table .tr:first-child { padding-top:0; border-top:0; } .routeflux-meta-label { width:100%; padding-bottom:4px; } .routeflux-meta-value { padding-top:0; } .routeflux-add-panel { padding:16px; border-radius:18px; } .routeflux-add-grid .cbi-input-textarea { min-height:152px; padding:14px 15px; } }',
 			'@media (max-width: 560px) { .routeflux-subscription-actions, .routeflux-node-actions { flex-direction:column; align-items:stretch; } .routeflux-subscription-actions .cbi-button, .routeflux-node-actions .cbi-button { width:100%; } .routeflux-node-table, .routeflux-node-table .tr, .routeflux-node-table .td { display:block; width:100%; box-sizing:border-box; } .routeflux-node-table { min-width:0; } .routeflux-node-table .cbi-section-table-titles { display:none; } .routeflux-node-table .routeflux-node-row { margin-bottom:12px; padding:12px 14px; border:1px solid var(--border-color-medium); border-radius:12px; background:linear-gradient(180deg, var(--background-color-high) 0%, var(--background-color-low) 100%); box-shadow:0 8px 18px hsla(var(--border-color-low-hsl), 0.35), inset 0 1px 0 hsla(var(--background-color-high-hsl), 0.28); } .routeflux-node-table .routeflux-node-row:last-child { margin-bottom:0; } .routeflux-node-table .td { padding:8px 0; border-top:1px solid var(--border-color-low); text-align:left; } .routeflux-node-table .td:first-child { padding-top:0; border-top:0; } .routeflux-node-table .td:last-child { padding-bottom:0; } .routeflux-node-table .td::before { content:attr(data-title); display:block; margin-bottom:4px; color:var(--text-color-medium, #586677); font-size:10px; text-transform:uppercase; letter-spacing:.12em; font-weight:700; } }'
 		]));
@@ -1325,7 +1636,7 @@ return view.extend({
 		}
 
 		for (var i = 0; i < presentation.groups.length; i++)
-			content.push(this.renderProviderGroup(presentation.groups[i], activeSubscriptionId, activeNodeId));
+			content.push(this.renderProviderGroup(presentation.groups[i], activeSubscriptionId, activeNodeId, status));
 
 		return content;
 	},
