@@ -24,6 +24,25 @@ func TestOverviewViewShowsActivePingCard(t *testing.T) {
 	}
 }
 
+func TestOverviewViewUsesFlagshipShellMarkers(t *testing.T) {
+	t.Parallel()
+
+	source := readOverviewViewSource(t)
+
+	for _, want := range []string{
+		"routeflux-page-shell routeflux-page-shell-overview",
+		"routeflux-page-hero",
+		"routeflux-page-hero-actions",
+		"routeflux-surface",
+		"routeflux-data-table",
+		"routeflux-section-heading",
+	} {
+		if !strings.Contains(source, want) {
+			t.Fatalf("overview view missing flagship shell marker %q", want)
+		}
+	}
+}
+
 func readOverviewViewSource(t *testing.T) string {
 	t.Helper()
 

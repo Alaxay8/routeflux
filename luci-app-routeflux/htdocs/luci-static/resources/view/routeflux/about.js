@@ -187,8 +187,8 @@ return view.extend({
 			'.routeflux-about-update-card { min-height:168px; }',
 			'.routeflux-about-update-card-new .routeflux-card-accent { background:linear-gradient(90deg, #22c55e 0%, #16a34a 100%); }',
 			'.routeflux-about-update-title { margin-bottom:10px; }',
-			'.routeflux-about-update-summary { margin:0; color:var(--text-color-secondary, #526175); line-height:1.6; }',
-			'.routeflux-modal-help { margin:0 0 12px; color:var(--text-color-medium, #586677); max-width:100%; overflow-wrap:anywhere; word-break:break-word; line-height:1.45; }'
+			'.routeflux-about-update-summary { margin:0; color:var(--routeflux-text-secondary); line-height:1.6; }',
+			'.routeflux-modal-help { margin:0 0 12px; color:var(--routeflux-text-secondary); max-width:100%; overflow-wrap:anywhere; word-break:break-word; line-height:1.45; }'
 		]));
 
 		content.push(E('h2', {}, [ _('RouteFlux - About') ]));
@@ -226,7 +226,9 @@ return view.extend({
 			])
 		]));
 
-		return E(content);
+		return E('div', {
+			'class': routefluxUI.withThemeClass('routeflux-page-shell routeflux-page-shell-about')
+		}, content);
 	},
 
 	handleSave: null,

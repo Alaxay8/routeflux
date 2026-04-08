@@ -47,6 +47,79 @@ func TestFirewallViewDefinesReadableContrastTheme(t *testing.T) {
 	}
 }
 
+func TestFirewallViewUsesLightActionButtonsInsteadOfDarkNavy(t *testing.T) {
+	t.Parallel()
+
+	source := readFirewallViewSource(t)
+
+	for _, want := range []string{
+		".routeflux-routing-inline > .cbi-button-action { min-width:132px; min-height:52px; padding:0 18px; border:1px solid rgba(37, 99, 235, 0.18); border-radius:15px; background:linear-gradient(180deg, rgba(243, 248, 253, 0.98) 0%, rgba(232, 240, 248, 0.98) 100%); color:#17324b;",
+		".routeflux-routing-actions .cbi-button { min-height:48px; padding:0 18px; border:1px solid rgba(37, 99, 235, 0.18); border-radius:15px; background:linear-gradient(180deg, rgba(243, 248, 253, 0.98) 0%, rgba(232, 240, 248, 0.98) 100%); color:#17324b;",
+	} {
+		if !strings.Contains(source, want) {
+			t.Fatalf("routing view missing light action marker %q", want)
+		}
+	}
+
+	for _, forbidden := range []string{
+		"background:var(--routeflux-routing-surface-strong); color:#eef8ff;",
+	} {
+		if strings.Contains(source, forbidden) {
+			t.Fatalf("routing view must not keep dark action marker %q", forbidden)
+		}
+	}
+}
+
+func TestFirewallViewUsesReadableLightInputsAndPlaceholders(t *testing.T) {
+	t.Parallel()
+
+	source := readFirewallViewSource(t)
+
+	for _, want := range []string{
+		".routeflux-theme-light .routeflux-routing-inline > .cbi-input-text, .routeflux-theme-light .routeflux-routing-inline > .cbi-input-select { border-color:rgba(125, 146, 170, 0.2); background:linear-gradient(180deg, rgba(251, 252, 254, 0.99) 0%, rgba(244, 248, 252, 0.99) 100%); color:#162638;",
+		".routeflux-theme-light .routeflux-routing-inline .cbi-input-text::placeholder { color:#63768c; opacity:1; }",
+	} {
+		if !strings.Contains(source, want) {
+			t.Fatalf("routing view missing light input marker %q", want)
+		}
+	}
+}
+
+func TestFirewallViewUsesStructuredKeepDirectSelectorShell(t *testing.T) {
+	t.Parallel()
+
+	source := readFirewallViewSource(t)
+
+	for _, want := range []string{
+		"routeflux-routing-selector-shell",
+		"routeflux-routing-selector-head",
+		"Direct selectors",
+		"routeflux-routing-selector-meta",
+		"routeflux-routing-item-value-code",
+		"stay direct only while bypass mode is active",
+	} {
+		if !strings.Contains(source, want) {
+			t.Fatalf("routing view missing Keep Direct selector marker %q", want)
+		}
+	}
+}
+
+func TestFirewallViewRemovesDarkShellAroundRoutingPanels(t *testing.T) {
+	t.Parallel()
+
+	source := readFirewallViewSource(t)
+
+	for _, want := range []string{
+		"#routeflux-routing-root.routeflux-theme-dark::before, #routeflux-routing-root.routeflux-theme-dark::after { display:none; }",
+		"#routeflux-routing-root .routeflux-routing-layout { display:grid; gap:14px; padding:0; border:0; background:transparent; box-shadow:none;",
+		"#routeflux-routing-root .routeflux-routing-layout::before { display:none; }",
+	} {
+		if !strings.Contains(source, want) {
+			t.Fatalf("routing view missing shell cleanup marker %q", want)
+		}
+	}
+}
+
 func TestFirewallViewUsesGreenSelectedChoiceState(t *testing.T) {
 	t.Parallel()
 
@@ -138,7 +211,7 @@ func TestFirewallViewPersistsOnlyOffAndBypassModes(t *testing.T) {
 	}
 }
 
-func TestLuCIMenuKeepsSubscriptionsRoutingZapretDiagnosticsAndAbout(t *testing.T) {
+func TestLuCIMenuKeepsSubscriptionsRoutingZapretDiagnosticsSettingsAndAbout(t *testing.T) {
 	t.Parallel()
 
 	root, err := filepath.Abs(filepath.Join("..", ".."))
@@ -153,6 +226,7 @@ func TestLuCIMenuKeepsSubscriptionsRoutingZapretDiagnosticsAndAbout(t *testing.T
 	}
 
 	var payload map[string]struct {
+		Order  int    `json:"order"`
 		Title  string `json:"title"`
 		Action struct {
 			Type string `json:"type"`
@@ -163,8 +237,8 @@ func TestLuCIMenuKeepsSubscriptionsRoutingZapretDiagnosticsAndAbout(t *testing.T
 		t.Fatalf("unmarshal menu json: %v", err)
 	}
 
-	if len(payload) != 6 {
-		t.Fatalf("expected root + 5 LuCI entries, got %d", len(payload))
+	if len(payload) != 7 {
+		t.Fatalf("expected root + 6 LuCI entries, got %d", len(payload))
 	}
 
 	rootEntry, ok := payload["admin/services/routeflux"]
@@ -211,6 +285,17 @@ func TestLuCIMenuKeepsSubscriptionsRoutingZapretDiagnosticsAndAbout(t *testing.T
 		t.Fatalf("unexpected diagnostics title %q", diagnosticsEntry.Title)
 	}
 
+	settingsEntry, ok := payload["admin/services/routeflux/settings"]
+	if !ok {
+		t.Fatal("missing settings menu entry")
+	}
+	if settingsEntry.Title != "Settings" {
+		t.Fatalf("unexpected settings title %q", settingsEntry.Title)
+	}
+	if settingsEntry.Order != 50 {
+		t.Fatalf("unexpected settings order %d", settingsEntry.Order)
+	}
+
 	aboutEntry, ok := payload["admin/services/routeflux/about"]
 	if !ok {
 		t.Fatal("missing about menu entry")
@@ -218,11 +303,13 @@ func TestLuCIMenuKeepsSubscriptionsRoutingZapretDiagnosticsAndAbout(t *testing.T
 	if aboutEntry.Title != "About" {
 		t.Fatalf("unexpected about title %q", aboutEntry.Title)
 	}
+	if aboutEntry.Order != 60 {
+		t.Fatalf("unexpected about order %d", aboutEntry.Order)
+	}
 
 	for _, forbidden := range []string{
 		"admin/services/routeflux/overview",
 		"admin/services/routeflux/dns",
-		"admin/services/routeflux/settings",
 		"admin/services/routeflux/logs",
 		"admin/services/routeflux/services",
 	} {

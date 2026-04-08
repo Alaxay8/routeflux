@@ -1010,10 +1010,12 @@ return view.extend({
 	renderSelectorItems: function(editor) {
 		var rows = [];
 		var selectors = selectorSetFromEditor(editor);
+		var total = 0;
 		var i;
 
 		for (i = 0; i < selectors.services.length; i++) {
-			rows.push(E('div', { 'class': 'routeflux-routing-item' }, [
+			total++;
+			rows.push(E('div', { 'class': 'routeflux-routing-item routeflux-routing-item-preset' }, [
 				E('span', { 'class': 'routeflux-routing-badge' }, [ _('Preset') ]),
 				E('span', { 'class': 'routeflux-routing-item-value' }, [ selectors.services[i] ]),
 				E('button', {
@@ -1025,9 +1027,10 @@ return view.extend({
 		}
 
 		for (i = 0; i < selectors.domains.length; i++) {
-			rows.push(E('div', { 'class': 'routeflux-routing-item' }, [
+			total++;
+			rows.push(E('div', { 'class': 'routeflux-routing-item routeflux-routing-item-domain' }, [
 				E('span', { 'class': 'routeflux-routing-badge routeflux-routing-badge-domain' }, [ _('Domain') ]),
-				E('span', { 'class': 'routeflux-routing-item-value' }, [ selectors.domains[i] ]),
+				E('span', { 'class': 'routeflux-routing-item-value routeflux-routing-item-value-code' }, [ selectors.domains[i] ]),
 				E('button', {
 					'class': 'cbi-button cbi-button-remove',
 					'type': 'button',
@@ -1037,9 +1040,10 @@ return view.extend({
 		}
 
 		for (i = 0; i < selectors.cidrs.length; i++) {
-			rows.push(E('div', { 'class': 'routeflux-routing-item' }, [
+			total++;
+			rows.push(E('div', { 'class': 'routeflux-routing-item routeflux-routing-item-ip' }, [
 				E('span', { 'class': 'routeflux-routing-badge routeflux-routing-badge-ip' }, [ _('IPv4') ]),
-				E('span', { 'class': 'routeflux-routing-item-value' }, [ selectors.cidrs[i] ]),
+				E('span', { 'class': 'routeflux-routing-item-value routeflux-routing-item-value-code' }, [ selectors.cidrs[i] ]),
 				E('button', {
 					'class': 'cbi-button cbi-button-remove',
 					'type': 'button',
@@ -1048,10 +1052,22 @@ return view.extend({
 			]));
 		}
 
-		if (rows.length === 0)
-			return E('div', { 'class': 'routeflux-routing-empty' }, [ _('Nothing added yet.') ]);
-
-		return E('div', { 'class': 'routeflux-routing-list' }, rows);
+		return E('div', { 'class': 'routeflux-routing-selector-shell' }, [
+			E('div', { 'class': 'routeflux-routing-selector-head' }, [
+				E('div', { 'class': 'routeflux-routing-selector-copy' }, [
+					E('h4', {}, [ _('Direct selectors') ]),
+					E('p', {}, [
+						_('Domains, presets, and IPv4 selectors stay direct only while bypass mode is active.')
+					])
+				]),
+				E('div', { 'class': 'routeflux-routing-selector-meta' }, [
+					_('%d selector(s)').format(total)
+				])
+			]),
+			rows.length === 0
+				? E('div', { 'class': 'routeflux-routing-empty' }, [ _('Nothing added yet.') ])
+				: E('div', { 'class': 'routeflux-routing-list' }, rows)
+		]);
 	},
 
 	renderExcludedItems: function(list) {
@@ -1123,10 +1139,12 @@ return view.extend({
 		content.push(routefluxUI.renderSharedStyles());
 		content.push(E('style', { 'type': 'text/css' }, [
 			'#routeflux-routing-root { --routeflux-routing-ink:#10263f; --routeflux-routing-ink-muted:#44566b; --routeflux-routing-ink-soft:#62758a; --routeflux-routing-panel-bg:linear-gradient(160deg, rgba(243, 248, 255, 0.98) 0%, rgba(230, 239, 249, 0.98) 56%, rgba(220, 232, 245, 0.98) 100%); --routeflux-routing-surface-bg:linear-gradient(180deg, rgba(255, 255, 255, 0.97) 0%, rgba(246, 250, 254, 0.97) 100%); --routeflux-routing-surface-strong:linear-gradient(180deg, #17324d 0%, #10243a 100%); }',
-			'.routeflux-routing-layout { display:grid; gap:14px; color:var(--routeflux-routing-ink); }',
-			'.routeflux-routing-grid { display:grid; grid-template-columns:repeat(auto-fit, minmax(240px, 1fr)); gap:12px; }',
-			'.routeflux-routing-panel { position:relative; overflow:hidden; isolation:isolate; border:1px solid rgba(120, 141, 167, 0.42); border-radius:22px; padding:20px; background:var(--routeflux-routing-panel-bg); box-shadow:0 20px 44px rgba(3, 15, 32, 0.22), inset 0 1px 0 rgba(255, 255, 255, 0.78); }',
-			'.routeflux-routing-panel::before { content:""; position:absolute; inset:0; background:radial-gradient(circle at top left, rgba(125, 211, 252, 0.22), transparent 34%), radial-gradient(circle at bottom right, rgba(59, 130, 246, 0.12), transparent 40%); pointer-events:none; }',
+			'#routeflux-routing-root.routeflux-theme-dark::before, #routeflux-routing-root.routeflux-theme-dark::after { display:none; }',
+			'#routeflux-routing-root .routeflux-routing-layout { display:grid; gap:14px; padding:0; border:0; background:transparent; box-shadow:none; color:var(--routeflux-routing-ink); overflow:visible; }',
+			'#routeflux-routing-root .routeflux-routing-layout::before { display:none; }',
+			'.routeflux-routing-grid { display:grid; grid-template-columns:repeat(auto-fit, minmax(240px, 1fr)); gap:14px; }',
+			'.routeflux-routing-panel { position:relative; overflow:hidden; isolation:isolate; border:1px solid rgba(164, 184, 207, 0.56); border-radius:22px; padding:20px; background:var(--routeflux-routing-panel-bg); box-shadow:0 16px 30px rgba(69, 90, 118, 0.16), inset 0 1px 0 rgba(255, 255, 255, 0.84); }',
+			'.routeflux-routing-panel::before { content:""; position:absolute; inset:0; background:radial-gradient(circle at top left, rgba(125, 211, 252, 0.16), transparent 32%), radial-gradient(circle at bottom right, rgba(59, 130, 246, 0.08), transparent 38%); pointer-events:none; }',
 			'.routeflux-routing-panel > * { position:relative; z-index:1; }',
 			'.routeflux-routing-panel h3 { margin:0; color:var(--routeflux-routing-ink); font-size:clamp(24px, 1.1vw + 18px, 34px); line-height:1.12; letter-spacing:-0.03em; }',
 			'.routeflux-routing-mode-grid, .routeflux-routing-dns-grid { display:grid; gap:14px; }',
@@ -1152,24 +1170,35 @@ return view.extend({
 			'.routeflux-routing-inline > .cbi-input-select { padding-right:44px; }',
 			'.routeflux-routing-inline .cbi-input-text::placeholder { color:rgba(68, 86, 107, 0.88); opacity:1; }',
 			'.routeflux-routing-inline > .cbi-input-text:focus, .routeflux-routing-inline > .cbi-input-select:focus { border-color:rgba(14, 165, 233, 0.72); box-shadow:0 0 0 1px rgba(14, 165, 233, 0.24), 0 16px 30px rgba(14, 165, 233, 0.16); }',
-			'.routeflux-routing-inline > .cbi-button-action { min-width:132px; min-height:52px; padding:0 18px; border:1px solid rgba(56, 189, 248, 0.44); border-radius:15px; background:var(--routeflux-routing-surface-strong); color:#eef8ff; font-weight:800; text-shadow:0 1px 0 rgba(0, 0, 0, 0.22); box-shadow:0 16px 28px rgba(3, 15, 32, 0.22); }',
-			'.routeflux-routing-inline > .cbi-button-action:hover, .routeflux-routing-actions .cbi-button:hover { border-color:rgba(96, 165, 250, 0.66); background:linear-gradient(180deg, #214365 0%, #16304a 100%); color:#ffffff; }',
-			'.routeflux-routing-list { display:grid; gap:8px; }',
-			'.routeflux-routing-item { display:flex; gap:12px; align-items:center; padding:12px 14px; border-radius:15px; background:rgba(255, 255, 255, 0.93); border:1px solid rgba(125, 145, 168, 0.28); box-shadow:0 10px 22px rgba(15, 23, 42, 0.08); }',
+			'.routeflux-theme-light .routeflux-routing-inline > .cbi-input-text, .routeflux-theme-light .routeflux-routing-inline > .cbi-input-select { border-color:rgba(125, 146, 170, 0.2); background:linear-gradient(180deg, rgba(251, 252, 254, 0.99) 0%, rgba(244, 248, 252, 0.99) 100%); color:#162638; box-shadow:inset 0 1px 0 rgba(255, 255, 255, 0.9), 0 8px 18px rgba(63, 87, 118, 0.06); }',
+			'.routeflux-theme-light .routeflux-routing-inline .cbi-input-text::placeholder { color:#63768c; opacity:1; }',
+			'.routeflux-theme-light .routeflux-routing-inline > .cbi-input-text:focus, .routeflux-theme-light .routeflux-routing-inline > .cbi-input-select:focus { border-color:rgba(37, 99, 235, 0.36); box-shadow:0 0 0 1px rgba(37, 99, 235, 0.12), 0 0 0 6px rgba(37, 99, 235, 0.04); }',
+			'.routeflux-routing-inline > .cbi-button-action { min-width:132px; min-height:52px; padding:0 18px; border:1px solid rgba(37, 99, 235, 0.18); border-radius:15px; background:linear-gradient(180deg, rgba(243, 248, 253, 0.98) 0%, rgba(232, 240, 248, 0.98) 100%); color:#17324b; font-weight:800; box-shadow:0 12px 22px rgba(63, 87, 118, 0.08), inset 0 1px 0 rgba(255, 255, 255, 0.84); }',
+			'.routeflux-routing-inline > .cbi-button-action:hover, .routeflux-routing-actions .cbi-button:hover { border-color:rgba(37, 99, 235, 0.28); background:linear-gradient(180deg, rgba(236, 244, 251, 0.99) 0%, rgba(225, 236, 247, 0.99) 100%); color:#102f4c; }',
+			'.routeflux-routing-selector-shell { display:grid; gap:14px; padding:16px 18px; border:1px solid rgba(125, 145, 168, 0.3); border-radius:18px; background:rgba(255, 255, 255, 0.78); box-shadow:0 14px 28px rgba(15, 23, 42, 0.08), inset 0 1px 0 rgba(255, 255, 255, 0.78); }',
+			'.routeflux-routing-selector-head { display:flex; flex-wrap:wrap; justify-content:space-between; align-items:flex-end; gap:10px 14px; }',
+			'.routeflux-routing-selector-copy { display:grid; gap:6px; min-width:0; }',
+			'.routeflux-routing-selector-copy h4 { margin:0; color:var(--routeflux-routing-ink); font-size:18px; font-weight:800; letter-spacing:-0.02em; }',
+			'.routeflux-routing-selector-copy p { margin:0; color:var(--routeflux-routing-ink-muted); line-height:1.55; }',
+			'.routeflux-routing-selector-meta { display:inline-flex; align-items:center; min-height:30px; padding:0 12px; border-radius:999px; background:rgba(16, 185, 129, 0.14); color:#047857; font-size:11px; font-weight:800; letter-spacing:.08em; text-transform:uppercase; }',
+			'.routeflux-routing-list { display:grid; gap:10px; }',
+			'.routeflux-routing-item { display:flex; gap:12px; align-items:center; padding:14px 16px; border-radius:18px; background:linear-gradient(180deg, rgba(255, 255, 255, 0.96) 0%, rgba(244, 248, 252, 0.96) 100%); border:1px solid rgba(125, 145, 168, 0.24); box-shadow:0 12px 24px rgba(15, 23, 42, 0.08); }',
 			'.routeflux-routing-item-value { flex:1 1 auto; min-width:0; word-break:break-word; font-weight:700; color:var(--routeflux-routing-ink); }',
+			'.routeflux-routing-item-value-code { font-family:ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", monospace; font-size:13px; letter-spacing:-0.01em; }',
+			'.routeflux-routing-item .cbi-button-remove { min-width:96px; min-height:40px; padding:0 14px; border:1px solid rgba(239, 68, 68, 0.22); border-radius:12px; background:rgba(255, 255, 255, 0.86); color:#b91c1c; box-shadow:0 10px 18px rgba(15, 23, 42, 0.08); }',
 			'.routeflux-routing-badge { display:inline-flex; align-items:center; justify-content:center; min-width:58px; padding:4px 8px; border-radius:999px; background:rgba(37, 99, 235, 0.13); color:#1d4ed8; font-size:11px; font-weight:800; letter-spacing:.05em; text-transform:uppercase; }',
-			'.routeflux-routing-badge-domain { background:rgba(16, 185, 129, 0.14); color:#047857; }',
+			'.routeflux-routing-badge-domain { background:rgba(16, 185, 129, 0.16); color:#047857; }',
 			'.routeflux-routing-badge-ip { background:rgba(249, 115, 22, 0.14); color:#c2410c; }',
 			'.routeflux-routing-badge-host { background:rgba(99, 102, 241, 0.14); color:#4338ca; }',
 			'.routeflux-routing-empty { padding:14px; border-radius:14px; background:rgba(255, 255, 255, 0.82); border:1px dashed rgba(125, 145, 168, 0.42); color:var(--routeflux-routing-ink-muted); }',
 			'.routeflux-routing-actions { display:flex; flex-wrap:wrap; gap:10px; }',
-			'.routeflux-routing-actions .cbi-button { min-height:48px; padding:0 18px; border:1px solid rgba(56, 189, 248, 0.38); border-radius:15px; background:var(--routeflux-routing-surface-strong); color:#eef8ff; font-weight:800; text-shadow:0 1px 0 rgba(0, 0, 0, 0.22); box-shadow:0 16px 30px rgba(3, 15, 32, 0.18); }',
+			'.routeflux-routing-actions .cbi-button { min-height:48px; padding:0 18px; border:1px solid rgba(37, 99, 235, 0.18); border-radius:15px; background:linear-gradient(180deg, rgba(243, 248, 253, 0.98) 0%, rgba(232, 240, 248, 0.98) 100%); color:#17324b; font-weight:800; box-shadow:0 12px 22px rgba(63, 87, 118, 0.08), inset 0 1px 0 rgba(255, 255, 255, 0.84); }',
 			'.routeflux-routing-summary-shell { padding:16px 18px; border:1px solid rgba(125, 145, 168, 0.34); border-radius:16px; background:rgba(255, 255, 255, 0.84); box-shadow:0 10px 22px rgba(15, 23, 42, 0.08); }',
 			'.routeflux-routing-summary-shell h3 { margin-top:0; margin-bottom:10px; color:var(--routeflux-routing-ink); font-size:20px; letter-spacing:-0.02em; }',
 			'.routeflux-routing-summary-list { margin:0; padding-left:18px; color:var(--routeflux-routing-ink-muted); line-height:1.55; }',
 			'.routeflux-routing-optional summary { cursor:pointer; font-weight:800; color:var(--routeflux-routing-ink); }',
 			'.routeflux-routing-optional-shell { margin-top:12px; }',
-			'@media (max-width: 720px) { .routeflux-routing-inline { flex-direction:column; } .routeflux-routing-inline > .cbi-button-action, .routeflux-routing-actions .cbi-button { width:100%; } }'
+			'@media (max-width: 720px) { .routeflux-routing-inline { flex-direction:column; } .routeflux-routing-inline > .cbi-button-action, .routeflux-routing-actions .cbi-button { width:100%; } .routeflux-routing-selector-head { align-items:stretch; } .routeflux-routing-selector-meta { width:max-content; } .routeflux-routing-item { align-items:flex-start; flex-direction:column; } .routeflux-routing-item .cbi-button-remove { width:100%; } }'
 		]));
 
 		content.push(E('h2', {}, [ _('RouteFlux - Routing') ]));
@@ -1380,7 +1409,10 @@ return view.extend({
 
 	render: function(data) {
 		this.initializePageState(data);
-		return E('div', { 'id': 'routeflux-routing-root' }, this.renderPageContent());
+		return E('div', {
+			'id': 'routeflux-routing-root',
+			'class': routefluxUI.withThemeClass('routeflux-page-shell routeflux-page-shell-firewall')
+		}, this.renderPageContent());
 	},
 
 	handleSave: null,

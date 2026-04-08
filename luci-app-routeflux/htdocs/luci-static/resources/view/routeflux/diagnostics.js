@@ -427,7 +427,7 @@ return view.extend({
 			]);
 		});
 
-		return E('table', { 'class': 'table cbi-section-table' }, [
+		return E('table', { 'class': 'table cbi-section-table routeflux-diagnostics-file-table' }, [
 			E('tr', { 'class': 'tr cbi-section-table-titles' }, [
 				E('th', { 'class': 'th' }, [ _('Item') ]),
 				E('th', { 'class': 'th' }, [ _('Path') ]),
@@ -490,17 +490,24 @@ return view.extend({
 
 		content.push(routefluxUI.renderSharedStyles());
 		content.push(E('style', { 'type': 'text/css' }, [
-			'#routeflux-diagnostics-root { --routeflux-diagnostics-ink:#14283f; --routeflux-diagnostics-ink-muted:#506273; --routeflux-diagnostics-panel-bg:linear-gradient(160deg, rgba(245, 248, 252, 0.98) 0%, rgba(236, 242, 248, 0.98) 55%, rgba(229, 237, 245, 0.98) 100%); --routeflux-diagnostics-surface-bg:linear-gradient(180deg, rgba(255, 255, 255, 0.97) 0%, rgba(247, 250, 253, 0.97) 100%); --routeflux-diagnostics-surface-strong:linear-gradient(180deg, #1d3a56 0%, #13293f 100%); }',
-			'.routeflux-diagnostics-layout { display:grid; gap:14px; color:var(--routeflux-diagnostics-ink); }',
+			'#routeflux-diagnostics-root { --routeflux-diagnostics-ink:#102234; --routeflux-diagnostics-ink-muted:#405468; --routeflux-diagnostics-ink-soft:#576d82; --routeflux-diagnostics-panel-bg:linear-gradient(160deg, rgba(248, 250, 253, 0.98) 0%, rgba(240, 245, 249, 0.98) 55%, rgba(232, 239, 246, 0.98) 100%); --routeflux-diagnostics-surface-bg:linear-gradient(180deg, rgba(251, 252, 254, 0.97) 0%, rgba(244, 248, 252, 0.97) 100%); --routeflux-diagnostics-surface-strong:linear-gradient(180deg, rgba(243, 248, 253, 0.98) 0%, rgba(232, 240, 248, 0.98) 100%); }',
+			'#routeflux-diagnostics-root.routeflux-theme-dark::before, #routeflux-diagnostics-root.routeflux-theme-dark::after { display:none; }',
+			'#routeflux-diagnostics-root .routeflux-diagnostics-layout { display:grid; gap:14px; padding:0; border:0; background:transparent; box-shadow:none; color:var(--routeflux-diagnostics-ink); overflow:visible; }',
+			'#routeflux-diagnostics-root .routeflux-diagnostics-layout::before { display:none; }',
 			'.routeflux-diagnostics-panel { position:relative; overflow:hidden; border:1px solid rgba(132, 149, 170, 0.34); border-radius:20px; padding:18px 20px; background:var(--routeflux-diagnostics-panel-bg); box-shadow:0 16px 34px rgba(15, 23, 42, 0.12), inset 0 1px 0 rgba(255, 255, 255, 0.82); }',
 			'.routeflux-diagnostics-panel h3 { margin:0 0 10px; color:var(--routeflux-diagnostics-ink); font-size:24px; letter-spacing:-0.03em; }',
-			'.routeflux-diagnostics-panel .cbi-section-descr { margin:0; color:var(--routeflux-diagnostics-ink-muted); line-height:1.58; max-width:72ch; }',
+			'.routeflux-diagnostics-panel .cbi-section-descr { margin:0; color:var(--routeflux-diagnostics-ink-muted); font-size:15px; font-weight:500; line-height:1.66; max-width:72ch; }',
 			'.routeflux-diagnostics-summary-shell { padding:16px 18px; border:1px solid rgba(125, 145, 168, 0.32); border-radius:16px; background:var(--routeflux-diagnostics-surface-bg); box-shadow:0 10px 24px rgba(15, 23, 42, 0.08); }',
 			'.routeflux-diagnostics-summary-shell h4 { margin:0 0 10px; color:var(--routeflux-diagnostics-ink); font-size:19px; letter-spacing:-0.02em; }',
-			'.routeflux-diagnostics-summary-list { margin:0; padding-left:18px; color:var(--routeflux-diagnostics-ink-muted); line-height:1.6; }',
+			'.routeflux-diagnostics-summary-list { margin:0; padding-left:18px; color:var(--routeflux-diagnostics-ink-soft); line-height:1.65; font-size:15px; }',
+			'.routeflux-diagnostics-summary-list li { color:var(--routeflux-diagnostics-ink); font-weight:500; }',
+			'.routeflux-diagnostics-summary-list li + li { margin-top:6px; }',
+			'.routeflux-diagnostics-file-table { background:rgba(250, 252, 254, 0.76); border-color:rgba(125, 145, 168, 0.24); box-shadow:none; }',
+			'.routeflux-diagnostics-file-table .th { background:rgba(125, 145, 168, 0.08); color:var(--routeflux-diagnostics-ink-soft); }',
+			'.routeflux-diagnostics-file-table .td { background:transparent; color:var(--routeflux-diagnostics-ink); }',
 			'.routeflux-diagnostics-actions { display:flex; flex-wrap:wrap; gap:10px; }',
-			'.routeflux-diagnostics-actions .cbi-button { min-height:48px; padding:0 18px; border:1px solid rgba(56, 189, 248, 0.4); border-radius:15px; background:var(--routeflux-diagnostics-surface-strong); color:#eef8ff; font-weight:800; text-shadow:0 1px 0 rgba(0, 0, 0, 0.2); box-shadow:0 14px 28px rgba(3, 15, 32, 0.18); }',
-			'.routeflux-diagnostics-actions .cbi-button:hover { border-color:rgba(96, 165, 250, 0.66); background:linear-gradient(180deg, #244665 0%, #17324a 100%); color:#ffffff; }',
+			'.routeflux-diagnostics-actions .cbi-button { min-height:48px; padding:0 18px; border:1px solid rgba(37, 99, 235, 0.18); border-radius:15px; background:linear-gradient(180deg, rgba(243, 248, 253, 0.98) 0%, rgba(232, 240, 248, 0.98) 100%); color:#17324b; font-weight:800; box-shadow:0 12px 22px rgba(63, 87, 118, 0.08), inset 0 1px 0 rgba(255, 255, 255, 0.84); }',
+			'.routeflux-diagnostics-actions .cbi-button:hover { border-color:rgba(37, 99, 235, 0.28); background:linear-gradient(180deg, rgba(236, 244, 251, 0.99) 0%, rgba(225, 236, 247, 0.99) 100%); color:#102f4c; }',
 			'.routeflux-diagnostics-warning-actions { display:flex; flex-wrap:wrap; gap:10px; margin-top:12px; }',
 			'.routeflux-diagnostics-advanced summary { cursor:pointer; font-weight:800; color:var(--routeflux-diagnostics-ink); }',
 			'.routeflux-diagnostics-advanced-shell { margin-top:12px; }',
@@ -636,7 +643,10 @@ return view.extend({
 			])
 		]));
 
-		return E('div', { 'id': 'routeflux-diagnostics-root' }, content);
+		return E('div', {
+			'id': 'routeflux-diagnostics-root',
+			'class': routefluxUI.withThemeClass('routeflux-page-shell routeflux-page-shell-diagnostics')
+		}, content);
 	},
 
 	handleSave: null,

@@ -31,6 +31,7 @@ func TestPackageOpenWrtFallsBackToTarWhenBSDTarMissing(t *testing.T) {
 	writeFile(t, filepath.Join(repoDir, "luci-app-routeflux", "htdocs", "luci-static", "resources", "view", "routeflux", "overview.js"), "'use strict';\n", 0o644)
 	writeFile(t, filepath.Join(repoDir, "luci-app-routeflux", "htdocs", "luci-static", "resources", "view", "routeflux", "diagnostics.js"), "'use strict';\n", 0o644)
 	writeFile(t, filepath.Join(repoDir, "luci-app-routeflux", "htdocs", "luci-static", "resources", "view", "routeflux", "zapret.js"), "'use strict';\n", 0o644)
+	writeFile(t, filepath.Join(repoDir, "luci-app-routeflux", "htdocs", "luci-static", "resources", "view", "routeflux", "settings.js"), "'use strict';\n", 0o644)
 
 	toolDir := t.TempDir()
 	for _, name := range []string{"basename", "cat", "chmod", "cp", "date", "dirname", "find", "gzip", "mkdir", "rm", "sort", "tar", "tr", "wc"} {
@@ -83,6 +84,9 @@ func TestPackageOpenWrtFallsBackToTarWhenBSDTarMissing(t *testing.T) {
 	if _, err := os.Stat(filepath.Join(repoDir, "dist", "routeflux-ipk", "data", "www", "luci-static", "resources", "view", "routeflux", "zapret.js")); err != nil {
 		t.Fatalf("expected zapret view in package data: %v", err)
 	}
+	if _, err := os.Stat(filepath.Join(repoDir, "dist", "routeflux-ipk", "data", "www", "luci-static", "resources", "view", "routeflux", "settings.js")); err != nil {
+		t.Fatalf("expected settings view in package data: %v", err)
+	}
 	if _, err := os.Stat(filepath.Join(repoDir, "dist", "routeflux-ipk", "data", "usr", "libexec", "routeflux-cron")); err != nil {
 		t.Fatalf("expected cron helper in package data: %v", err)
 	}
@@ -101,7 +105,6 @@ func TestPackageOpenWrtFallsBackToTarWhenBSDTarMissing(t *testing.T) {
 		"find /etc/routeflux -maxdepth 1 -type f -name '*.corrupt-*' -exec chmod 0600 {} \\;",
 		"/etc/xray/config.json.last-known-good",
 		"/www/luci-static/resources/view/routeflux/dns.js",
-		"/www/luci-static/resources/view/routeflux/settings.js",
 		"/www/luci-static/resources/view/routeflux/logs.js",
 		"/www/luci-static/resources/view/routeflux/services.js",
 	} {
@@ -112,6 +115,9 @@ func TestPackageOpenWrtFallsBackToTarWhenBSDTarMissing(t *testing.T) {
 
 	if strings.Contains(string(postinst), "/www/luci-static/resources/view/routeflux/about.js") {
 		t.Fatalf("expected generated postinst to keep about.js installed, got:\n%s", postinst)
+	}
+	if strings.Contains(string(postinst), "/www/luci-static/resources/view/routeflux/settings.js") {
+		t.Fatalf("expected generated postinst to keep settings.js installed, got:\n%s", postinst)
 	}
 }
 

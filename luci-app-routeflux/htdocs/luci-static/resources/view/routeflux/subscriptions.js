@@ -458,18 +458,18 @@ function renderNodeStackCell(node) {
 	var security = formatSecurityLabel(node && node.security);
 
 	if (protocol !== '')
-		chips.push(E('span', { 'class': 'routeflux-node-stack-chip routeflux-node-stack-chip-primary' }, [ protocol.toUpperCase() ]));
+		chips.push(E('span', { 'class': 'routeflux-node-stack-chip routeflux-node-stack-chip-protocol' }, [ protocol.toUpperCase() ]));
 
 	if (transport !== '')
-		chips.push(E('span', { 'class': 'routeflux-node-stack-chip' }, [ transport.toUpperCase() ]));
+		chips.push(E('span', { 'class': 'routeflux-node-stack-chip routeflux-node-stack-chip-transport' }, [ transport.toUpperCase() ]));
 
 	if (security !== '' && security !== '-')
-		chips.push(E('span', { 'class': 'routeflux-node-stack-chip routeflux-node-stack-chip-accent' }, [ security ]));
+		chips.push(E('span', { 'class': 'routeflux-node-stack-chip routeflux-node-stack-chip-security' }, [ security ]));
 
 	if (chips.length === 0)
 		return '-';
 
-	return E('div', { 'class': 'routeflux-node-stack' }, chips);
+	return E('div', { 'class': 'routeflux-node-stack routeflux-node-stack-vertical' }, chips);
 }
 
 function emptyAddDraft() {
@@ -1168,9 +1168,6 @@ return view.extend({
 
 	renderPingCell: function(subscription, node, status) {
 		var ping = this.resolvePingForNode(subscription.id, node.id, status);
-		var nodeBusy = this.isNodeBusy(subscription.id, node.id);
-		var pingBusy = this.isNodePingBusy(subscription.id, node.id);
-		var busyMessage = this.nodePingBusyMessage(subscription.id, node.id);
 		var primaryClass = 'routeflux-ping-primary';
 		var content;
 
@@ -1186,16 +1183,7 @@ return view.extend({
 				E('div', { 'class': primaryClass }, [ this.pingPrimaryLabel(ping) ]),
 				this.pingStatusLabel(ping) !== '' ? E('div', { 'class': 'routeflux-ping-meta routeflux-ping-meta-status' }, [ this.pingStatusLabel(ping) ]) : '',
 				this.pingTimestampLabel(ping) !== '' ? E('div', { 'class': 'routeflux-ping-meta' }, [ this.pingTimestampLabel(ping) ]) : '',
-				ping && ping.error ? E('div', { 'class': 'routeflux-ping-detail', 'title': ping.error }, [ ping.error ]) : '',
-				E('div', { 'class': 'routeflux-ping-actions' }, [
-					E('button', {
-						'class': 'cbi-button cbi-button-action routeflux-node-button-compact',
-						'type': 'button',
-						'click': ui.createHandlerFn(this, 'handleRecheckPing', subscription.id, node.id),
-						'disabled': nodeBusy || pingBusy ? 'disabled' : null
-					}, [ _('Recheck') ])
-				]),
-				busyMessage !== '' ? E('div', { 'class': 'routeflux-action-status' }, [ busyMessage ]) : ''
+				ping && ping.error ? E('div', { 'class': 'routeflux-ping-detail', 'title': ping.error }, [ ping.error ]) : ''
 			])
 		];
 
@@ -1259,10 +1247,15 @@ return view.extend({
 			options.push(E('option', attrs, [ label ]));
 		}
 
-		return E('div', { 'class': 'cbi-section' }, [
-			E('h3', {}, [ _('Actions') ]),
-			E('div', { 'class': 'routeflux-actions' }, [
-				E('div', { 'class': 'cbi-value' }, [
+		return E('div', { 'class': 'routeflux-surface routeflux-subscriptions-hero-controls' }, [
+			E('div', { 'class': 'routeflux-section-heading' }, [
+				E('div', { 'class': 'routeflux-section-heading-copy' }, [
+					E('h3', {}, [ _('Quick Actions') ]),
+					E('p', {}, [ _('Choose any imported profile, then connect, refresh, or disconnect from one control surface.') ])
+				])
+			]),
+			E('div', { 'class': 'routeflux-subscriptions-hero-grid' }, [
+				E('div', { 'class': 'cbi-value routeflux-subscriptions-hero-select' }, [
 					E('label', { 'class': 'cbi-value-title', 'for': 'routeflux-subscription' }, [ _('Subscription') ]),
 					E('div', { 'class': 'cbi-value-field' }, [
 						E('select', {
@@ -1271,24 +1264,26 @@ return view.extend({
 						}, options)
 					])
 				]),
-				E('button', {
-					'class': 'cbi-button cbi-button-apply',
-					'type': 'button',
-					'click': ui.createHandlerFn(this, 'handleConnectAuto', null),
-					'disabled': subscriptions.length === 0 ? 'disabled' : null
-				}, [ _('Connect Auto') ]),
-				E('button', {
-					'class': 'cbi-button cbi-button-action',
-					'type': 'button',
-					'click': ui.createHandlerFn(this, 'handleRefreshActive'),
-					'disabled': activeSubscriptionID === '' ? 'disabled' : null
-				}, [ _('Refresh Active') ]),
-				E('button', {
-					'class': 'cbi-button cbi-button-reset',
-					'type': 'button',
-					'click': ui.createHandlerFn(this, 'handleDisconnect'),
-					'disabled': connected ? null : 'disabled'
-				}, [ _('Disconnect') ])
+				E('div', { 'class': 'routeflux-page-hero-actions routeflux-subscriptions-hero-actions' }, [
+					E('button', {
+						'class': 'cbi-button cbi-button-action',
+						'type': 'button',
+						'click': ui.createHandlerFn(this, 'handleRefreshActive'),
+						'disabled': activeSubscriptionID === '' ? 'disabled' : null
+					}, [ _('Refresh Active') ]),
+					E('button', {
+						'class': 'cbi-button cbi-button-apply',
+						'type': 'button',
+						'click': ui.createHandlerFn(this, 'handleConnectAuto', null),
+						'disabled': subscriptions.length === 0 ? 'disabled' : null
+					}, [ _('Connect Auto') ]),
+					E('button', {
+						'class': 'cbi-button cbi-button-reset',
+						'type': 'button',
+						'click': ui.createHandlerFn(this, 'handleDisconnect'),
+						'disabled': connected ? null : 'disabled'
+					}, [ _('Disconnect') ])
+				])
 			])
 		]);
 	},
@@ -1303,6 +1298,8 @@ return view.extend({
 			var isActive = subscription.id === activeSubscriptionId && node.id === activeNodeId;
 			var nodeBusy = this.isNodeBusy(subscription.id, node.id);
 			var busyMessage = this.nodeBusyMessage(subscription.id, node.id);
+			var pingBusy = this.isNodePingBusy(subscription.id, node.id);
+			var pingBusyMessage = this.nodePingBusyMessage(subscription.id, node.id);
 			var name = nodeDisplayName(node, node.id);
 			var address = firstNonEmpty([
 				node.address && node.port ? node.address + ':' + node.port : '',
@@ -1318,21 +1315,32 @@ return view.extend({
 				responsiveTableCell(_('Stack'), renderNodeStackCell(node), 'routeflux-node-cell-stack'),
 				responsiveTableCell(_('Ping'), this.renderPingCell(subscription, node, status), 'routeflux-node-cell-ping'),
 				responsiveTableCell(_('Actions'), [
-					E('div', { 'class': 'routeflux-node-actions' }, [
-						E('button', {
-							'class': 'cbi-button cbi-button-action routeflux-node-button-compact',
-							'type': 'button',
-							'click': ui.createHandlerFn(this, 'handleConnectNode', subscription.id, node.id),
-							'disabled': nodeBusy ? 'disabled' : null
-						}, [ _('Connect') ])
+					E('div', { 'class': 'routeflux-node-action-stack' }, [
+						E('div', { 'class': 'routeflux-node-actions' }, [
+							E('button', {
+								'class': 'cbi-button cbi-button-action routeflux-node-button-compact',
+								'type': 'button',
+								'click': ui.createHandlerFn(this, 'handleConnectNode', subscription.id, node.id),
+								'disabled': nodeBusy ? 'disabled' : null
+							}, [ _('Connect') ])
+						]),
+						E('div', { 'class': 'routeflux-node-actions routeflux-node-actions-secondary' }, [
+							E('button', {
+								'class': 'cbi-button cbi-button-action routeflux-node-button-compact',
+								'type': 'button',
+								'click': ui.createHandlerFn(this, 'handleRecheckPing', subscription.id, node.id),
+								'disabled': nodeBusy || pingBusy ? 'disabled' : null
+							}, [ _('Recheck') ])
+						])
 					]),
-					busyMessage !== '' ? E('div', { 'class': 'routeflux-action-status' }, [ busyMessage ]) : ''
+					busyMessage !== '' ? E('div', { 'class': 'routeflux-action-status' }, [ busyMessage ]) : '',
+					pingBusyMessage !== '' ? E('div', { 'class': 'routeflux-action-status' }, [ pingBusyMessage ]) : ''
 				], 'right routeflux-node-cell-actions')
 			]);
 		}, this));
 
 		return E('div', { 'class': 'routeflux-node-table-wrap' }, [
-			E('table', { 'class': 'table cbi-section-table routeflux-node-table' }, [
+			E('table', { 'class': 'table cbi-section-table routeflux-node-table routeflux-data-table' }, [
 				E('tr', { 'class': 'tr cbi-section-table-titles' }, [
 					E('th', { 'class': 'th' }, [ _('Node') ]),
 					E('th', { 'class': 'th' }, [ _('Address') ]),
@@ -1378,7 +1386,7 @@ return view.extend({
 		if (isActive)
 			heading.push(E('div', { 'class': 'routeflux-subscription-badges' }, [ badge(_('Active'), 'notice') ]));
 
-		return E('div', { 'class': 'cbi-section routeflux-subscription-card' }, [
+		return E('section', { 'class': 'cbi-section routeflux-surface routeflux-subscription-card' + (isActive ? ' routeflux-subscription-card-active' : '') }, [
 			E('div', { 'class': 'routeflux-subscription-header' }, [
 				E('div', { 'class': 'routeflux-subscription-heading' }, heading),
 				E('div', { 'class': 'routeflux-subscription-controls' }, [
@@ -1412,7 +1420,7 @@ return view.extend({
 					pingBusyMessage !== '' ? E('div', { 'class': 'routeflux-action-status routeflux-action-status-group routeflux-ping-status-group' }, [ pingBusyMessage ]) : ''
 				])
 			]),
-			E('table', { 'class': 'table routeflux-meta-table' }, metaRows),
+			E('table', { 'class': 'table routeflux-meta-table routeflux-data-table' }, metaRows),
 			trim(subscription.last_error) !== '' ? E('div', { 'class': 'alert-message warning', 'style': 'margin-top:10px' }, [
 				subscription.last_error
 			]) : '',
@@ -1423,7 +1431,11 @@ return view.extend({
 					this.handleSubscriptionToggle(subscription.id, ev);
 				}, this)
 			}, [
-				E('summary', {}, [ _('Nodes (%d)').format(nodesCount) ]),
+				E('summary', { 'class': 'routeflux-section-heading' }, [
+					E('span', { 'class': 'routeflux-section-heading-copy' }, [
+						E('h3', {}, [ _('Nodes (%d)').format(nodesCount) ])
+					])
+				]),
 				this.renderNodeTable(subscription, activeSubscriptionId, activeNodeId, status)
 			])
 		]);
@@ -1448,6 +1460,16 @@ return view.extend({
 		var status = data[0] || {};
 		var subscriptions = Array.isArray(data[1]) ? data[1] : [];
 		var presentation = buildSubscriptionPresentation(subscriptions);
+		var activeSubscription = status.active_subscription || {};
+		var activeNode = status.active_node || {};
+		var activeEntry = presentationForSubscription(activeSubscription, presentation);
+		var activeProvider = trim(activeSubscription.id) !== ''
+			? (activeEntry ? activeEntry.provider_title : providerTitle(activeSubscription))
+			: _('Not selected');
+		var activeProfile = trim(activeSubscription.id) !== ''
+			? (activeEntry ? activeEntry.profile_label : _('Profile 1'))
+			: _('Not selected');
+		var activeNodeName = nodeDisplayName(activeNode, _('Not selected'));
 		var activeSubscriptionId = trim(status.active_subscription && status.active_subscription.id);
 		var activeNodeId = trim(status.active_node && status.active_node.id);
 		var addBusy = routefluxUI.isPendingAction(this, 'add');
@@ -1456,108 +1478,165 @@ return view.extend({
 		var removeAllMessage = routefluxUI.pendingActionMessage(this, 'remove-all');
 		var addActionMessage = addBusyMessage || removeAllMessage;
 		var content = [];
+		var totalNodes = 0;
+
+		for (var groupIndex = 0; groupIndex < presentation.groups.length; groupIndex++)
+			totalNodes += Number(presentation.groups[groupIndex].total_nodes) || 0;
 
 		this.ensureState();
 		content.push(routefluxUI.renderSharedStyles());
 		content.push(E('style', { 'type': 'text/css' }, [
-			'.routeflux-subscriptions-shell { width:100%; max-width:100%; min-width:0; box-sizing:border-box; }',
-			'.routeflux-actions { display:flex; flex-wrap:wrap; gap:10px; align-items:flex-end; margin-bottom:16px; }',
-			'.routeflux-actions > * { margin:0; }',
-			'.routeflux-actions .cbi-value { min-width:260px; }',
-			'.routeflux-subscription-card { margin-bottom:16px; }',
-			'.routeflux-subscription-header { display:grid; grid-template-columns:minmax(0, 1fr) auto; gap:14px 18px; align-items:start; margin-bottom:12px; }',
+			'.routeflux-subscriptions-shell { width:100%; max-width:100%; min-width:0; }',
+			'.routeflux-subscriptions-hero { margin-bottom:18px; }',
+			'.routeflux-subscriptions-hero-controls { margin:0; padding:18px; }',
+			'.routeflux-subscriptions-hero-grid { display:grid; gap:12px; }',
+			'.routeflux-subscriptions-hero-select { margin:0; }',
+			'.routeflux-subscriptions-hero-actions { grid-template-columns:repeat(3, minmax(0, 1fr)); }',
+			'.routeflux-subscription-card { margin-bottom:16px; padding:22px; }',
+			'.routeflux-subscription-card-active { border-color:rgba(88, 196, 255, 0.3); box-shadow:0 22px 40px rgba(0, 0, 0, 0.26), inset 0 1px 0 rgba(255, 255, 255, 0.05); }',
+			'.routeflux-subscription-header { display:grid; grid-template-columns:minmax(0, 1fr) auto; gap:16px 18px; align-items:start; margin-bottom:16px; }',
 			'.routeflux-subscription-heading { min-width:0; }',
-			'.routeflux-subscription-title { font-size:clamp(17px, 1.1vw + 14px, 22px); font-weight:600; line-height:1.25; overflow-wrap:anywhere; word-break:break-word; }',
-			'.routeflux-subscription-provider { color:var(--text-color-medium, #666); margin-top:4px; overflow-wrap:anywhere; word-break:break-word; }',
-			'.routeflux-subscription-badges { display:flex; flex-wrap:wrap; gap:8px; margin-top:8px; }',
-			'.routeflux-subscription-controls { display:grid; gap:8px; justify-items:end; min-width:0; max-width:100%; }',
-			'.routeflux-subscription-actions { display:flex; flex-wrap:wrap; justify-content:flex-end; gap:8px; align-items:flex-start; max-width:100%; }',
+			'.routeflux-subscription-title { color:var(--routeflux-text-primary); font-size:clamp(24px, 1vw + 20px, 34px); font-weight:700; line-height:1.08; letter-spacing:-0.04em; overflow-wrap:anywhere; word-break:break-word; }',
+			'.routeflux-subscription-provider { color:var(--routeflux-text-muted); margin-top:6px; overflow-wrap:anywhere; word-break:break-word; }',
+			'.routeflux-subscription-badges { display:flex; flex-wrap:wrap; gap:8px; margin-top:10px; }',
+			'.routeflux-subscription-controls { display:grid; gap:10px; justify-items:end; min-width:0; max-width:100%; }',
+			'.routeflux-subscription-actions { display:flex; flex-wrap:wrap; justify-content:flex-end; gap:10px; align-items:flex-start; max-width:100%; }',
 			'.routeflux-subscription-actions .cbi-button, .routeflux-node-actions .cbi-button { white-space:nowrap; }',
 			'.routeflux-meta-table { width:100%; table-layout:fixed; margin-bottom:0; }',
-			'.routeflux-meta-label { width:180px; color:var(--text-color-medium, #586677); font-weight:600; }',
-			'.routeflux-meta-value { overflow-wrap:anywhere; word-break:break-word; }',
+			'.routeflux-meta-label { width:180px; color:var(--routeflux-text-muted); font-weight:700; }',
+			'.routeflux-meta-value { overflow-wrap:anywhere; word-break:break-word; color:var(--routeflux-text-primary); }',
 			'.routeflux-traffic-shell { display:grid; gap:8px; min-width:0; }',
 			'.routeflux-traffic-copy { display:flex; flex-wrap:wrap; gap:6px 10px; align-items:baseline; min-width:0; }',
-			'.routeflux-traffic-primary { color:var(--text-color-high, #17263a); font-weight:700; overflow-wrap:anywhere; word-break:break-word; }',
-			'.routeflux-traffic-secondary { color:var(--text-color-medium, #586677); font-size:12px; line-height:1.4; }',
-			'.routeflux-traffic-meter { position:relative; width:min(100%, 260px); max-width:100%; height:10px; border-radius:999px; background:linear-gradient(180deg, rgba(148, 163, 184, 0.3) 0%, rgba(148, 163, 184, 0.18) 100%); overflow:hidden; box-shadow:inset 0 1px 1px rgba(15, 23, 42, 0.14); }',
-			'.routeflux-traffic-meter-fill { height:100%; border-radius:inherit; background:linear-gradient(90deg, #22c55e 0%, #14b8a6 100%); }',
-			'.routeflux-traffic-shell-unlimited .routeflux-traffic-primary { color:#17603d; }',
+			'.routeflux-traffic-primary { color:var(--routeflux-text-primary); font-weight:700; overflow-wrap:anywhere; word-break:break-word; }',
+			'.routeflux-traffic-secondary { color:var(--routeflux-text-muted); font-size:12px; line-height:1.45; }',
+			'.routeflux-traffic-meter { position:relative; width:min(100%, 260px); max-width:100%; height:10px; border-radius:999px; background:rgba(145, 175, 220, 0.12); overflow:hidden; box-shadow:inset 0 1px 1px rgba(0, 0, 0, 0.28); }',
+			'.routeflux-traffic-meter-fill { height:100%; border-radius:inherit; background:linear-gradient(90deg, var(--routeflux-success) 0%, #6ef3cc 100%); box-shadow:0 0 16px rgba(46, 216, 170, 0.3); }',
+			'.routeflux-traffic-shell-unlimited .routeflux-traffic-primary { color:#bdffe7; }',
+			'.routeflux-node-details { margin-top:16px; }',
+			'.routeflux-node-details summary { cursor:pointer; list-style:none; margin-bottom:12px; }',
+			'.routeflux-node-details summary::-webkit-details-marker { display:none; }',
 			'.routeflux-node-table-wrap { width:100%; max-width:100%; overflow-x:visible; }',
 			'.routeflux-node-table { width:100%; min-width:0; table-layout:fixed; }',
-			'.routeflux-node-table .th, .routeflux-node-table .td { vertical-align:middle; overflow-wrap:anywhere; word-break:break-word; }',
-			'.routeflux-node-table .th, .routeflux-node-table .td { padding-left:8px; padding-right:8px; }',
-			'.routeflux-node-table .th:nth-child(1), .routeflux-node-table .td:nth-child(1) { width:17%; }',
+			'.routeflux-node-table .th, .routeflux-node-table .td { vertical-align:top; overflow-wrap:anywhere; word-break:break-word; }',
+			'.routeflux-node-table .th:nth-child(1), .routeflux-node-table .td:nth-child(1) { width:24%; }',
 			'.routeflux-node-table .th:nth-child(2), .routeflux-node-table .td:nth-child(2) { width:24%; }',
-			'.routeflux-node-table .th:nth-child(3), .routeflux-node-table .td:nth-child(3) { width:18%; }',
-			'.routeflux-node-table .th:nth-child(4), .routeflux-node-table .td:nth-child(4) { width:23%; }',
-			'.routeflux-node-table .th:nth-child(5), .routeflux-node-table .td:nth-child(5) { width:14%; }',
+			'.routeflux-node-table .th:nth-child(3), .routeflux-node-table .td:nth-child(3) { width:14%; }',
+			'.routeflux-node-table .th:nth-child(4), .routeflux-node-table .td:nth-child(4) { width:22%; }',
+			'.routeflux-node-table .th:nth-child(5), .routeflux-node-table .td:nth-child(5) { width:16%; }',
 			'.routeflux-node-heading-actions { text-align:right; }',
-			'.routeflux-node-actions { display:flex; justify-content:flex-end; }',
+			'.routeflux-node-action-stack { display:grid; gap:10px; justify-items:end; width:100%; }',
+			'.routeflux-node-actions { display:flex; justify-content:flex-end; width:100%; }',
+			'.routeflux-node-actions-secondary { margin-top:0; }',
+			'.routeflux-node-cell-address { color:var(--routeflux-text-primary); font-weight:600; line-height:1.5; }',
 			'.routeflux-node-cell-stack { min-width:0; }',
-			'.routeflux-node-stack { display:flex; flex-wrap:wrap; gap:4px; }',
-			'.routeflux-node-stack-chip { display:inline-flex; align-items:center; min-height:24px; padding:0 8px; border-radius:999px; background:rgba(148, 163, 184, 0.14); color:var(--text-color-high, #17263a); font-size:11px; font-weight:700; letter-spacing:.03em; }',
-			'.routeflux-node-stack-chip-primary { background:rgba(56, 189, 248, 0.18); color:#0f3f57; }',
-			'.routeflux-node-stack-chip-accent { background:rgba(34, 197, 94, 0.16); color:#17603d; }',
+			'.routeflux-node-stack { display:grid; gap:6px; justify-items:start; }',
+			'.routeflux-node-stack-vertical { grid-auto-flow:row; }',
+			'.routeflux-node-stack-chip { display:flex; align-items:center; justify-content:center; min-height:28px; padding:0 11px; border:1px solid transparent; border-radius:999px; font-size:11px; font-weight:700; letter-spacing:.03em; box-shadow:inset 0 1px 0 rgba(255, 255, 255, 0.03); }',
+			'.routeflux-node-stack-chip-protocol { background:rgba(70, 170, 235, 0.18); border-color:rgba(111, 202, 255, 0.16); color:#c9ecff; }',
+			'.routeflux-node-stack-chip-transport { background:rgba(117, 137, 176, 0.18); border-color:rgba(154, 182, 228, 0.14); color:#dae6f8; }',
+			'.routeflux-node-stack-chip-security { background:rgba(44, 173, 133, 0.18); border-color:rgba(103, 233, 197, 0.14); color:#c8fff0; }',
+			'.routeflux-theme-light .routeflux-subscription-card-active { border-color:rgba(37, 99, 235, 0.18); box-shadow:0 16px 30px rgba(63, 87, 118, 0.1), inset 0 1px 0 rgba(255, 255, 255, 0.9); }',
+			'.routeflux-theme-light .routeflux-subscription-provider { color:#52667c; }',
+			'.routeflux-theme-light .routeflux-subscription-badges .label.notice { border-color:rgba(22, 163, 74, 0.22); background:rgba(22, 163, 74, 0.1); color:#166534; }',
+			'.routeflux-theme-light .routeflux-provider-group-header { padding:12px 14px; border:1px solid rgba(125, 146, 170, 0.14); border-radius:16px; background:linear-gradient(180deg, rgba(250, 252, 254, 0.96) 0%, rgba(243, 247, 251, 0.96) 100%); box-shadow:0 10px 20px rgba(63, 87, 118, 0.06), inset 0 1px 0 rgba(255, 255, 255, 0.88); }',
+			'.routeflux-theme-light .routeflux-provider-group-title { color:#162638; }',
+			'.routeflux-theme-light .routeflux-provider-group-meta { color:#52667c; }',
+			'.routeflux-theme-light .routeflux-node-table { background:rgba(249, 251, 253, 0.92); border-color:rgba(125, 146, 170, 0.18); }',
+			'.routeflux-theme-light .routeflux-node-table .th { background:rgba(125, 146, 170, 0.08); color:#5c7085; }',
+			'.routeflux-theme-light .routeflux-node-table .td { color:#162638; }',
+			'.routeflux-theme-light .routeflux-traffic-meter { background:rgba(125, 146, 170, 0.16); box-shadow:inset 0 1px 1px rgba(125, 146, 170, 0.1); }',
+			'.routeflux-theme-light .routeflux-traffic-shell-unlimited .routeflux-traffic-primary { color:#166534; }',
+			'.routeflux-theme-light .routeflux-node-stack-chip-protocol { background:rgba(14, 165, 233, 0.12); border-color:rgba(14, 165, 233, 0.18); color:#075985; }',
+			'.routeflux-theme-light .routeflux-node-stack-chip-transport { background:rgba(100, 116, 139, 0.12); border-color:rgba(100, 116, 139, 0.18); color:#334155; }',
+			'.routeflux-theme-light .routeflux-node-stack-chip-security { background:rgba(16, 185, 129, 0.12); border-color:rgba(16, 185, 129, 0.18); color:#047857; }',
+			'.routeflux-theme-light .routeflux-subscription-actions .cbi-button-action, .routeflux-theme-light .routeflux-node-actions .cbi-button-action { border-color:rgba(37, 99, 235, 0.18); background:linear-gradient(180deg, rgba(243, 248, 253, 0.98) 0%, rgba(232, 240, 248, 0.98) 100%); color:#17324b; box-shadow:0 12px 22px rgba(63, 87, 118, 0.08), inset 0 1px 0 rgba(255, 255, 255, 0.84); }',
+			'.routeflux-theme-light .routeflux-subscription-actions .cbi-button-action:hover, .routeflux-theme-light .routeflux-node-actions .cbi-button-action:hover { border-color:rgba(37, 99, 235, 0.28); background:linear-gradient(180deg, rgba(236, 244, 251, 0.99) 0%, rgba(225, 236, 247, 0.99) 100%); color:#102f4c; }',
+			'.routeflux-theme-light .routeflux-subscription-actions .cbi-button-apply { border-color:rgba(37, 99, 235, 0.34); background:linear-gradient(180deg, #2563eb 0%, #1d4ed8 100%); color:#f8fbff; box-shadow:0 14px 28px rgba(37, 99, 235, 0.18), inset 0 1px 0 rgba(255, 255, 255, 0.16); }',
+			'.routeflux-theme-light .routeflux-subscription-actions .cbi-button-apply:hover { border-color:rgba(29, 78, 216, 0.42); background:linear-gradient(180deg, #1d4ed8 0%, #1e40af 100%); color:#ffffff; box-shadow:0 16px 30px rgba(29, 78, 216, 0.22), inset 0 1px 0 rgba(255, 255, 255, 0.18); }',
+			'.routeflux-theme-light .routeflux-add-field-shell { border-color:rgba(125, 146, 170, 0.18); background:linear-gradient(180deg, rgba(250, 252, 254, 0.98) 0%, rgba(243, 247, 251, 0.98) 100%); box-shadow:inset 0 1px 0 rgba(255, 255, 255, 0.86), 0 10px 20px rgba(63, 87, 118, 0.06); }',
+			'.routeflux-theme-light .routeflux-add-format-badge { border-color:rgba(125, 146, 170, 0.16); background:rgba(37, 99, 235, 0.08); color:#294861; }',
+			'.routeflux-theme-light .routeflux-add-kicker { background:rgba(37, 99, 235, 0.08); color:#1d4ed8; }',
 			'.routeflux-node-cell-ping { width:23%; }',
-			'.routeflux-ping-cell { display:grid; gap:4px; }',
-			'.routeflux-ping-primary { color:var(--text-color-high, #17263a); font-size:13px; font-weight:700; }',
-			'.routeflux-ping-primary-live { color:#17603d; }',
-			'.routeflux-ping-primary-down { color:#8a1c1c; }',
-			'.routeflux-ping-primary-seed { color:#40556d; }',
-			'.routeflux-ping-meta, .routeflux-ping-detail { color:var(--text-color-medium, #586677); font-size:11px; line-height:1.35; }',
+			'.routeflux-ping-cell { display:grid; gap:6px; }',
+			'.routeflux-ping-primary { color:var(--routeflux-text-primary); font-size:13px; font-weight:700; }',
+			'.routeflux-ping-primary-live { color:#c6fff0; }',
+			'.routeflux-ping-primary-down { color:#ffc7ce; }',
+			'.routeflux-ping-primary-seed { color:#d6e2f3; }',
+			'.routeflux-theme-light .routeflux-ping-primary-live { color:#0f766e; }',
+			'.routeflux-theme-light .routeflux-ping-primary-down { color:#b91c1c; }',
+			'.routeflux-theme-light .routeflux-ping-primary-seed { color:#475569; }',
+			'.routeflux-ping-meta, .routeflux-ping-detail { color:var(--routeflux-text-muted); font-size:11px; line-height:1.42; }',
 			'.routeflux-ping-meta-status { text-transform:uppercase; letter-spacing:.08em; font-weight:700; }',
 			'.routeflux-ping-detail { overflow-wrap:anywhere; word-break:break-word; }',
-			'.routeflux-ping-actions { display:flex; justify-content:flex-start; }',
+			'.routeflux-ping-actions { display:flex; justify-content:flex-start; width:100%; }',
 			'.routeflux-node-button-compact { min-height:32px; padding:0 10px; font-size:12px; }',
-			'.routeflux-action-status { margin-top:8px; color:var(--text-color-medium, #586677); font-size:12px; line-height:1.4; }',
+			'.routeflux-action-status { margin-top:8px; color:var(--routeflux-text-muted); font-size:12px; line-height:1.45; }',
 			'.routeflux-action-status-group { width:100%; text-align:right; }',
-			'.routeflux-ping-status-group { color:#0f3f57; }',
-			'.routeflux-page-status { margin-bottom:14px; }',
-			'.routeflux-page-banner { padding:10px 12px; border:1px solid rgba(98, 112, 129, 0.34); border-radius:12px; margin-bottom:10px; line-height:1.45; }',
-			'.routeflux-page-banner-info { background:rgba(224, 242, 254, 0.6); border-color:rgba(56, 189, 248, 0.32); color:#0f3f57; }',
-			'.routeflux-page-banner-warning { background:rgba(254, 242, 242, 0.7); border-color:rgba(239, 68, 68, 0.28); color:#6e1f1f; }',
+			'.routeflux-ping-status-group { color:#bfe8ff; }',
+			'.routeflux-theme-light .routeflux-ping-status-group { color:#1d4ed8; }',
+			'.routeflux-page-status { margin-bottom:18px; }',
 			'.routeflux-page-status-actions { display:flex; justify-content:flex-end; margin-top:10px; }',
-			'.routeflux-add-panel { position:relative; overflow:hidden; padding:18px; border:1px solid rgba(96, 165, 250, 0.22); border-radius:20px; background:linear-gradient(180deg, rgba(255, 255, 255, 0.055) 0%, rgba(59, 130, 246, 0.04) 100%), var(--background-color-high, rgba(255, 255, 255, 0.94)); box-shadow:0 18px 34px rgba(15, 23, 42, 0.12), inset 0 1px 0 rgba(255, 255, 255, 0.08); }',
-			'.routeflux-add-panel::before { content:""; position:absolute; inset:0 auto auto 0; width:100%; height:1px; background:linear-gradient(90deg, rgba(56, 189, 248, 0.64) 0%, rgba(96, 165, 250, 0.08) 100%); }',
+			'.routeflux-add-panel { position:relative; overflow:hidden; padding:20px; }',
 			'.routeflux-add-panel > * { position:relative; z-index:1; }',
 			'.routeflux-add-panel-head { display:grid; gap:8px; margin-bottom:14px; }',
-			'.routeflux-add-kicker { display:inline-flex; align-items:center; width:max-content; max-width:100%; padding:5px 11px; border-radius:999px; background:rgba(14, 165, 233, 0.14); color:#38bdf8; font-size:11px; font-weight:800; letter-spacing:.1em; text-transform:uppercase; }',
+			'.routeflux-add-kicker { display:inline-flex; align-items:center; width:max-content; max-width:100%; padding:5px 11px; border-radius:999px; background:rgba(88, 196, 255, 0.12); color:#9ddfff; font-size:11px; font-weight:800; letter-spacing:.12em; text-transform:uppercase; }',
 			'.routeflux-add-panel-head h3 { margin:0; font-size:clamp(22px, 0.85vw + 18px, 30px); letter-spacing:-0.03em; }',
-			'.routeflux-add-panel-copy { margin:0; color:var(--text-color-medium, #586677); line-height:1.6; max-width:72ch; }',
+			'.routeflux-add-panel-copy { margin:0; color:var(--routeflux-text-muted); line-height:1.68; max-width:72ch; }',
 			'.routeflux-add-grid { display:grid; grid-template-columns:minmax(0, 1fr); gap:14px; margin-bottom:12px; }',
 			'.routeflux-add-field { min-width:0; }',
-			'.routeflux-add-field-label { display:block; margin-bottom:8px; color:var(--text-color-high, #17263a); font-size:13px; font-weight:800; letter-spacing:.01em; }',
-			'.routeflux-add-field-shell { position:relative; border:1px solid rgba(96, 165, 250, 0.24); border-radius:18px; background:linear-gradient(180deg, rgba(255, 255, 255, 0.04) 0%, rgba(148, 163, 184, 0.05) 100%); box-shadow:inset 0 1px 0 rgba(255, 255, 255, 0.04), 0 12px 24px rgba(15, 23, 42, 0.1); transition:border-color .18s ease, box-shadow .18s ease, transform .18s ease; }',
-			'.routeflux-add-field-shell:focus-within { border-color:rgba(56, 189, 248, 0.64); box-shadow:0 0 0 1px rgba(56, 189, 248, 0.22), 0 18px 34px rgba(14, 165, 233, 0.14); transform:translateY(-1px); }',
+			'.routeflux-add-field-label { display:block; margin-bottom:8px; color:var(--routeflux-text-secondary); font-size:13px; font-weight:800; letter-spacing:.01em; }',
+			'.routeflux-add-field-shell { position:relative; border:1px solid rgba(145, 175, 220, 0.14); border-radius:18px; background:rgba(6, 12, 22, 0.72); box-shadow:inset 0 1px 0 rgba(255, 255, 255, 0.03), 0 12px 24px rgba(0, 0, 0, 0.14); transition:border-color .18s ease, box-shadow .18s ease, transform .18s ease; }',
+			'.routeflux-add-field-shell:focus-within { border-color:rgba(88, 196, 255, 0.52); box-shadow:0 0 0 1px rgba(88, 196, 255, 0.18), 0 18px 34px rgba(10, 18, 34, 0.24); transform:translateY(-1px); }',
 			'.routeflux-add-grid .cbi-value-field, .routeflux-add-grid .cbi-input-text, .routeflux-add-grid .cbi-input-textarea { width:100%; max-width:100%; box-sizing:border-box; }',
-			'.routeflux-add-grid .cbi-input-textarea { display:block; min-height:168px; padding:16px 18px; border:0; border-radius:18px; background:transparent; color:var(--text-color-high, #17263a); line-height:1.6; resize:vertical; box-shadow:none; }',
-			'.routeflux-add-grid .cbi-input-textarea::placeholder { color:var(--text-color-medium, #66758a); opacity:0.9; }',
+			'.routeflux-add-grid .cbi-input-textarea { display:block; min-height:168px; padding:16px 18px; border:0; border-radius:18px; background:transparent; color:var(--routeflux-text-primary); line-height:1.6; resize:vertical; box-shadow:none; }',
+			'.routeflux-add-grid .cbi-input-textarea::placeholder { color:var(--routeflux-text-muted); opacity:0.9; }',
 			'.routeflux-add-grid .cbi-input-textarea:focus { outline:none; box-shadow:none; }',
 			'.routeflux-add-format-list { display:flex; flex-wrap:wrap; gap:8px; margin:12px 0 10px; }',
-			'.routeflux-add-format-badge { display:inline-flex; align-items:center; min-height:30px; padding:0 12px; border-radius:999px; border:1px solid rgba(125, 145, 168, 0.3); background:rgba(148, 163, 184, 0.1); color:var(--text-color-medium, #5c6b7f); font-size:12px; font-weight:700; letter-spacing:.01em; }',
-			'.routeflux-add-hint { margin:0; color:var(--text-color-medium, #586677); line-height:1.65; }',
+			'.routeflux-add-format-badge { display:inline-flex; align-items:center; min-height:30px; padding:0 12px; border-radius:999px; border:1px solid rgba(145, 175, 220, 0.14); background:rgba(145, 175, 220, 0.08); color:var(--routeflux-text-secondary); font-size:12px; font-weight:700; letter-spacing:.01em; }',
+			'.routeflux-add-hint { margin:0; color:var(--routeflux-text-muted); line-height:1.65; }',
 			'.routeflux-add-actions { display:flex; flex-wrap:wrap; gap:10px; margin-top:16px; }',
-			'.routeflux-add-actions .cbi-button { min-height:48px; padding:0 18px; border-radius:14px; }',
-			'.routeflux-add-actions .cbi-button-apply { box-shadow:0 14px 28px rgba(14, 165, 233, 0.14); }',
-			'.routeflux-node-details { margin-top:12px; }',
-			'.routeflux-node-details summary { cursor:pointer; margin-bottom:10px; }',
 			'.routeflux-provider-group { margin-bottom:22px; }',
-			'.routeflux-provider-group-header { display:grid; grid-template-columns:minmax(0, 1fr) auto; gap:8px 12px; align-items:end; margin:12px 0 8px; }',
-			'.routeflux-provider-group-title { font-size:clamp(20px, 1.3vw + 15px, 26px); font-weight:600; overflow-wrap:anywhere; word-break:break-word; }',
-			'.routeflux-provider-group-meta { color:var(--text-color-medium, #666); }',
-			'@media (max-width: 980px) { .routeflux-subscription-header, .routeflux-provider-group-header, .routeflux-add-grid { grid-template-columns:minmax(0, 1fr); } .routeflux-subscription-controls { justify-items:stretch; min-width:0; } .routeflux-subscription-actions, .routeflux-node-actions { justify-content:flex-start; } .routeflux-action-status-group { text-align:left; } .routeflux-node-table .th, .routeflux-node-table .td { padding-left:6px; padding-right:6px; } .routeflux-node-button-compact { min-height:30px; padding:0 8px; font-size:11px; } }',
-			'@media (max-width: 700px) { .routeflux-actions, .routeflux-add-actions, .routeflux-page-status-actions { flex-direction:column; } .routeflux-actions .cbi-button, .routeflux-add-actions .cbi-button, .routeflux-page-status-actions .cbi-button { width:100%; } .routeflux-meta-table, .routeflux-meta-table .tr, .routeflux-meta-table .td { display:block; width:100%; box-sizing:border-box; } .routeflux-meta-table .tr { padding:10px 0; border-top:1px solid rgba(98, 112, 129, 0.22); } .routeflux-meta-table .tr:first-child { padding-top:0; border-top:0; } .routeflux-meta-label { width:100%; padding-bottom:4px; } .routeflux-meta-value { padding-top:0; } .routeflux-add-panel { padding:16px; border-radius:18px; } .routeflux-add-grid .cbi-input-textarea { min-height:152px; padding:14px 15px; } }',
-			'@media (max-width: 560px) { .routeflux-subscription-actions, .routeflux-node-actions { flex-direction:column; align-items:stretch; } .routeflux-subscription-actions .cbi-button, .routeflux-node-actions .cbi-button { width:100%; } .routeflux-node-table, .routeflux-node-table .tr, .routeflux-node-table .td { display:block; width:100%; box-sizing:border-box; } .routeflux-node-table { min-width:0; } .routeflux-node-table .cbi-section-table-titles { display:none; } .routeflux-node-table .routeflux-node-row { margin-bottom:12px; padding:12px 14px; border:1px solid var(--border-color-medium); border-radius:12px; background:linear-gradient(180deg, var(--background-color-high) 0%, var(--background-color-low) 100%); box-shadow:0 8px 18px hsla(var(--border-color-low-hsl), 0.35), inset 0 1px 0 hsla(var(--background-color-high-hsl), 0.28); } .routeflux-node-table .routeflux-node-row:last-child { margin-bottom:0; } .routeflux-node-table .td { padding:8px 0; border-top:1px solid var(--border-color-low); text-align:left; } .routeflux-node-table .td:first-child { padding-top:0; border-top:0; } .routeflux-node-table .td:last-child { padding-bottom:0; } .routeflux-node-table .td::before { content:attr(data-title); display:block; margin-bottom:4px; color:var(--text-color-medium, #586677); font-size:10px; text-transform:uppercase; letter-spacing:.12em; font-weight:700; } }'
+			'.routeflux-provider-group-header { display:grid; grid-template-columns:minmax(0, 1fr) auto; gap:8px 12px; align-items:end; margin:12px 0 10px; }',
+			'.routeflux-provider-group-title { color:var(--routeflux-text-primary); font-size:clamp(26px, 1.4vw + 18px, 38px); font-weight:700; line-height:1.02; letter-spacing:-0.05em; overflow-wrap:anywhere; word-break:break-word; }',
+			'.routeflux-provider-group-meta { color:var(--routeflux-text-muted); }',
+			'@media (max-width: 980px) { .routeflux-subscriptions-hero-actions, .routeflux-subscription-header, .routeflux-provider-group-header, .routeflux-add-grid { grid-template-columns:minmax(0, 1fr); } .routeflux-subscription-controls { justify-items:stretch; min-width:0; } .routeflux-subscription-actions, .routeflux-ping-actions, .routeflux-node-actions { justify-content:flex-start; } .routeflux-node-action-stack { justify-items:start; } .routeflux-action-status-group { text-align:left; } .routeflux-node-table .th, .routeflux-node-table .td { padding-left:6px; padding-right:6px; } .routeflux-node-button-compact { min-height:30px; padding:0 8px; font-size:11px; } }',
+			'@media (max-width: 700px) { .routeflux-page-status-actions, .routeflux-add-actions { flex-direction:column; } .routeflux-page-status-actions .cbi-button, .routeflux-add-actions .cbi-button { width:100%; } .routeflux-meta-table, .routeflux-meta-table .tr, .routeflux-meta-table .td { display:block; width:100%; box-sizing:border-box; } .routeflux-meta-table .tr { padding:10px 0; border-top:1px solid rgba(145, 175, 220, 0.1); } .routeflux-meta-table .tr:first-child { padding-top:0; border-top:0; } .routeflux-meta-label { width:100%; padding-bottom:4px; } .routeflux-meta-value { padding-top:0; } .routeflux-add-panel { padding:16px; border-radius:18px; } .routeflux-add-grid .cbi-input-textarea { min-height:152px; padding:14px 15px; } }',
+			'@media (max-width: 560px) { .routeflux-subscription-actions, .routeflux-ping-actions, .routeflux-node-actions { flex-direction:column; align-items:stretch; width:100%; } .routeflux-subscription-actions .cbi-button, .routeflux-ping-actions .cbi-button, .routeflux-node-actions .cbi-button { width:100%; } .routeflux-node-table, .routeflux-node-table .tr, .routeflux-node-table .td { display:block; width:100%; box-sizing:border-box; } .routeflux-node-table { min-width:0; } .routeflux-node-table .cbi-section-table-titles { display:none; } .routeflux-node-table .routeflux-node-row { margin-bottom:12px; padding:12px 14px; border:1px solid rgba(145, 175, 220, 0.12); border-radius:16px; background:rgba(8, 15, 26, 0.5); box-shadow:0 10px 18px rgba(0, 0, 0, 0.16), inset 0 1px 0 rgba(255, 255, 255, 0.03); text-align:center; } .routeflux-theme-light .routeflux-node-table .routeflux-node-row { background:linear-gradient(180deg, rgba(250, 252, 254, 0.98) 0%, rgba(243, 247, 251, 0.98) 100%); box-shadow:0 10px 20px rgba(63, 87, 118, 0.06), inset 0 1px 0 rgba(255, 255, 255, 0.88); } .routeflux-node-table .routeflux-node-row:last-child { margin-bottom:0; } .routeflux-node-table .routeflux-node-row > .td { width:100%; min-width:0; padding:8px 0; border-top:1px solid rgba(145, 175, 220, 0.08); text-align:center; } .routeflux-node-table .routeflux-node-row > .td:first-child { padding-top:0; border-top:0; } .routeflux-node-table .routeflux-node-row > .td:last-child { padding-bottom:0; } .routeflux-node-table .routeflux-node-row > .td::before { content:attr(data-title); display:block; margin-bottom:4px; color:var(--routeflux-text-muted); font-size:10px; text-transform:uppercase; letter-spacing:.12em; font-weight:700; white-space:nowrap; text-align:center; } .routeflux-node-stack, .routeflux-node-stack-vertical { justify-items:center; } .routeflux-ping-cell, .routeflux-node-action-stack { justify-items:center; } .routeflux-node-stack-chip { width:max-content; min-width:78px; max-width:100%; justify-content:center; } }'
 		]));
 
-		content.push(E('h2', {}, [ _('RouteFlux - Subscriptions') ]));
-		content.push(E('p', { 'class': 'cbi-section-descr' }, [
-			_('RouteFlux status, the active connection, and the basic subscription actions you need every day.')
+		content.push(E('section', { 'class': 'routeflux-page-hero routeflux-surface routeflux-surface-elevated routeflux-subscriptions-hero' }, [
+			E('div', { 'class': 'routeflux-page-hero-copy' }, [
+				E('span', { 'class': 'routeflux-page-kicker' }, [ _('Subscriptions') ]),
+				E('h2', { 'class': 'routeflux-page-hero-title' }, [ _('RouteFlux - Subscriptions') ]),
+				E('p', { 'class': 'routeflux-page-hero-description' }, [
+					_('RouteFlux status, the active connection, and the basic subscription actions you need every day.')
+				]),
+				E('div', { 'class': 'routeflux-page-hero-meta' }, [
+					E('div', { 'class': 'routeflux-page-hero-meta-item' }, [
+						E('div', { 'class': 'routeflux-page-hero-meta-label' }, [ _('Active Provider') ]),
+						E('div', { 'class': 'routeflux-page-hero-meta-value' }, [ activeProvider ])
+					]),
+					E('div', { 'class': 'routeflux-page-hero-meta-item' }, [
+						E('div', { 'class': 'routeflux-page-hero-meta-label' }, [ _('Active Profile') ]),
+						E('div', { 'class': 'routeflux-page-hero-meta-value' }, [ activeProfile ])
+					]),
+					E('div', { 'class': 'routeflux-page-hero-meta-item' }, [
+						E('div', { 'class': 'routeflux-page-hero-meta-label' }, [ _('Active Node') ]),
+						E('div', { 'class': 'routeflux-page-hero-meta-value' }, [ activeNodeName ])
+					]),
+					E('div', { 'class': 'routeflux-page-hero-meta-item' }, [
+						E('div', { 'class': 'routeflux-page-hero-meta-label' }, [ _('Inventory') ]),
+						E('div', { 'class': 'routeflux-page-hero-meta-value' }, [ _('%d profile(s), %d node(s)').format(subscriptions.length, totalNodes) ])
+					])
+				])
+			]),
+			E('div', { 'class': 'routeflux-page-hero-actions' }, [
+				this.renderPageActions(status, subscriptions, presentation)
+			])
 		]));
 
 		if (this.pageInfo !== '' || this.pageError !== '') {
-			content.push(E('div', { 'class': 'cbi-section routeflux-page-status' }, [
+			content.push(E('div', { 'class': 'cbi-section routeflux-surface routeflux-page-status' }, [
 				this.pageInfo !== '' ? E('div', { 'class': 'routeflux-page-banner routeflux-page-banner-info' }, [ this.pageInfo ]) : '',
 				this.pageError !== '' ? E('div', { 'class': 'routeflux-page-banner routeflux-page-banner-warning' }, [ this.pageError ]) : '',
 				this.pageError !== '' ? E('div', { 'class': 'routeflux-page-status-actions' }, [
@@ -1576,9 +1655,8 @@ return view.extend({
 		}
 
 		content.push(this.renderSummarySection(status, presentation));
-		content.push(this.renderPageActions(status, subscriptions, presentation));
 
-		content.push(E('div', { 'class': 'cbi-section routeflux-add-panel' }, [
+		content.push(E('div', { 'class': 'cbi-section routeflux-surface routeflux-add-panel' }, [
 			E('div', { 'class': 'routeflux-add-panel-head' }, [
 				E('span', { 'class': 'routeflux-add-kicker' }, [ _('Import') ]),
 				E('h3', {}, [ _('Add Subscription') ]),
@@ -1628,7 +1706,7 @@ return view.extend({
 		]));
 
 		if (subscriptions.length === 0) {
-			content.push(E('div', { 'class': 'cbi-section' }, [
+			content.push(E('div', { 'class': 'cbi-section routeflux-surface' }, [
 				E('p', {}, [ _('No subscriptions imported yet.') ]),
 				this.pageLoading ? E('p', { 'class': 'routeflux-action-status' }, [ _('Waiting for RouteFlux data...') ]) : ''
 			]));
@@ -1647,7 +1725,7 @@ return view.extend({
 			this.pageData = data;
 		return E('div', {
 			'id': 'routeflux-subscriptions-root',
-			'class': 'routeflux-subscriptions-shell'
+			'class': routefluxUI.withThemeClass('routeflux-subscriptions-shell routeflux-page-shell routeflux-page-shell-subscriptions')
 		}, this.renderPageContent(this.pageData));
 	},
 

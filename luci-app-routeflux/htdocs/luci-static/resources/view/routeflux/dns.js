@@ -672,7 +672,9 @@ return view.extend({
 			])
 		]));
 
-		return E(content);
+		return E('div', {
+			'class': routefluxUI.withThemeClass('routeflux-page-shell routeflux-page-shell-dns')
+		}, content);
 	},
 
 	handleSave: null,

@@ -500,7 +500,7 @@ return view.extend({
 			]);
 		});
 
-		return E('table', { 'class': 'table cbi-section-table' }, [
+		return E('table', { 'class': 'table cbi-section-table routeflux-data-table' }, [
 			E('tr', { 'class': 'tr cbi-section-table-titles' }, [
 				E('th', { 'class': 'th' }, [ _('Name') ]),
 				E('th', { 'class': 'th' }, [ _('Nodes') ]),
@@ -591,15 +591,74 @@ return view.extend({
 		var content = [
 			routefluxUI.renderSharedStyles(),
 			E('style', { 'type': 'text/css' }, [
-				'.routeflux-actions { display:flex; flex-wrap:wrap; gap:10px; align-items:flex-end; margin-bottom:16px; }',
-				'.routeflux-actions > * { margin:0; }',
-				'.routeflux-actions select { min-width:260px; }',
-				'.routeflux-active-ping-primary { font-weight:700; }',
-				'.routeflux-active-ping-meta { margin-top:4px; color:var(--text-color-medium, #586677); font-size:12px; line-height:1.4; overflow-wrap:anywhere; word-break:break-word; }'
+				'.routeflux-overview-hero { margin-bottom:18px; }',
+				'.routeflux-overview-hero-actions { grid-template-columns:minmax(0, 1fr); }',
+				'.routeflux-overview-control { display:grid; gap:8px; }',
+				'.routeflux-overview-control .cbi-value { margin:0; }',
+				'.routeflux-overview-action-grid { display:grid; gap:10px; }',
+				'.routeflux-overview-action-grid .cbi-button { width:100%; }',
+				'.routeflux-overview-active-ping { display:grid; gap:6px; }',
+				'.routeflux-overview-active-ping .routeflux-active-ping-primary { font-weight:700; }',
+				'.routeflux-overview-active-ping .routeflux-active-ping-meta { color:var(--routeflux-text-muted); font-size:12px; line-height:1.45; overflow-wrap:anywhere; word-break:break-word; }'
 			]),
-			E('h2', {}, [ _('RouteFlux') ]),
-			E('p', { 'class': 'cbi-section-descr' }, [
-				_('RouteFlux overview for the current connection state, active profile, and the most common control actions.')
+			E('section', { 'class': 'routeflux-page-hero routeflux-surface routeflux-surface-elevated routeflux-overview-hero' }, [
+				E('div', { 'class': 'routeflux-page-hero-copy' }, [
+					E('span', { 'class': 'routeflux-page-kicker' }, [ _('Overview') ]),
+					E('h2', { 'class': 'routeflux-page-hero-title' }, [ _('RouteFlux') ]),
+					E('p', { 'class': 'routeflux-page-hero-description' }, [
+						_('RouteFlux overview for the current connection state, active profile, and the most common control actions.')
+					]),
+					E('div', { 'class': 'routeflux-page-hero-meta' }, [
+						E('div', { 'class': 'routeflux-page-hero-meta-item' }, [
+							E('div', { 'class': 'routeflux-page-hero-meta-label' }, [ _('Provider') ]),
+							E('div', { 'class': 'routeflux-page-hero-meta-value' }, [ provider ])
+						]),
+						E('div', { 'class': 'routeflux-page-hero-meta-item' }, [
+							E('div', { 'class': 'routeflux-page-hero-meta-label' }, [ _('Profile') ]),
+							E('div', { 'class': 'routeflux-page-hero-meta-value' }, [ profile ])
+						]),
+						E('div', { 'class': 'routeflux-page-hero-meta-item' }, [
+							E('div', { 'class': 'routeflux-page-hero-meta-label' }, [ _('Node') ]),
+							E('div', { 'class': 'routeflux-page-hero-meta-value' }, [ nodeName ])
+						])
+					])
+				]),
+				E('div', { 'class': 'routeflux-page-hero-actions routeflux-overview-hero-actions' }, [
+					E('div', { 'class': 'routeflux-surface routeflux-overview-control' }, [
+						E('div', { 'class': 'routeflux-section-heading' }, [
+							E('div', { 'class': 'routeflux-section-heading-copy' }, [
+								E('h3', {}, [ _('Quick Actions') ]),
+								E('p', {}, [ _('Pick a subscription, then connect or refresh without leaving the dashboard.') ])
+							])
+						]),
+						E('div', { 'class': 'cbi-value' }, [
+							E('label', { 'class': 'cbi-value-title', 'for': 'routeflux-subscription' }, [ _('Subscription') ]),
+							E('div', { 'class': 'cbi-value-field' }, [
+								E('select', {
+									'id': 'routeflux-subscription',
+									'disabled': subscriptions.length === 0 ? 'disabled' : null
+								}, subscriptionOptions)
+							])
+						]),
+						E('div', { 'class': 'routeflux-overview-action-grid routeflux-page-hero-actions' }, [
+							E('button', {
+								'class': 'cbi-button cbi-button-apply',
+								'click': ui.createHandlerFn(this, 'handleConnectAuto', null),
+								'disabled': subscriptions.length === 0 ? 'disabled' : null
+							}, [ _('Connect Auto') ]),
+							E('button', {
+								'class': 'cbi-button cbi-button-action',
+								'click': ui.createHandlerFn(this, 'handleRefreshActive', activeSubscriptionId),
+								'disabled': activeSubscriptionId === '' ? 'disabled' : null
+							}, [ _('Refresh Active') ]),
+							E('button', {
+								'class': 'cbi-button cbi-button-reset',
+								'click': ui.createHandlerFn(this, 'handleDisconnect'),
+								'disabled': connected ? null : 'disabled'
+							}, [ _('Disconnect') ])
+						])
+					])
+				])
 			]),
 			E('div', { 'class': 'routeflux-overview-grid' }, [
 				this.renderCard(_('State'), connected ? _('Connected') : _('Disconnected'), {
@@ -612,9 +671,11 @@ return view.extend({
 				this.renderCard(_('Profile'), profile),
 				this.renderCard(_('Node'), nodeName),
 				this.renderCard(_('Active Ping'), [
-					E('div', { 'class': 'routeflux-active-ping-primary' }, [ activePingPrimaryLabel(activePing) ]),
-					activePingSecondaryLabel(activePing) !== '' ? E('div', { 'class': 'routeflux-active-ping-meta' }, [ activePingSecondaryLabel(activePing) ]) : '',
-					activePing && activePing.error ? E('div', { 'class': 'routeflux-active-ping-meta', 'title': activePing.error }, [ activePing.error ]) : ''
+					E('div', { 'class': 'routeflux-overview-active-ping' }, [
+						E('div', { 'class': 'routeflux-active-ping-primary' }, [ activePingPrimaryLabel(activePing) ]),
+						activePingSecondaryLabel(activePing) !== '' ? E('div', { 'class': 'routeflux-active-ping-meta' }, [ activePingSecondaryLabel(activePing) ]) : '',
+						activePing && activePing.error ? E('div', { 'class': 'routeflux-active-ping-meta', 'title': activePing.error }, [ activePing.error ]) : ''
+					])
 				], {
 					'tone': activePing ? routefluxUI.statusTone(activePing.healthy === true) : ''
 				}),
@@ -622,53 +683,29 @@ return view.extend({
 				this.renderCard(_('Firewall'), firewallMode),
 				this.renderCard(_('Last Refresh'), routefluxUI.formatTimestamp(activeSubscription.last_updated_at) || _('Never'))
 			]),
-			E('div', { 'class': 'cbi-section' }, [
-				E('h3', {}, [ _('Actions') ]),
-				E('div', { 'class': 'routeflux-actions' }, [
-					E('div', { 'class': 'cbi-value' }, [
-						E('label', { 'class': 'cbi-value-title', 'for': 'routeflux-subscription' }, [ _('Subscription') ]),
-						E('div', { 'class': 'cbi-value-field' }, [
-							E('select', {
-								'id': 'routeflux-subscription',
-								'disabled': subscriptions.length === 0 ? 'disabled' : null
-							}, subscriptionOptions)
-						])
-					]),
-					E('button', {
-						'class': 'cbi-button cbi-button-apply',
-						'click': ui.createHandlerFn(this, 'handleConnectAuto', null),
-						'disabled': subscriptions.length === 0 ? 'disabled' : null
-					}, [ _('Connect Auto') ]),
-					E('button', {
-						'class': 'cbi-button cbi-button-action',
-						'click': ui.createHandlerFn(this, 'handleRefreshActive', activeSubscriptionId),
-						'disabled': activeSubscriptionId === '' ? 'disabled' : null
-					}, [ _('Refresh Active') ]),
-					E('button', {
-						'class': 'cbi-button cbi-button-reset',
-						'click': ui.createHandlerFn(this, 'handleDisconnect'),
-						'disabled': connected ? null : 'disabled'
-					}, [ _('Disconnect') ])
-				])
-			]),
-			E('div', { 'class': 'cbi-section' }, [
-				E('h3', {}, [ _('Subscriptions') ]),
+			E('section', { 'class': 'cbi-section routeflux-surface' }, [
+				E('div', { 'class': 'routeflux-section-heading' }, [
+					E('div', { 'class': 'routeflux-section-heading-copy' }, [
+						E('h3', {}, [ _('Subscriptions') ]),
+						E('p', {}, [ _('Review imported profiles, their node counts, freshness, and parser status at a glance.') ])
+					])
+				]),
 				this.renderSubscriptionsTable(subscriptions, presentation)
 			])
 		];
 
 		if (trim(activeSubscription.last_error) !== '') {
-			content.push(E('div', { 'class': 'cbi-section' }, [
-				E('h3', {}, [ _('Last Error') ]),
-				E('div', { 'class': 'alert-message warning' }, [ activeSubscription.last_error ])
-			]));
+				content.push(E('div', { 'class': 'cbi-section routeflux-surface' }, [
+					E('h3', {}, [ _('Last Error') ]),
+					E('div', { 'class': 'alert-message warning' }, [ activeSubscription.last_error ])
+				]));
 		}
 
 		if (activeTransport === 'zapret') {
-			content.push(E('div', { 'class': 'cbi-section' }, [
-				E('div', { 'class': 'alert-message notice' }, [
-					E('strong', {}, [ _('Zapret fallback is active.') ]),
-					E('div', {}, [
+				content.push(E('div', { 'class': 'cbi-section routeflux-surface' }, [
+					E('div', { 'class': 'alert-message notice' }, [
+						E('strong', {}, [ _('Zapret fallback is active.') ]),
+						E('div', {}, [
 						_('Monitored subscription: %s').format(provider + ' / ' + profile)
 					]),
 					E('div', {}, [
@@ -685,7 +722,10 @@ return view.extend({
 	},
 
 	render: function(data) {
-		return E('div', { 'id': 'routeflux-overview-root' }, this.renderPageContent(data));
+		return E('div', {
+			'id': 'routeflux-overview-root',
+			'class': routefluxUI.withThemeClass('routeflux-page-shell routeflux-page-shell-overview')
+		}, this.renderPageContent(data));
 	},
 
 	handleSave: null,

@@ -1,11 +1,8 @@
 'use strict';
 'require view';
-'require fs';
+'require dom';
 'require ui';
 'require routeflux.ui as routefluxUI';
-
-var routefluxBinary = '/usr/bin/routeflux';
-var commonLogLevels = [ 'debug', 'info', 'warning', 'error' ];
 
 function trim(value) {
 	if (value == null)
@@ -18,598 +15,148 @@ function notificationParagraph(message) {
 	return E('p', {}, [ message ]);
 }
 
-function firstNonEmpty(values, fallback) {
-	for (var i = 0; i < values.length; i++) {
-		var value = trim(values[i]);
-		if (value !== '')
-			return value;
-	}
-
-	return fallback || '';
-}
-
-function isPlaceholderNodeLabel(value) {
-	return trim(value).toLowerCase() === 'proxy';
-}
-
-var regionNameFallbacks = {
-	'AT': 'Austria',
-	'AU': 'Australia',
-	'BE': 'Belgium',
-	'BG': 'Bulgaria',
-	'BR': 'Brazil',
-	'CA': 'Canada',
-	'CH': 'Switzerland',
-	'CZ': 'Czechia',
-	'DE': 'Germany',
-	'EE': 'Estonia',
-	'ES': 'Spain',
-	'FI': 'Finland',
-	'FR': 'France',
-	'GB': 'United Kingdom',
-	'HK': 'Hong Kong',
-	'HU': 'Hungary',
-	'IE': 'Ireland',
-	'IN': 'India',
-	'IT': 'Italy',
-	'JP': 'Japan',
-	'KR': 'South Korea',
-	'KZ': 'Kazakhstan',
-	'LT': 'Lithuania',
-	'LV': 'Latvia',
-	'MD': 'Moldova',
-	'NL': 'Netherlands',
-	'NO': 'Norway',
-	'PL': 'Poland',
-	'PT': 'Portugal',
-	'RO': 'Romania',
-	'RS': 'Serbia',
-	'RU': 'Russia',
-	'SE': 'Sweden',
-	'SG': 'Singapore',
-	'SK': 'Slovakia',
-	'TR': 'Turkey',
-	'UA': 'Ukraine',
-	'US': 'United States'
-};
-
-function normalizeRegionCode(value) {
-	var code = trim(value).toUpperCase();
-
-	if (code === 'UK')
-		return 'GB';
-
-	return code;
-}
-
-function regionName(code) {
-	var normalized = normalizeRegionCode(code);
-
-	if (normalized === '')
-		return '';
-
-	try {
-		if (typeof Intl !== 'undefined' && typeof Intl.DisplayNames === 'function') {
-			var displayNames = new Intl.DisplayNames([ navigator.language || 'en' ], { 'type': 'region' });
-			var localized = displayNames.of(normalized);
-
-			if (localized && localized !== normalized)
-				return localized;
-		}
-	}
-	catch (err) {
-	}
-
-	return regionNameFallbacks[normalized] || '';
-}
-
-function inferRegionCodeFromText(value) {
-	var tokens = trim(value).toLowerCase().split(/[^a-z]+/).filter(Boolean);
-
-	for (var i = 0; i < tokens.length; i++) {
-		if (!/^[a-z]{2}$/.test(tokens[i]))
-			continue;
-
-		if (regionName(tokens[i]) !== '')
-			return normalizeRegionCode(tokens[i]);
-	}
-
-	return '';
-}
-
-function inferRegionCodeFromAddress(value) {
-	var host = trim(value).toLowerCase();
-
-	if (host === '')
-		return '';
-
-	var labels = host.split('.').filter(Boolean);
-
-	if (labels.length === 0)
-		return '';
-
-	var firstTokens = labels[0].split(/[^a-z0-9]+/).filter(Boolean);
-	for (var i = 0; i < firstTokens.length; i++) {
-		if (!/^[a-z]{2}$/.test(firstTokens[i]))
-			continue;
-
-		if (regionName(firstTokens[i]) !== '')
-			return normalizeRegionCode(firstTokens[i]);
-	}
-
-	var tld = labels[labels.length - 1];
-	if (/^[a-z]{2}$/.test(tld) && regionName(tld) !== '')
-		return normalizeRegionCode(tld);
-
-	return '';
-}
-
-function isDomainLike(value) {
-	var host = trim(value);
-
-	if (host === '' || host.indexOf('://') >= 0 || host.indexOf(' ') >= 0)
-		return false;
-
-	return host.indexOf('.') >= 0;
-}
-
-function titleWords(value) {
-	var parts = trim(value).toLowerCase().split(/\s+/).filter(Boolean);
-
-	for (var i = 0; i < parts.length; i++)
-		parts[i] = parts[i].charAt(0).toUpperCase() + parts[i].slice(1);
-
-	return parts.join(' ');
-}
-
-function providerDomainStem(value) {
-	var label = trim(value).toLowerCase().replace(/:\d+$/, '');
-	var prefixes = [ 'conn', 'vpn', 'www', 'sub', 'api' ];
-	var parts;
-
-	if (label === '')
-		return '';
-
-	parts = label.split('.').filter(Boolean);
-	if (parts.length >= 2)
-		label = parts[parts.length - 2];
-	else
-		label = parts[0] || label;
-
-	for (var i = 0; i < prefixes.length; i++) {
-		if (label.indexOf(prefixes[i]) === 0 && label.length > prefixes[i].length + 2) {
-			label = label.slice(prefixes[i].length);
-			break;
-		}
-	}
-
-	return trim(label);
-}
-
-function humanizeProviderName(value) {
-	var label = trim(value);
-
-	if (label === '')
-		return _('Imported VPN');
-
-	if (!isDomainLike(label))
-		return label;
-
-	label = providerDomainStem(label);
-	label = titleWords(label.replace(/[-_]+/g, ' '));
-	if (label.toLowerCase().indexOf('vpn') < 0)
-		label += ' VPN';
-
-	return trim(label);
-}
-
-function providerTitle(sub) {
-	return humanizeProviderName(firstNonEmpty([
-		sub && sub.provider_name,
-		sub && sub.display_name,
-		sub && sub.id
-	], _('Imported VPN')));
-}
-
-function buildSubscriptionPresentation(subscriptions) {
-	var groupsByKey = {};
-	var byId = {};
-
-	for (var i = 0; i < subscriptions.length; i++) {
-		var sub = subscriptions[i];
-		var title = providerTitle(sub);
-		var key = title.toLowerCase();
-		var group = groupsByKey[key];
-
-		if (!group) {
-			group = {
-				title: title,
-				count: 0
-			};
-			groupsByKey[key] = group;
-		}
-
-		group.count += 1;
-		byId[trim(sub.id)] = {
-			provider_title: title,
-			profile_label: _('Profile %d').format(group.count)
-		};
-	}
-
-	return byId;
-}
-
-function presentationForSubscription(sub, presentation) {
-	var id = trim(sub && sub.id);
-
-	if (id === '' || !presentation)
-		return null;
-
-	return presentation[id] || null;
-}
-
-function nodeDisplayName(node, fallback) {
-	var name = trim(node && node.name);
-	var remark = trim(node && node.remark);
-	var explicit = '';
-
-	if (name !== '' && !isPlaceholderNodeLabel(name))
-		explicit = name;
-	else if (remark !== '' && !isPlaceholderNodeLabel(remark))
-		explicit = remark;
-
-	if (explicit !== '' && !isDomainLike(explicit))
-		return explicit;
-
-	var code = firstNonEmpty([
-		inferRegionCodeFromText(explicit),
-		inferRegionCodeFromAddress(explicit),
-		inferRegionCodeFromAddress(node && node.address)
-	], '');
-
-	if (code !== '') {
-		var localizedRegion = regionName(code);
-		if (localizedRegion !== '')
-			return localizedRegion;
-	}
-
-	return firstNonEmpty([
-		explicit,
-		node && node.address,
-		node && node.id
-	], fallback || '');
-}
-
-function boolLabel(value) {
-	return value === true ? _('Enabled') : _('Disabled');
-}
-
-function modeLabel(value) {
-	switch (trim(value)) {
-	case 'auto':
-		return _('Auto');
-	case 'manual':
-		return _('Manual');
-	default:
-		return _('Disconnected');
-	}
-}
-
-function renderLogLevelOptions(current) {
-	var values = commonLogLevels.slice();
-	var normalized = trim(current).toLowerCase() || 'info';
-	var options = [];
-
-	if (normalized !== '' && values.indexOf(normalized) === -1)
-		values.push(normalized);
-
-	for (var i = 0; i < values.length; i++) {
-		var value = values[i];
-		options.push(E('option', {
-			'value': value,
-			'selected': value === normalized ? 'selected' : null
-		}, [ value ]));
-	}
-
-	return options;
+function choiceClass(selected) {
+	return selected
+		? 'routeflux-settings-choice routeflux-settings-choice-selected'
+		: 'routeflux-settings-choice';
 }
 
 return view.extend({
 	load: function() {
-		return Promise.all([
-			this.execJSON([ '--json', 'status' ]).catch(function(err) {
-				return { __error__: err.message || String(err) };
-			}),
-			this.execJSON([ '--json', 'settings', 'get' ]).catch(function(err) {
-				return { __error__: err.message || String(err) };
-			}),
-			this.execJSON([ '--json', 'list', 'subscriptions' ]).catch(function(err) {
-				return { __error__: err.message || String(err) };
-			})
-		]);
+		return Promise.resolve([]);
 	},
 
-	execJSON: function(argv) {
-		return fs.exec(routefluxBinary, argv).then(function(res) {
-			var stderr = trim(res.stderr);
-			var stdout = trim(res.stdout);
-
-			if (res.code !== 0)
-				throw new Error(stderr || stdout || _('RouteFlux command failed.'));
-
-			if (stdout === '')
-				throw new Error(_('RouteFlux returned empty JSON output.'));
-
-			try {
-				return JSON.parse(stdout);
-			}
-			catch (err) {
-				throw new Error(_('RouteFlux returned invalid JSON output.'));
-			}
-		});
-	},
-
-	execText: function(argv) {
-		return fs.exec(routefluxBinary, argv).then(function(res) {
-			var stderr = trim(res.stderr);
-			var stdout = trim(res.stdout);
-
-			if (res.code !== 0)
-				throw new Error(stderr || stdout || _('RouteFlux command failed.'));
-
-			return stdout;
-		});
-	},
-
-	runCommands: function(commands, successMessage) {
-		var self = this;
-		var outputs = [];
-		var chain = Promise.resolve();
-
-		for (var i = 0; i < commands.length; i++) {
-			(function(argv) {
-				chain = chain.then(function() {
-					return self.execText(argv).then(function(stdout) {
-						outputs.push(stdout);
-					});
-				});
-			})(commands[i]);
-		}
-
-		return chain.then(function() {
-			var lastOutput = '';
-
-			for (var i = outputs.length - 1; i >= 0; i--) {
-				if (trim(outputs[i]) !== '') {
-					lastOutput = outputs[i];
-					break;
-				}
-			}
-
-			ui.addNotification(null, notificationParagraph(lastOutput || successMessage), 'info');
-			window.setTimeout(function() {
-				window.location.reload();
-			}, 350);
-		}).catch(function(err) {
-			ui.addNotification(null, notificationParagraph(err.message || String(err)));
-			throw err;
-		});
-	},
-
-	renderCard: function(label, value, options) {
-		return routefluxUI.renderSummaryCard(label, value, options);
+	handleAppearanceChange: function(ev) {
+		this.appearanceDraft = trim(ev && ev.currentTarget && ev.currentTarget.value).toLowerCase() === 'light' ? 'light' : 'dark';
+		this.renderIntoRoot();
 	},
 
 	handleSaveSettings: function(ev) {
-		var current = this.currentSettings || {};
-		var refreshInterval = trim(document.querySelector('#routeflux-settings-refresh-interval').value);
-		var healthCheckInterval = trim(document.querySelector('#routeflux-settings-health-check-interval').value);
-		var switchCooldown = trim(document.querySelector('#routeflux-settings-switch-cooldown').value);
-		var latencyThreshold = trim(document.querySelector('#routeflux-settings-latency-threshold').value);
-		var autoMode = document.querySelector('#routeflux-settings-auto-mode').checked;
-		var logLevel = trim(document.querySelector('#routeflux-settings-log-level').value).toLowerCase();
-		var commands = [];
+		var nextTheme = this.appearanceDraft || routefluxUI.currentTheme();
 
-		if (refreshInterval === '' || healthCheckInterval === '' || switchCooldown === '' || latencyThreshold === '' || logLevel === '') {
-			ui.addNotification(null, notificationParagraph(_('All settings fields must be filled in.')));
+		if (ev && typeof ev.preventDefault === 'function')
+			ev.preventDefault();
+
+		if (routefluxUI.currentTheme() === nextTheme) {
+			ui.addNotification(null, notificationParagraph(_('No appearance changes to save.')), 'info');
 			return Promise.resolve();
 		}
 
-		if (trim(current.refresh_interval) !== refreshInterval)
-			commands.push([ 'settings', 'set', 'refresh-interval', refreshInterval ]);
+		routefluxUI.setThemePreference(nextTheme);
+		ui.addNotification(null, notificationParagraph(_('Appearance saved. Reloading the page...')), 'info');
+		window.setTimeout(function() {
+			window.location.reload();
+		}, 150);
 
-		if (trim(current.health_check_interval) !== healthCheckInterval)
-			commands.push([ 'settings', 'set', 'health-check-interval', healthCheckInterval ]);
+		return Promise.resolve();
+	},
 
-		if (trim(current.switch_cooldown) !== switchCooldown)
-			commands.push([ 'settings', 'set', 'switch-cooldown', switchCooldown ]);
+	renderIntoRoot: function() {
+		var root = document.querySelector('#routeflux-settings-root');
 
-		if (trim(current.latency_threshold) !== latencyThreshold)
-			commands.push([ 'settings', 'set', 'latency-threshold', latencyThreshold ]);
-
-		if (!!current.auto_mode !== autoMode)
-			commands.push([ 'settings', 'set', 'auto-mode', autoMode ? 'true' : 'false' ]);
-
-		if (trim(current.log_level).toLowerCase() !== logLevel)
-			commands.push([ 'settings', 'set', 'log-level', logLevel ]);
-
-		if (commands.length === 0) {
-			ui.addNotification(null, notificationParagraph(_('No settings changes to save.')), 'info');
-			return Promise.resolve();
-		}
-
-		return this.runCommands(commands, _('Settings saved.'));
+		if (root && root.parentNode)
+			dom.content(root.parentNode, [ this.render(this.loadedData || []) ]);
 	},
 
 	render: function(data) {
-		var status = data[0] || {};
-		var settings = data[1] && !data[1].__error__
-			? data[1]
-			: (status.settings || {});
-		var subscriptions = Array.isArray(data[2]) ? data[2] : [];
-		var presentation = buildSubscriptionPresentation(subscriptions);
-		var connected = !!(status.state && status.state.connected === true);
-		var state = status.state || {};
-		var activeSubscription = status.active_subscription || {};
-		var activeNode = status.active_node || {};
-		var activeEntry = presentationForSubscription(activeSubscription, presentation);
-		var activeProvider = trim(activeSubscription.id) !== ''
-			? (activeEntry ? activeEntry.provider_title : providerTitle(activeSubscription))
-			: _('Not selected');
-		var activeProfile = trim(activeSubscription.id) !== ''
-			? (activeEntry ? activeEntry.profile_label : _('Profile 1'))
-			: _('Not selected');
-		var activeNodeName = nodeDisplayName(activeNode, _('Not selected'));
+		var currentTheme = this.appearanceDraft || routefluxUI.currentTheme();
 		var content = [];
 
-		this.currentSettings = {
-			refresh_interval: trim(settings.refresh_interval),
-			health_check_interval: trim(settings.health_check_interval),
-			switch_cooldown: trim(settings.switch_cooldown),
-			latency_threshold: trim(settings.latency_threshold),
-			auto_mode: settings.auto_mode === true,
-			log_level: trim(settings.log_level)
-		};
-
-		if (data[0] && data[0].__error__)
-			ui.addNotification(null, notificationParagraph(_('Status error: %s').format(data[0].__error__)));
-
-		if (data[1] && data[1].__error__)
-			ui.addNotification(null, notificationParagraph(_('Settings error: %s').format(data[1].__error__)));
-
-		if (data[2] && data[2].__error__)
-			ui.addNotification(null, notificationParagraph(_('Subscriptions error: %s').format(data[2].__error__)));
+		this.loadedData = data;
 
 		content.push(routefluxUI.renderSharedStyles());
 		content.push(E('style', { 'type': 'text/css' }, [
-			'.routeflux-settings-grid { display:grid; grid-template-columns:repeat(auto-fit, minmax(260px, 1fr)); gap:12px; margin-bottom:12px; }',
-			'.routeflux-settings-actions { display:flex; flex-wrap:wrap; gap:10px; }'
+			'.routeflux-settings-actions { display:flex; flex-wrap:wrap; gap:10px; }',
+			'.routeflux-settings-choice-grid { display:grid; gap:12px; }',
+			'.routeflux-settings-choice { position:relative; display:flex; gap:12px; align-items:flex-start; min-height:96px; padding:16px 18px; border:1px solid rgba(145, 175, 220, 0.16); border-radius:18px; background:linear-gradient(180deg, rgba(11, 18, 30, 0.94) 0%, rgba(8, 14, 24, 0.98) 100%); box-shadow:0 18px 32px rgba(0, 0, 0, 0.24), inset 0 1px 0 rgba(255, 255, 255, 0.04); transition:transform .18s ease, border-color .18s ease, box-shadow .18s ease, background .18s ease; cursor:pointer; }',
+			'.routeflux-settings-choice:hover { transform:translateY(-1px); border-color:rgba(34, 197, 94, 0.28); box-shadow:0 20px 34px rgba(0, 0, 0, 0.28), inset 0 1px 0 rgba(255, 255, 255, 0.05); }',
+			'.routeflux-settings-choice-selected { border-color:rgba(34, 197, 94, 0.42); background:linear-gradient(180deg, rgba(13, 35, 28, 0.96) 0%, rgba(10, 24, 21, 1) 100%); box-shadow:0 22px 38px rgba(8, 23, 19, 0.32), 0 0 0 1px rgba(34, 197, 94, 0.08), inset 0 1px 0 rgba(255, 255, 255, 0.06); }',
+			'.routeflux-settings-choice-control { position:absolute; width:1px; height:1px; margin:-1px; padding:0; border:0; overflow:hidden; clip:rect(0, 0, 0, 0); clip-path:inset(50%); white-space:nowrap; }',
+			'.routeflux-settings-choice-indicator { position:relative; flex:0 0 auto; width:26px; height:26px; margin-top:2px; border:1.5px solid rgba(145, 162, 189, 0.42); border-radius:999px; background:linear-gradient(180deg, rgba(22, 31, 45, 0.96) 0%, rgba(14, 22, 34, 1) 100%); box-shadow:inset 0 1px 0 rgba(255, 255, 255, 0.05), 0 10px 18px rgba(0, 0, 0, 0.22); transition:border-color .18s ease, box-shadow .18s ease, background .18s ease; }',
+			'.routeflux-settings-choice-indicator::after { content:""; position:absolute; inset:0; display:flex; align-items:center; justify-content:center; border-radius:999px; color:transparent; transform:scale(0.62); transition:transform .18s ease, background .18s ease, color .18s ease, box-shadow .18s ease; }',
+			'.routeflux-settings-choice-control:focus-visible + .routeflux-settings-choice-indicator { outline:2px solid rgba(34, 197, 94, 0.28); outline-offset:3px; }',
+			'.routeflux-settings-choice-selected .routeflux-settings-choice-indicator { border-color:rgba(22, 163, 74, 0.54); background:linear-gradient(180deg, rgba(240, 253, 244, 0.99) 0%, rgba(220, 252, 231, 0.99) 100%); box-shadow:inset 0 1px 0 rgba(255, 255, 255, 0.96), 0 12px 20px rgba(21, 128, 61, 0.12); }',
+			'.routeflux-settings-choice-selected .routeflux-settings-choice-indicator::after { content:"\\2713"; background:linear-gradient(180deg, #22c55e 0%, #15803d 100%); color:#ffffff; font-size:15px; font-weight:900; transform:scale(1); box-shadow:0 10px 18px rgba(21, 128, 61, 0.28); }',
+			'.routeflux-settings-choice-copy { display:grid; gap:6px; flex:1 1 auto; min-width:0; }',
+			'.routeflux-settings-choice-title { display:block; color:var(--routeflux-text-primary); font-size:19px; font-weight:800; letter-spacing:-0.02em; }',
+			'.routeflux-settings-choice-description { display:block; color:var(--routeflux-text-secondary); line-height:1.62; }',
+			'.routeflux-settings-choice-note { display:inline-flex; align-items:center; width:max-content; max-width:100%; min-height:26px; padding:0 10px; border-radius:999px; background:rgba(88, 196, 255, 0.12); color:#a7dcff; font-size:11px; font-weight:800; letter-spacing:.08em; text-transform:uppercase; }',
+			'.routeflux-theme-light .routeflux-settings-choice { border-color:rgba(125, 146, 170, 0.18); background:linear-gradient(180deg, rgba(250, 252, 254, 0.98) 0%, rgba(243, 247, 251, 0.98) 100%); box-shadow:0 12px 24px rgba(63, 87, 118, 0.08), inset 0 1px 0 rgba(255, 255, 255, 0.86); }',
+			'.routeflux-theme-light .routeflux-settings-choice:hover { border-color:rgba(37, 99, 235, 0.24); box-shadow:0 14px 26px rgba(63, 87, 118, 0.1), inset 0 1px 0 rgba(255, 255, 255, 0.88); }',
+			'.routeflux-theme-light .routeflux-settings-choice-selected { border-color:rgba(22, 163, 74, 0.28); background:linear-gradient(180deg, rgba(248, 252, 249, 0.99) 0%, rgba(238, 247, 241, 0.96) 100%); box-shadow:0 16px 28px rgba(21, 128, 61, 0.08), inset 0 1px 0 rgba(255, 255, 255, 0.9); }',
+			'.routeflux-theme-light .routeflux-settings-choice-indicator { border-color:rgba(125, 146, 170, 0.28); background:linear-gradient(180deg, rgba(250, 252, 254, 0.99) 0%, rgba(241, 245, 249, 0.99) 100%); box-shadow:inset 0 1px 0 rgba(255, 255, 255, 0.9), 0 8px 16px rgba(63, 87, 118, 0.06); }',
+			'.routeflux-theme-light .routeflux-settings-choice-note { background:rgba(37, 99, 235, 0.08); color:#1d4ed8; }',
+			'@media (max-width: 700px) { .routeflux-settings-actions { flex-direction:column; } .routeflux-settings-actions .cbi-button { width:100%; } }'
 		]));
 
 		content.push(E('h2', {}, [ _('RouteFlux - Settings') ]));
 		content.push(E('p', { 'class': 'cbi-section-descr' }, [
-			_('Manage refresh timing, health checks, switching behavior, automatic selection, and log verbosity for RouteFlux.')
+			_('Choose the RouteFlux theme used inside LuCI.')
 		]));
-
-		content.push(E('div', { 'class': 'routeflux-overview-grid' }, [
-			this.renderCard(_('Connection'), connected ? _('Connected') : _('Disconnected'), {
-				'tone': routefluxUI.statusTone(connected),
-				'primary': true
-			}),
-			this.renderCard(_('Effective Mode'), modeLabel(state.mode)),
-			this.renderCard(_('Auto Mode'), boolLabel(settings.auto_mode)),
-			this.renderCard(_('Log Level'), firstNonEmpty([ settings.log_level ], 'info')),
-			this.renderCard(_('Active Provider'), activeProvider),
-			this.renderCard(_('Active Profile'), activeProfile),
-			this.renderCard(_('Active Node'), activeNodeName)
-		]));
-
-		if (connected) {
-			content.push(E('div', { 'class': 'cbi-section' }, [
-				E('div', { 'class': 'alert-message' }, [
-					_('Changing auto mode or log level while connected can reapply the current runtime configuration immediately.')
-				])
-			]));
-		}
 
 		content.push(E('div', { 'class': 'cbi-section' }, [
-			E('h3', {}, [ _('Configuration') ]),
-			E('div', { 'class': 'routeflux-settings-grid' }, [
-				E('div', { 'class': 'cbi-value' }, [
-					E('label', { 'class': 'cbi-value-title', 'for': 'routeflux-settings-refresh-interval' }, [ _('Refresh Interval') ]),
-					E('div', { 'class': 'cbi-value-field' }, [
-						E('input', {
-							'id': 'routeflux-settings-refresh-interval',
-							'class': 'cbi-input-text',
-							'type': 'text',
-							'value': trim(settings.refresh_interval) || '1h',
-							'placeholder': _('Example: 1h')
-						})
-					]),
-					E('div', { 'class': 'cbi-value-description' }, [
-						_('How often RouteFlux should refresh subscriptions automatically. Go duration syntax such as 30m or 1h is supported.')
-					])
-				]),
-				E('div', { 'class': 'cbi-value' }, [
-					E('label', { 'class': 'cbi-value-title', 'for': 'routeflux-settings-health-check-interval' }, [ _('Health Check Interval') ]),
-					E('div', { 'class': 'cbi-value-field' }, [
-						E('input', {
-							'id': 'routeflux-settings-health-check-interval',
-							'class': 'cbi-input-text',
-							'type': 'text',
-							'value': trim(settings.health_check_interval) || '30s',
-							'placeholder': _('Example: 30s')
-						})
-					]),
-					E('div', { 'class': 'cbi-value-description' }, [
-						_('How often RouteFlux probes nodes while monitoring health and availability.')
-					])
-				]),
-				E('div', { 'class': 'cbi-value' }, [
-					E('label', { 'class': 'cbi-value-title', 'for': 'routeflux-settings-switch-cooldown' }, [ _('Switch Cooldown') ]),
-					E('div', { 'class': 'cbi-value-field' }, [
-						E('input', {
-							'id': 'routeflux-settings-switch-cooldown',
-							'class': 'cbi-input-text',
-							'type': 'text',
-							'value': trim(settings.switch_cooldown) || '5m',
-							'placeholder': _('Example: 5m')
-						})
-					]),
-					E('div', { 'class': 'cbi-value-description' }, [
-						_('Minimum wait time before RouteFlux switches nodes again in automatic mode.')
-					])
-				]),
-				E('div', { 'class': 'cbi-value' }, [
-					E('label', { 'class': 'cbi-value-title', 'for': 'routeflux-settings-latency-threshold' }, [ _('Latency Threshold') ]),
-					E('div', { 'class': 'cbi-value-field' }, [
-						E('input', {
-							'id': 'routeflux-settings-latency-threshold',
-							'class': 'cbi-input-text',
-							'type': 'text',
-							'value': trim(settings.latency_threshold) || '50ms',
-							'placeholder': _('Example: 50ms')
-						})
-					]),
-					E('div', { 'class': 'cbi-value-description' }, [
-						_('Maximum tolerated latency delta before automatic scoring considers one node meaningfully worse than another.')
-					])
-				]),
-				E('div', { 'class': 'cbi-value' }, [
-					E('label', { 'class': 'cbi-value-title', 'for': 'routeflux-settings-auto-mode' }, [ _('Auto Mode') ]),
-					E('div', { 'class': 'cbi-value-field' }, [
-						E('label', { 'style': 'display:flex; gap:8px; align-items:center;' }, [
-							E('input', {
-								'id': 'routeflux-settings-auto-mode',
-								'type': 'checkbox',
-								'checked': settings.auto_mode === true ? 'checked' : null
-							}),
-							_('Allow RouteFlux to select and switch to the best node automatically.')
+			E('h3', {}, [ _('Appearance') ]),
+			E('p', { 'class': 'cbi-section-descr' }, [
+				_('Choose how RouteFlux pages should look inside LuCI.')
+			]),
+			E('div', { 'class': 'routeflux-settings-choice-grid' }, [
+				E('label', { 'class': choiceClass(currentTheme === 'dark') }, [
+					E('input', {
+						'id': 'routeflux-settings-appearance-dark',
+						'class': 'routeflux-settings-choice-control',
+						'type': 'radio',
+						'name': 'routeflux-settings-appearance',
+						'value': 'dark',
+						'checked': currentTheme === 'dark' ? 'checked' : null,
+						'change': ui.createHandlerFn(this, 'handleAppearanceChange')
+					}),
+					E('span', { 'class': 'routeflux-settings-choice-indicator', 'aria-hidden': 'true' }, []),
+					E('span', { 'class': 'routeflux-settings-choice-copy' }, [
+						E('span', { 'class': 'routeflux-settings-choice-title' }, [ _('Dark') ]),
+						E('span', { 'class': 'routeflux-settings-choice-description' }, [
+							_('Use the current premium dark interface across all RouteFlux pages.')
+						]),
+						E('span', { 'class': 'routeflux-settings-choice-note' }, [
+							currentTheme === 'dark' ? _('Selected') : _('Available')
 						])
-					]),
-					E('div', { 'class': 'cbi-value-description' }, [
-						_('When enabled while connected, RouteFlux can immediately re-enter automatic selection mode for the active subscription.')
 					])
 				]),
-				E('div', { 'class': 'cbi-value' }, [
-					E('label', { 'class': 'cbi-value-title', 'for': 'routeflux-settings-log-level' }, [ _('Log Level') ]),
-					E('div', { 'class': 'cbi-value-field' }, [
-						E('select', { 'id': 'routeflux-settings-log-level' }, renderLogLevelOptions(settings.log_level))
-					]),
-					E('div', { 'class': 'cbi-value-description' }, [
-						_('Controls the log verbosity written into the generated Xray configuration. Common values are debug, info, warning, and error.')
+				E('label', { 'class': choiceClass(currentTheme === 'light') }, [
+					E('input', {
+						'id': 'routeflux-settings-appearance-light',
+						'class': 'routeflux-settings-choice-control',
+						'type': 'radio',
+						'name': 'routeflux-settings-appearance',
+						'value': 'light',
+						'checked': currentTheme === 'light' ? 'checked' : null,
+						'change': ui.createHandlerFn(this, 'handleAppearanceChange')
+					}),
+					E('span', { 'class': 'routeflux-settings-choice-indicator', 'aria-hidden': 'true' }, []),
+					E('span', { 'class': 'routeflux-settings-choice-copy' }, [
+						E('span', { 'class': 'routeflux-settings-choice-title' }, [ _('Light') ]),
+						E('span', { 'class': 'routeflux-settings-choice-description' }, [
+							_('Use a brighter RouteFlux interface with the same structure and actions.')
+						]),
+						E('span', { 'class': 'routeflux-settings-choice-note' }, [
+							currentTheme === 'light' ? _('Selected') : _('Available')
+						])
 					])
 				])
 			]),
-			E('div', { 'class': 'routeflux-settings-actions' }, [
+			E('div', { 'class': 'routeflux-settings-actions', 'style': 'margin-top:16px;' }, [
 				E('button', {
+					'id': 'routeflux-settings-save',
+					'type': 'button',
 					'class': 'cbi-button cbi-button-apply',
 					'click': ui.createHandlerFn(this, 'handleSaveSettings')
 				}, [ _('Save') ])
 			])
 		]));
 
-		return E(content);
+		return E('div', {
+			'id': 'routeflux-settings-root',
+			'class': routefluxUI.withThemeClass('routeflux-page-shell routeflux-page-shell-settings')
+		}, content);
 	},
 
 	handleSave: null,

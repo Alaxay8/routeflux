@@ -44,9 +44,17 @@
 			"path": "routeflux/diagnostics"
 		}
 	},
+	"admin/services/routeflux/settings": {
+		"title": "Settings",
+		"order": 50,
+		"action": {
+			"type": "view",
+			"path": "routeflux/settings"
+		}
+	},
 	"admin/services/routeflux/about": {
 		"title": "About",
-		"order": 50,
+		"order": 60,
 		"action": {
 			"type": "view",
 			"path": "routeflux/about"
