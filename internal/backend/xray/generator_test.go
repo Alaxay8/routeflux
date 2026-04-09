@@ -2,6 +2,7 @@ package xray
 
 import (
 	"context"
+	"encoding/json"
 	"log/slog"
 	"os"
 	"path/filepath"
@@ -144,6 +145,113 @@ func TestGeneratorHandlesSplitDNSAndSelectedNodeErrors(t *testing.T) {
 	}
 }
 
+func TestGeneratorAddsLocalDNSRuntime(t *testing.T) {
+	t.Parallel()
+
+	req := backend.ConfigRequest{
+		Nodes: []domain.Node{
+			{
+				ID:         "node-1",
+				Protocol:   domain.ProtocolVLESS,
+				Address:    "node1.example.com",
+				Port:       443,
+				UUID:       "11111111-1111-1111-1111-111111111111",
+				Encryption: "none",
+				Security:   "reality",
+				PublicKey:  "public-key-1",
+				ShortID:    "ab12cd34",
+			},
+		},
+		SelectedNodeID: "node-1",
+		DNS: domain.DNSSettings{
+			Mode:          domain.DNSModeSplit,
+			Transport:     domain.DNSTransportDoH,
+			Servers:       []string{"1.1.1.1", "1.0.0.1"},
+			DirectDomains: []string{"domain:lan"},
+		},
+		LocalDNSEnabled: true,
+		LocalDNSListen:  "127.0.0.1",
+		LocalDNSPort:    1053,
+	}
+
+	rendered, err := NewGenerator().Generate(req)
+	if err != nil {
+		t.Fatalf("generate config: %v", err)
+	}
+
+	var cfg map[string]any
+	if err := json.Unmarshal(rendered, &cfg); err != nil {
+		t.Fatalf("unmarshal generated json: %v", err)
+	}
+
+	inbounds, ok := cfg["inbounds"].([]any)
+	if !ok {
+		t.Fatalf("inbounds missing: %+v", cfg)
+	}
+	dnsInbound := findInboundByTag(t, inbounds, "dns-in")
+	if dnsInbound["listen"] != "127.0.0.1" {
+		t.Fatalf("unexpected dns-in listen: %+v", dnsInbound)
+	}
+	if dnsInbound["port"] != float64(1053) {
+		t.Fatalf("unexpected dns-in port: %+v", dnsInbound)
+	}
+	settings, ok := dnsInbound["settings"].(map[string]any)
+	if !ok {
+		t.Fatalf("dns-in settings missing: %+v", dnsInbound)
+	}
+	if settings["network"] != "tcp,udp" || settings["address"] != "1.1.1.1" || settings["port"] != float64(53) {
+		t.Fatalf("unexpected dns-in settings: %+v", settings)
+	}
+
+	outbounds, ok := cfg["outbounds"].([]any)
+	if !ok {
+		t.Fatalf("outbounds missing: %+v", cfg)
+	}
+	var dnsOutbound map[string]any
+	for _, raw := range outbounds {
+		candidate, ok := raw.(map[string]any)
+		if !ok {
+			continue
+		}
+		if candidate["tag"] == "dns-out" {
+			dnsOutbound = candidate
+			break
+		}
+	}
+	if dnsOutbound == nil {
+		t.Fatalf("dns-out missing: %+v", outbounds)
+	}
+	if dnsOutbound["protocol"] != "dns" {
+		t.Fatalf("unexpected dns-out protocol: %+v", dnsOutbound)
+	}
+	dnsSettings, ok := dnsOutbound["settings"].(map[string]any)
+	if !ok {
+		t.Fatalf("dns-out settings missing: %+v", dnsOutbound)
+	}
+	if dnsSettings["nonIPQuery"] != "skip" {
+		t.Fatalf("unexpected dns-out settings: %+v", dnsSettings)
+	}
+
+	routing, ok := cfg["routing"].(map[string]any)
+	if !ok {
+		t.Fatalf("routing section missing: %+v", cfg)
+	}
+	rules, ok := routing["rules"].([]any)
+	if !ok || len(rules) < 3 {
+		t.Fatalf("routing rules missing: %+v", routing)
+	}
+	firstRule, ok := rules[0].(map[string]any)
+	if !ok {
+		t.Fatalf("expected first routing rule object, got %T", rules[0])
+	}
+	if firstRule["outboundTag"] != "dns-out" {
+		t.Fatalf("expected first routing rule to send dns-in to dns-out, got %+v", firstRule)
+	}
+	if !reflect.DeepEqual(asStringSlice(t, firstRule["inboundTag"]), []string{"dns-in"}) {
+		t.Fatalf("unexpected dns-in inbound tag: %+v", firstRule["inboundTag"])
+	}
+}
+
 func TestInitdControllerCommandsAndRuntimeBackendDelegation(t *testing.T) {
 	t.Parallel()
 
@@ -218,4 +326,39 @@ func (c *lifecycleController) Reload(context.Context) error {
 
 func (c *lifecycleController) Status(context.Context) (backend.RuntimeStatus, error) {
 	return c.status, nil
+}
+
+func findInboundByTag(t *testing.T, inbounds []any, tag string) map[string]any {
+	t.Helper()
+
+	for _, raw := range inbounds {
+		inbound, ok := raw.(map[string]any)
+		if !ok {
+			continue
+		}
+		if inbound["tag"] == tag {
+			return inbound
+		}
+	}
+
+	t.Fatalf("inbound %q not found: %+v", tag, inbounds)
+	return nil
+}
+
+func asStringSlice(t *testing.T, raw any) []string {
+	t.Helper()
+
+	list, ok := raw.([]any)
+	if !ok {
+		t.Fatalf("expected []any, got %T", raw)
+	}
+	out := make([]string, 0, len(list))
+	for _, item := range list {
+		value, ok := item.(string)
+		if !ok {
+			t.Fatalf("expected string item, got %T", item)
+		}
+		out = append(out, value)
+	}
+	return out
 }

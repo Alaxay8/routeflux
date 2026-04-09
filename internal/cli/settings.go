@@ -31,12 +31,13 @@ func newSettingsCmd(opts *rootOptions) *cobra.Command {
 				}
 
 				text := fmt.Sprintf(
-					"refresh-interval=%s\nhealth-check-interval=%s\nswitch-cooldown=%s\nlatency-threshold=%s\nauto-mode=%t\nmode=%s\nlog-level=%s\nfirewall-enabled=%t\nfirewall-mode=%s\nfirewall-port=%d\nfirewall-default-action=%s\nfirewall-targets=%s\nfirewall-target-services=%s\nfirewall-target-domains=%s\nfirewall-target-cidrs=%s\nfirewall-split-proxy=%s\nfirewall-split-bypass=%s\nfirewall-split-excluded-sources=%s\nfirewall-hosts=%s\nfirewall-block-quic=%t\nfirewall-disable-ipv6=%t",
+					"refresh-interval=%s\nhealth-check-interval=%s\nswitch-cooldown=%s\nlatency-threshold=%s\nauto-mode=%t\nauto-excluded-nodes=%s\nmode=%s\nlog-level=%s\nfirewall-enabled=%t\nfirewall-mode=%s\nfirewall-port=%d\nfirewall-default-action=%s\nfirewall-targets=%s\nfirewall-target-services=%s\nfirewall-target-domains=%s\nfirewall-target-cidrs=%s\nfirewall-split-proxy=%s\nfirewall-split-bypass=%s\nfirewall-split-excluded-sources=%s\nfirewall-hosts=%s\nfirewall-block-quic=%t\nfirewall-disable-ipv6=%t\nzapret-enabled=%t\nzapret-selectors=%s\nzapret-services=%s\nzapret-domains=%s\nzapret-failback-success-threshold=%d",
 					settings.RefreshInterval,
 					settings.HealthCheckInterval,
 					settings.SwitchCooldown,
 					settings.LatencyThreshold,
 					settings.AutoMode,
+					strings.Join(settings.AutoExcludedNodes, ", "),
 					settings.Mode,
 					settings.LogLevel,
 					settings.Firewall.Enabled,
@@ -53,6 +54,11 @@ func newSettingsCmd(opts *rootOptions) *cobra.Command {
 					strings.Join(settings.Firewall.Hosts, ", "),
 					settings.Firewall.BlockQUIC,
 					settings.Firewall.DisableIPv6,
+					settings.Zapret.Enabled,
+					zapretSelectorSummary(settings.Zapret.Selectors),
+					strings.Join(settings.Zapret.Selectors.Services, ", "),
+					strings.Join(settings.Zapret.Selectors.Domains, ", "),
+					settings.Zapret.FailbackSuccessThreshold,
 				)
 				return printOutput(cmd, false, nil, text)
 			},

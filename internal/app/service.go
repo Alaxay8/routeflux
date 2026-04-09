@@ -50,6 +50,14 @@ type Firewaller interface {
 	Disable(ctx context.Context) error
 }
 
+// DNSManager applies RouteFlux-managed LAN/router DNS integration.
+type DNSManager interface {
+	SystemResolvers(ctx context.Context) ([]string, error)
+	Apply(ctx context.Context, settings domain.DNSSettings, listen string, port int) error
+	Disable(ctx context.Context) error
+	Status(ctx context.Context) (domain.DNSRuntimeStatus, error)
+}
+
 // HostResolver resolves node hostnames before backend apply.
 type HostResolver interface {
 	LookupIPAddr(ctx context.Context, host string) ([]net.IPAddr, error)
@@ -59,6 +67,13 @@ type HostResolver interface {
 type IPv6Manager interface {
 	Apply(ctx context.Context, disabled bool) error
 	Status(ctx context.Context) (domain.IPv6Status, error)
+}
+
+// ZapretManager manages RouteFlux-owned Zapret fallback state on OpenWrt.
+type ZapretManager interface {
+	Apply(ctx context.Context, domains, cidrs []string) (domain.ZapretStatus, error)
+	Disable(ctx context.Context) error
+	Status(ctx context.Context) (domain.ZapretStatus, error)
 }
 
 // AddSubscriptionRequest defines how a subscription is added.
@@ -72,8 +87,10 @@ type AddSubscriptionRequest struct {
 type StatusSnapshot struct {
 	State              domain.RuntimeState  `json:"state"`
 	Settings           domain.Settings      `json:"settings"`
+	ActiveTransport    domain.TransportMode `json:"active_transport"`
 	ActiveSubscription *domain.Subscription `json:"active_subscription,omitempty"`
 	ActiveNode         *domain.Node         `json:"active_node,omitempty"`
+	Zapret             domain.ZapretStatus  `json:"zapret"`
 }
 
 type applyNodeSelectionOptions struct {
@@ -86,14 +103,17 @@ type applyNodeSelectionOptions struct {
 type Service struct {
 	store                   Store
 	backend                 backend.Backend
+	dns                     DNSManager
 	firewall                Firewaller
 	httpClient              *http.Client
 	subscriptionTLS12Client *http.Client
 	checker                 probe.Checker
+	inspectPingCheck        func(ctx context.Context, node domain.Node) probe.Result
 	speedTester             speedtest.Tester
 	logger                  *slog.Logger
 	resolver                HostResolver
 	ipv6Manager             IPv6Manager
+	zapret                  ZapretManager
 	backendReadyChecks      int
 	backendReadyDelay       time.Duration
 	backendEgressProbe      func(ctx context.Context) error
@@ -110,6 +130,7 @@ type Service struct {
 type Dependencies struct {
 	Store              Store
 	Backend            backend.Backend
+	DNSManager         DNSManager
 	Firewaller         Firewaller
 	HTTPClient         *http.Client
 	Checker            probe.Checker
@@ -117,6 +138,7 @@ type Dependencies struct {
 	Logger             *slog.Logger
 	Resolver           HostResolver
 	IPv6Manager        IPv6Manager
+	ZapretManager      ZapretManager
 	RuntimeEgressProbe bool
 }
 
@@ -143,6 +165,8 @@ const (
 	backendReadyCheckDelay                = 250 * time.Millisecond
 	backendEgressProbeTimeout             = 12 * time.Second
 	backendEgressProbeRetryDelay          = 250 * time.Millisecond
+	localDNSListen                        = "127.0.0.1"
+	localDNSPort                          = 1053
 )
 
 var subscriptionShareLinkPattern = regexp.MustCompile(`(?i)(vless|vmess|trojan|ss)://[^"'<>]+`)
@@ -174,6 +198,7 @@ func NewService(deps Dependencies) *Service {
 	service := &Service{
 		store:                   deps.Store,
 		backend:                 deps.Backend,
+		dns:                     deps.DNSManager,
 		firewall:                deps.Firewaller,
 		httpClient:              ensureSubscriptionHTTPClient(deps.HTTPClient),
 		subscriptionTLS12Client: ensureSubscriptionTLS12HTTPClient(deps.HTTPClient),
@@ -182,6 +207,7 @@ func NewService(deps Dependencies) *Service {
 		logger:                  logger,
 		resolver:                resolver,
 		ipv6Manager:             deps.IPv6Manager,
+		zapret:                  deps.ZapretManager,
 		backendReadyChecks:      backendReadyMaxChecks,
 		backendReadyDelay:       backendReadyCheckDelay,
 		backendEgressTimeout:    backendEgressProbeTimeout,
@@ -350,14 +376,12 @@ func (s *Service) removeAllSubscriptions(ctx context.Context) (int, error) {
 }
 
 func (s *Service) disconnectRuntime(ctx context.Context) error {
-	if s.backend != nil {
-		if err := s.backend.Stop(ctx); err != nil {
-			return fmt.Errorf("stop backend: %w", err)
-		}
+	if err := s.stopProxyTransport(ctx); err != nil {
+		return err
 	}
-	if s.firewall != nil {
-		if err := s.firewall.Disable(ctx); err != nil {
-			return fmt.Errorf("disable firewall: %w", err)
+	if s.zapret != nil {
+		if err := s.zapret.Disable(ctx); err != nil {
+			return fmt.Errorf("disable zapret: %w", err)
 		}
 	}
 
@@ -369,6 +393,12 @@ func (s *Service) persistDisconnectedState(state domain.RuntimeState) error {
 	state.ActiveNodeID = ""
 	state.Mode = domain.SelectionModeDisconnected
 	state.Connected = false
+	if effectiveActiveTransport(state) != domain.TransportModeDirect {
+		state.LastTransportSwitchAt = s.currentTime().UTC()
+	}
+	state.ActiveTransport = domain.TransportModeDirect
+	state.LastTransportFailureReason = ""
+	clearZapretTestState(&state)
 	if err := s.saveState(state); err != nil {
 		return fmt.Errorf("save state: %w", err)
 	}
@@ -433,13 +463,17 @@ func (s *Service) InspectXrayConfig(subscriptionID, nodeID string) (json.RawMess
 	if err != nil {
 		return nil, fmt.Errorf("load settings: %w", err)
 	}
+	runtimeSettings, err := s.prepareRuntimeDNSSettings(context.Background(), settings)
+	if err != nil {
+		return nil, fmt.Errorf("prepare runtime dns settings: %w", err)
+	}
 
 	sub, node, err := s.subscriptionNode(subscriptionID, nodeID)
 	if err != nil {
 		return nil, err
 	}
 
-	rendered, err := s.backend.GenerateConfig(s.backendConfigRequest(settings, node, domain.SelectionModeManual, 10808, 10809, firewallEnabled(settings.Firewall)))
+	rendered, err := s.backend.GenerateConfig(s.backendConfigRequest(runtimeSettings, node, domain.SelectionModeManual, 10808, 10809, firewallEnabled(settings.Firewall), s.dns != nil && localDNSRuntimeEnabled(settings.DNS)))
 	if err != nil {
 		return nil, fmt.Errorf("generate xray config for %s/%s: %w", sub.ID, node.ID, err)
 	}
@@ -463,6 +497,10 @@ func (s *Service) InspectSpeed(ctx context.Context, subscriptionID, nodeID strin
 	if err != nil {
 		return speedtest.Result{}, fmt.Errorf("load settings: %w", err)
 	}
+	runtimeSettings, err := s.prepareRuntimeDNSSettings(ctx, settings)
+	if err != nil {
+		return speedtest.Result{}, fmt.Errorf("prepare runtime dns settings: %w", err)
+	}
 
 	_, node, err := s.subscriptionNode(subscriptionID, nodeID)
 	if err != nil {
@@ -478,7 +516,7 @@ func (s *Service) InspectSpeed(ctx context.Context, subscriptionID, nodeID strin
 		return speedtest.Result{}, fmt.Errorf("allocate speed test HTTP port: %w", err)
 	}
 
-	rendered, err := s.backend.GenerateConfig(s.backendConfigRequest(settings, node, domain.SelectionModeManual, socksPort, httpPort, false))
+	rendered, err := s.backend.GenerateConfig(s.backendConfigRequest(runtimeSettings, node, domain.SelectionModeManual, socksPort, httpPort, false, s.dns != nil && localDNSRuntimeEnabled(settings.DNS)))
 	if err != nil {
 		return speedtest.Result{}, fmt.Errorf("generate speed test config: %w", err)
 	}
@@ -667,6 +705,18 @@ func (s *Service) connectAuto(ctx context.Context, subscriptionID string) (domai
 
 	if !decision.HasHealthyCandidate {
 		state.Health = decision.Health
+		state.Mode = domain.SelectionModeAuto
+		state.ActiveSubscriptionID = sub.ID
+		state.LastFailureReason = decision.Reason
+		if settings.Zapret.Enabled {
+			if err := s.activateZapretFallback(ctx, sub, state, settings, decision.Reason); err != nil {
+				return domain.Node{}, err
+			}
+			settings.AutoMode = true
+			settings.Mode = domain.SelectionModeAuto
+			_ = s.store.SaveSettings(settings)
+			return domain.Node{}, nil
+		}
 		if err := s.saveState(state); err != nil {
 			return domain.Node{}, fmt.Errorf("save state: %w", err)
 		}
@@ -708,6 +758,12 @@ func (s *Service) disconnect(ctx context.Context) error {
 	state.ActiveSubscriptionID = ""
 	state.Mode = domain.SelectionModeDisconnected
 	state.Connected = false
+	if effectiveActiveTransport(state) != domain.TransportModeDirect {
+		state.LastTransportSwitchAt = s.currentTime().UTC()
+	}
+	state.ActiveTransport = domain.TransportModeDirect
+	state.LastTransportFailureReason = ""
+	clearZapretTestState(&state)
 	if err := s.saveState(state); err != nil {
 		return fmt.Errorf("save state: %w", err)
 	}
@@ -734,9 +790,28 @@ func (s *Service) Status() (StatusSnapshot, error) {
 		return StatusSnapshot{}, fmt.Errorf("load state: %w", err)
 	}
 
+	state.ActiveTransport = effectiveActiveTransport(state)
 	snapshot := StatusSnapshot{
-		State:    state,
-		Settings: settings,
+		State:           state,
+		Settings:        settings,
+		ActiveTransport: state.ActiveTransport,
+	}
+
+	if s.zapret != nil {
+		status, statusErr := s.zapret.Status(context.Background())
+		if statusErr != nil && strings.TrimSpace(status.LastReason) == "" {
+			status.LastReason = statusErr.Error()
+		}
+		status.TestActive = state.ZapretTest.Active
+		if strings.TrimSpace(status.LastReason) == "" {
+			status.LastReason = strings.TrimSpace(state.LastTransportFailureReason)
+		}
+		snapshot.Zapret = status
+	} else {
+		snapshot.Zapret.TestActive = state.ZapretTest.Active
+		if strings.TrimSpace(state.LastTransportFailureReason) != "" {
+			snapshot.Zapret.LastReason = state.LastTransportFailureReason
+		}
 	}
 
 	if state.ActiveSubscriptionID == "" {
@@ -761,6 +836,15 @@ func (s *Service) RuntimeStatus(ctx context.Context) (backend.RuntimeStatus, err
 	}
 
 	return s.backend.Status(ctx)
+}
+
+// DNSStatus returns the current RouteFlux-managed DNS runtime status, if available.
+func (s *Service) DNSStatus(ctx context.Context) (domain.DNSRuntimeStatus, error) {
+	if s.dns == nil {
+		return domain.DNSRuntimeStatus{}, nil
+	}
+
+	return s.dns.Status(ctx)
 }
 
 // IPv6Status returns the current RouteFlux-managed IPv6 state, if available.
@@ -806,11 +890,289 @@ func (s *Service) getSettings() (domain.Settings, error) {
 	return settings, nil
 }
 
+// GetZapretSettings returns current Zapret fallback settings.
+func (s *Service) GetZapretSettings() (domain.ZapretSettings, error) {
+	settings, err := s.store.LoadSettings()
+	if err != nil {
+		return domain.ZapretSettings{}, fmt.Errorf("load settings: %w", err)
+	}
+
+	return domain.CanonicalZapretSettings(settings.Zapret), nil
+}
+
+// GetZapretStatus returns the observed Zapret runtime status.
+func (s *Service) GetZapretStatus(ctx context.Context) (domain.ZapretStatus, error) {
+	state := domain.RuntimeState{}
+	if s.store != nil {
+		loadedState, err := s.store.LoadState()
+		if err == nil {
+			state = loadedState
+		}
+	}
+
+	if s.zapret == nil {
+		status := domain.ZapretStatus{TestActive: state.ZapretTest.Active}
+		if strings.TrimSpace(state.LastTransportFailureReason) != "" {
+			status.LastReason = state.LastTransportFailureReason
+		}
+		return status, nil
+	}
+
+	status, err := s.zapret.Status(ctx)
+	if err != nil && strings.TrimSpace(status.LastReason) == "" {
+		status.LastReason = err.Error()
+	}
+	status.TestActive = state.ZapretTest.Active
+	if strings.TrimSpace(status.LastReason) == "" {
+		status.LastReason = strings.TrimSpace(state.LastTransportFailureReason)
+	}
+
+	return status, err
+}
+
+// StartZapretTest forces RouteFlux into a temporary Zapret-only runtime so the
+// user can validate selectors while proxy nodes are still healthy.
+func (s *Service) StartZapretTest(ctx context.Context) (domain.ZapretStatus, error) {
+	return runStoreWriteLockedResult(s, func() (domain.ZapretStatus, error) {
+		return s.startZapretTest(ctx)
+	})
+}
+
+func (s *Service) startZapretTest(ctx context.Context) (domain.ZapretStatus, error) {
+	settings, err := s.store.LoadSettings()
+	if err != nil {
+		return domain.ZapretStatus{}, fmt.Errorf("load settings: %w", err)
+	}
+
+	state, err := s.store.LoadState()
+	if err != nil {
+		return domain.ZapretStatus{}, fmt.Errorf("load state: %w", err)
+	}
+	state.ActiveTransport = effectiveActiveTransport(state)
+
+	if state.ZapretTest.Active {
+		return s.GetZapretStatus(ctx)
+	}
+	if state.ActiveTransport == domain.TransportModeZapret {
+		status, _ := s.GetZapretStatus(ctx)
+		return status, fmt.Errorf("zapret is already active under automatic fallback")
+	}
+
+	restore := domain.ZapretTestRestoreState{
+		ActiveSubscriptionID: state.ActiveSubscriptionID,
+		ActiveNodeID:         state.ActiveNodeID,
+		Mode:                 state.Mode,
+		Connected:            state.Connected,
+		ActiveTransport:      state.ActiveTransport,
+	}
+
+	status, err := s.applyZapretTestMode(ctx, settings, state, restore)
+	if err == nil {
+		return status, nil
+	}
+
+	if restore.Connected &&
+		restore.ActiveTransport == domain.TransportModeProxy &&
+		strings.TrimSpace(restore.ActiveSubscriptionID) != "" &&
+		strings.TrimSpace(restore.ActiveNodeID) != "" {
+		if restoreErr := s.restoreZapretTestSelection(ctx, restore); restoreErr != nil {
+			return status, fmt.Errorf("%v; restore previous route: %w", err, restoreErr)
+		}
+		return status, err
+	}
+
+	if s.zapret != nil {
+		_ = s.zapret.Disable(ctx)
+	}
+	now := s.currentTime().UTC()
+	state.ActiveSubscriptionID = restore.ActiveSubscriptionID
+	state.ActiveNodeID = restore.ActiveNodeID
+	if restore.Mode != "" {
+		state.Mode = restore.Mode
+	} else {
+		state.Mode = domain.SelectionModeDisconnected
+	}
+	state.Connected = false
+	if state.ActiveTransport != domain.TransportModeDirect {
+		state.LastTransportSwitchAt = now
+	}
+	state.ActiveTransport = domain.TransportModeDirect
+	state.LastFailureReason = "zapret test start failed"
+	state.LastTransportFailureReason = err.Error()
+	clearZapretTestState(&state)
+	if saveErr := s.saveState(state); saveErr != nil {
+		return status, fmt.Errorf("%v; save state: %w", err, saveErr)
+	}
+
+	return status, err
+}
+
+// StopZapretTest exits the manual Zapret test mode and restores the previous
+// proxy selection when one existed.
+func (s *Service) StopZapretTest(ctx context.Context) (domain.ZapretStatus, error) {
+	return runStoreWriteLockedResult(s, func() (domain.ZapretStatus, error) {
+		return s.stopZapretTest(ctx)
+	})
+}
+
+func (s *Service) stopZapretTest(ctx context.Context) (domain.ZapretStatus, error) {
+	state, err := s.store.LoadState()
+	if err != nil {
+		return domain.ZapretStatus{}, fmt.Errorf("load state: %w", err)
+	}
+	state.ActiveTransport = effectiveActiveTransport(state)
+
+	if !state.ZapretTest.Active {
+		return s.GetZapretStatus(ctx)
+	}
+
+	restore := state.ZapretTest.Restore
+	if restore.Connected &&
+		restore.ActiveTransport == domain.TransportModeProxy &&
+		strings.TrimSpace(restore.ActiveSubscriptionID) != "" &&
+		strings.TrimSpace(restore.ActiveNodeID) != "" {
+		if err := s.restoreZapretTestSelection(ctx, restore); err != nil {
+			return domain.ZapretStatus{}, err
+		}
+		return s.GetZapretStatus(ctx)
+	}
+
+	if err := s.disconnectRuntime(ctx); err != nil {
+		return domain.ZapretStatus{}, err
+	}
+
+	now := s.currentTime().UTC()
+	state.ActiveSubscriptionID = restore.ActiveSubscriptionID
+	state.ActiveNodeID = restore.ActiveNodeID
+	if restore.Mode != "" {
+		state.Mode = restore.Mode
+	} else {
+		state.Mode = domain.SelectionModeDisconnected
+	}
+	state.Connected = false
+	if state.ActiveTransport != domain.TransportModeDirect {
+		state.LastTransportSwitchAt = now
+	}
+	state.ActiveTransport = domain.TransportModeDirect
+	state.LastFailureReason = ""
+	state.LastTransportFailureReason = ""
+	clearZapretTestState(&state)
+	if err := s.saveState(state); err != nil {
+		return domain.ZapretStatus{}, fmt.Errorf("save state: %w", err)
+	}
+
+	return s.GetZapretStatus(ctx)
+}
+
+// SetZapretEnabled updates whether Zapret fallback may be used.
+func (s *Service) SetZapretEnabled(ctx context.Context, enabled bool) (domain.ZapretSettings, error) {
+	return runStoreWriteLockedResult(s, func() (domain.ZapretSettings, error) {
+		settings, err := s.store.LoadSettings()
+		if err != nil {
+			return domain.ZapretSettings{}, fmt.Errorf("load settings: %w", err)
+		}
+
+		settings.Zapret = domain.CanonicalZapretSettings(settings.Zapret)
+		settings.Zapret.Enabled = enabled
+		if err := s.store.SaveSettings(settings); err != nil {
+			return domain.ZapretSettings{}, fmt.Errorf("save settings: %w", err)
+		}
+
+		if !enabled {
+			state, err := s.store.LoadState()
+			if err != nil {
+				return domain.ZapretSettings{}, fmt.Errorf("load state: %w", err)
+			}
+			if effectiveActiveTransport(state) == domain.TransportModeZapret {
+				if err := s.disconnectRuntime(ctx); err != nil {
+					return domain.ZapretSettings{}, err
+				}
+				state.Connected = false
+				if effectiveActiveTransport(state) != domain.TransportModeDirect {
+					state.LastTransportSwitchAt = s.currentTime().UTC()
+				}
+				state.ActiveTransport = domain.TransportModeDirect
+				state.LastFailureReason = "zapret fallback disabled"
+				state.LastTransportFailureReason = ""
+				clearZapretTestState(&state)
+				if err := s.saveState(state); err != nil {
+					return domain.ZapretSettings{}, fmt.Errorf("save state: %w", err)
+				}
+			}
+		}
+
+		return settings.Zapret, nil
+	})
+}
+
+// SetZapretSelectors updates Zapret fallback selectors.
+func (s *Service) SetZapretSelectors(ctx context.Context, selectors []string) (domain.ZapretSettings, error) {
+	return runStoreWriteLockedResult(s, func() (domain.ZapretSettings, error) {
+		settings, err := s.store.LoadSettings()
+		if err != nil {
+			return domain.ZapretSettings{}, fmt.Errorf("load settings: %w", err)
+		}
+
+		parsed, err := domain.ParseZapretSelectors(selectors, settings.Firewall.TargetServiceCatalog)
+		if err != nil {
+			return domain.ZapretSettings{}, err
+		}
+
+		settings.Zapret = domain.CanonicalZapretSettings(settings.Zapret)
+		settings.Zapret.Selectors = parsed
+		if err := s.store.SaveSettings(settings); err != nil {
+			return domain.ZapretSettings{}, fmt.Errorf("save settings: %w", err)
+		}
+
+		state, err := s.store.LoadState()
+		if err == nil && effectiveActiveTransport(state) == domain.TransportModeZapret {
+			if state.ZapretTest.Active {
+				if _, err := s.applyZapretTestMode(ctx, settings, state, state.ZapretTest.Restore); err != nil {
+					return domain.ZapretSettings{}, err
+				}
+			} else if state.ActiveSubscriptionID != "" {
+				sub, subErr := s.subscriptionByID(state.ActiveSubscriptionID)
+				if subErr != nil {
+					return domain.ZapretSettings{}, subErr
+				}
+				if err := s.activateZapretFallback(ctx, sub, state, settings, firstNonEmpty(state.LastFailureReason, "zapret selectors updated")); err != nil {
+					return domain.ZapretSettings{}, err
+				}
+			}
+		}
+
+		return settings.Zapret, nil
+	})
+}
+
+// SetZapretFailbackSuccessThreshold updates the proxy failback stability threshold.
+func (s *Service) SetZapretFailbackSuccessThreshold(threshold int) (domain.ZapretSettings, error) {
+	return runStoreWriteLockedResult(s, func() (domain.ZapretSettings, error) {
+		if threshold < 1 {
+			return domain.ZapretSettings{}, fmt.Errorf("failback success threshold must be at least 1")
+		}
+
+		settings, err := s.store.LoadSettings()
+		if err != nil {
+			return domain.ZapretSettings{}, fmt.Errorf("load settings: %w", err)
+		}
+
+		settings.Zapret = domain.CanonicalZapretSettings(settings.Zapret)
+		settings.Zapret.FailbackSuccessThreshold = threshold
+		if err := s.store.SaveSettings(settings); err != nil {
+			return domain.ZapretSettings{}, fmt.Errorf("save settings: %w", err)
+		}
+
+		return settings.Zapret, nil
+	})
+}
+
 func (s *Service) restoreRuntime(ctx context.Context) error {
 	state, err := s.store.LoadState()
 	if err != nil {
 		return fmt.Errorf("load state: %w", err)
 	}
+	state.ActiveTransport = effectiveActiveTransport(state)
 	settings, settingsErr := s.store.LoadSettings()
 	if settingsErr == nil {
 		if err := s.ensureManagedIPv6State(ctx, settings); err != nil {
@@ -818,11 +1180,9 @@ func (s *Service) restoreRuntime(ctx context.Context) error {
 		}
 	}
 
-	if !state.Connected || state.ActiveSubscriptionID == "" || state.ActiveNodeID == "" {
-		if s.firewall != nil {
-			if err := s.firewall.Disable(ctx); err != nil {
-				return fmt.Errorf("disable firewall: %w", err)
-			}
+	if !state.Connected || state.ActiveSubscriptionID == "" {
+		if err := s.disconnectRuntime(ctx); err != nil {
+			return err
 		}
 		return nil
 	}
@@ -1511,6 +1871,8 @@ func (s *Service) setSetting(key, value string) (domain.Settings, error) {
 			return domain.Settings{}, err
 		}
 		settings.LatencyThreshold = d
+	case "auto.excluded-nodes":
+		settings.AutoExcludedNodes = domain.NormalizeAutoExcludedNodes(parseStringList(value))
 	case "auto-mode":
 		enableAuto := strings.EqualFold(value, "true")
 		state, stateErr := s.store.LoadState()
@@ -1580,6 +1942,19 @@ func (s *Service) setSetting(key, value string) (domain.Settings, error) {
 		return domain.Settings{}, fmt.Errorf("save settings: %w", err)
 	}
 
+	if key == "auto.excluded-nodes" {
+		state, err := s.store.LoadState()
+		if err == nil &&
+			state.Connected &&
+			state.Mode == domain.SelectionModeAuto &&
+			strings.TrimSpace(state.ActiveSubscriptionID) != "" {
+			if _, err := s.connectAuto(context.Background(), state.ActiveSubscriptionID); err != nil {
+				return domain.Settings{}, err
+			}
+			return s.store.LoadSettings()
+		}
+	}
+
 	if reapplyRuntime {
 		if err := s.reapplyCurrentConnection(context.Background()); err != nil {
 			return domain.Settings{}, err
@@ -1596,6 +1971,13 @@ func (s *Service) ApplyDefaultDNS(ctx context.Context) (domain.Settings, error) 
 	})
 }
 
+// UpdateDNS replaces the full DNS profile in one step and reapplies runtime state once.
+func (s *Service) UpdateDNS(ctx context.Context, dns domain.DNSSettings) (domain.Settings, error) {
+	return runStoreWriteLockedResult(s, func() (domain.Settings, error) {
+		return s.updateDNS(ctx, dns)
+	})
+}
+
 func (s *Service) applyDefaultDNS(ctx context.Context) (domain.Settings, error) {
 	settings, err := s.store.LoadSettings()
 	if err != nil {
@@ -1603,6 +1985,40 @@ func (s *Service) applyDefaultDNS(ctx context.Context) (domain.Settings, error) 
 	}
 
 	settings.DNS = domain.DefaultDNSSettings()
+	if err := s.store.SaveSettings(settings); err != nil {
+		return domain.Settings{}, fmt.Errorf("save settings: %w", err)
+	}
+
+	if err := s.reapplyCurrentConnection(ctx); err != nil {
+		return domain.Settings{}, err
+	}
+
+	return settings, nil
+}
+
+func (s *Service) updateDNS(ctx context.Context, dns domain.DNSSettings) (domain.Settings, error) {
+	settings, err := s.store.LoadSettings()
+	if err != nil {
+		return domain.Settings{}, fmt.Errorf("load settings: %w", err)
+	}
+
+	mode, err := domain.ParseDNSMode(string(dns.Mode))
+	if err != nil {
+		return domain.Settings{}, err
+	}
+	transport, err := domain.ParseDNSTransport(string(dns.Transport))
+	if err != nil {
+		return domain.Settings{}, err
+	}
+
+	settings.DNS = domain.DNSSettings{
+		Mode:          mode,
+		Transport:     transport,
+		Servers:       normalizeStringList(dns.Servers),
+		Bootstrap:     normalizeStringList(dns.Bootstrap),
+		DirectDomains: normalizeStringList(dns.DirectDomains),
+	}
+
 	if err := s.store.SaveSettings(settings); err != nil {
 		return domain.Settings{}, fmt.Errorf("save settings: %w", err)
 	}
@@ -2165,7 +2581,7 @@ func (s *Service) subscriptionNode(subscriptionID, nodeID string) (domain.Subscr
 	return sub, node, nil
 }
 
-func (s *Service) backendConfigRequest(settings domain.Settings, node domain.Node, mode domain.SelectionMode, socksPort, httpPort int, transparent bool) backend.ConfigRequest {
+func (s *Service) backendConfigRequest(settings domain.Settings, node domain.Node, mode domain.SelectionMode, socksPort, httpPort int, transparent bool, localDNS bool) backend.ConfigRequest {
 	req := backend.ConfigRequest{
 		Mode:                        mode,
 		Nodes:                       []domain.Node{node},
@@ -2174,6 +2590,9 @@ func (s *Service) backendConfigRequest(settings domain.Settings, node domain.Nod
 		DNS:                         settings.DNS,
 		SOCKSPort:                   socksPort,
 		HTTPPort:                    httpPort,
+		LocalDNSEnabled:             localDNS,
+		LocalDNSListen:              localDNSListen,
+		LocalDNSPort:                localDNSPort,
 		TransparentProxy:            transparent,
 		TransparentSelectiveCapture: transparentSelectiveCapture(settings.Firewall),
 		TransparentBlockQUIC:        domain.EffectiveTransparentBlockQUIC(settings.Firewall, &node),
@@ -2196,6 +2615,68 @@ func (s *Service) backendConfigRequest(settings domain.Settings, node domain.Nod
 	}
 
 	return req
+}
+
+func localDNSRuntimeEnabled(settings domain.DNSSettings) bool {
+	mode, err := domain.ParseDNSMode(string(settings.Mode))
+	if err != nil {
+		return false
+	}
+
+	return mode == domain.DNSModeRemote || mode == domain.DNSModeSplit
+}
+
+func dnsSettingsNeedSystemBootstrap(settings domain.DNSSettings) bool {
+	if len(settings.Bootstrap) > 0 {
+		return false
+	}
+
+	transport, err := domain.ParseDNSTransport(string(settings.Transport))
+	if err != nil || transport != domain.DNSTransportDoH {
+		return false
+	}
+
+	for _, server := range settings.Servers {
+		host := dnsServerHost(server)
+		if host == "" || net.ParseIP(host) != nil {
+			continue
+		}
+		return true
+	}
+
+	return false
+}
+
+func dnsServerHost(server string) string {
+	server = strings.TrimSpace(server)
+	if server == "" {
+		return ""
+	}
+
+	if parsed, err := url.Parse(server); err == nil && parsed.Host != "" {
+		return parsed.Hostname()
+	}
+	if parsed, err := url.Parse("//" + server); err == nil {
+		return parsed.Hostname()
+	}
+	return ""
+}
+
+func (s *Service) prepareRuntimeDNSSettings(ctx context.Context, settings domain.Settings) (domain.Settings, error) {
+	if s.dns == nil || !localDNSRuntimeEnabled(settings.DNS) || !dnsSettingsNeedSystemBootstrap(settings.DNS) {
+		return settings, nil
+	}
+
+	resolvers, err := s.dns.SystemResolvers(ctx)
+	if err != nil {
+		return domain.Settings{}, fmt.Errorf("detect system dns resolvers: %w", err)
+	}
+	if len(resolvers) == 0 {
+		return domain.Settings{}, fmt.Errorf("detect system dns resolvers: no upstream resolvers found")
+	}
+
+	settings.DNS.Bootstrap = append([]string(nil), resolvers...)
+	return settings, nil
 }
 
 func transparentSelectiveCapture(settings domain.FirewallSettings) bool {
@@ -2232,8 +2713,22 @@ func (s *Service) applyNodeSelection(ctx context.Context, sub domain.Subscriptio
 	if err != nil {
 		return fmt.Errorf("load settings: %w", err)
 	}
+	state, err := s.store.LoadState()
+	if err != nil {
+		return fmt.Errorf("load state: %w", err)
+	}
+	state.ActiveTransport = effectiveActiveTransport(state)
 	if err := s.ensureManagedIPv6State(ctx, settings); err != nil {
 		return err
+	}
+	runtimeSettings, err := s.prepareRuntimeDNSSettings(ctx, settings)
+	if err != nil {
+		return fmt.Errorf("prepare runtime dns settings: %w", err)
+	}
+	if state.ActiveTransport == domain.TransportModeZapret && s.zapret != nil {
+		if err := s.zapret.Disable(ctx); err != nil {
+			return fmt.Errorf("disable zapret: %w", err)
+		}
 	}
 
 	resolvedNode, err := s.resolveNodeAddress(ctx, node)
@@ -2256,7 +2751,7 @@ func (s *Service) applyNodeSelection(ctx context.Context, sub domain.Subscriptio
 		}
 
 		s.logInfo("apply backend config", "subscription", sub.ID, "node", node.ID, "mode", mode, "resolved_address", resolvedNode.Address)
-		if err := s.backend.ApplyConfig(ctx, s.backendConfigRequest(settings, resolvedNode, mode, 10808, 10809, firewallEnabled(settings.Firewall))); err != nil {
+		if err := s.backend.ApplyConfig(ctx, s.backendConfigRequest(runtimeSettings, resolvedNode, mode, 10808, 10809, firewallEnabled(settings.Firewall), s.dns != nil && localDNSRuntimeEnabled(settings.DNS))); err != nil {
 			s.logWarn("apply backend config failed", "subscription", sub.ID, "node", node.ID, "mode", mode, "error", err.Error())
 			return s.handleNodeSelectionFailure(ctx, sub, node, mode, opts, fmt.Sprintf("apply backend config: %v", err), fmt.Errorf("apply backend config: %w", err))
 		}
@@ -2265,6 +2760,16 @@ func (s *Service) applyNodeSelection(ctx context.Context, sub domain.Subscriptio
 		}
 		if reason, err := s.ensureBackendEgress(ctx, settings, sub.ID, node.ID, mode); err != nil {
 			return s.handlePostApplyVerificationFailure(ctx, sub, node, mode, opts, rollbackSnapshot, reason, err)
+		}
+	}
+
+	if s.dns != nil {
+		if localDNSRuntimeEnabled(settings.DNS) {
+			if err := s.dns.Apply(ctx, settings.DNS, localDNSListen, localDNSPort); err != nil {
+				return s.handleNodeSelectionFailure(ctx, sub, node, mode, opts, fmt.Sprintf("apply dns runtime: %v", err), fmt.Errorf("apply dns runtime: %w", err))
+			}
+		} else if err := s.dns.Disable(ctx); err != nil {
+			return s.handleNodeSelectionFailure(ctx, sub, node, mode, opts, fmt.Sprintf("disable dns runtime: %v", err), fmt.Errorf("disable dns runtime: %w", err))
 		}
 	}
 
@@ -2298,16 +2803,18 @@ func (s *Service) applyNodeSelection(ctx context.Context, sub domain.Subscriptio
 		}
 	}
 
-	state, err := s.store.LoadState()
-	if err != nil {
-		return fmt.Errorf("load state: %w", err)
-	}
 	state.ActiveSubscriptionID = sub.ID
 	state.ActiveNodeID = node.ID
 	state.Mode = mode
 	state.Connected = true
-	state.LastSuccessAt = time.Now().UTC()
+	if state.ActiveTransport != domain.TransportModeProxy {
+		state.LastTransportSwitchAt = s.currentTime().UTC()
+	}
+	state.ActiveTransport = domain.TransportModeProxy
+	state.LastSuccessAt = s.currentTime().UTC()
 	state.LastFailureReason = ""
+	state.LastTransportFailureReason = ""
+	clearZapretTestState(&state)
 
 	if err := s.saveState(state); err != nil {
 		return fmt.Errorf("save state: %w", err)
@@ -2338,12 +2845,17 @@ func (s *Service) handleNodeSelectionFailure(ctx context.Context, sub domain.Sub
 }
 
 func (s *Service) handlePostApplyVerificationFailure(ctx context.Context, sub domain.Subscription, node domain.Node, mode domain.SelectionMode, opts applyNodeSelectionOptions, rollbackSnapshot backend.RollbackSnapshot, reason string, err error) error {
+	failureThreshold := s.healthFailureThreshold()
+
 	if opts.rollbackOnVerificationFail && rollbackSnapshot.Available {
 		recoveredReason := "candidate verify failed: " + reason
 		s.logWarn("candidate verify failed", "subscription", sub.ID, "node", node.ID, "mode", mode, "reason", reason)
 		if rollbackErr := s.backend.RollbackConfig(ctx, rollbackSnapshot); rollbackErr == nil {
 			s.logInfo("rollback succeeded", "subscription", sub.ID, "node", node.ID, "mode", mode)
-			if persistErr := s.persistPreservedConnection(opts.preservedState, recoveredReason); persistErr != nil {
+			preservedState := opts.preservedState
+			preservedState.Health = cloneHealthMap(preservedState.Health)
+			forceHealthFailure(preservedState.Health, node.ID, recoveredReason, s.currentTime().UTC(), failureThreshold)
+			if persistErr := s.persistPreservedConnection(preservedState, recoveredReason); persistErr != nil {
 				return fmt.Errorf("%s: %w", recoveredReason, persistErr)
 			}
 			return errors.New(recoveredReason)
@@ -2354,7 +2866,36 @@ func (s *Service) handlePostApplyVerificationFailure(ctx context.Context, sub do
 		}
 	}
 
+	if persistErr := s.persistVerificationFailureHealth(node.ID, reason, failureThreshold); persistErr != nil {
+		return fmt.Errorf("%s: %w", reason, persistErr)
+	}
+
 	return s.handleNodeSelectionFailure(ctx, sub, node, mode, opts, reason, err)
+}
+
+func (s *Service) healthFailureThreshold() int {
+	settings, err := s.store.LoadSettings()
+	if err != nil {
+		return probe.DefaultSwitchPolicy().FailureThreshold
+	}
+	return switchPolicyFromSettings(settings).FailureThreshold
+}
+
+func (s *Service) persistVerificationFailureHealth(nodeID, reason string, failureThreshold int) error {
+	if s == nil || s.store == nil || strings.TrimSpace(nodeID) == "" {
+		return nil
+	}
+
+	state, err := s.loadStateWithAutoHealthCache()
+	if err != nil {
+		return fmt.Errorf("load state for verification failure: %w", err)
+	}
+	state.Health = cloneHealthMap(state.Health)
+	forceHealthFailure(state.Health, nodeID, reason, s.currentTime().UTC(), failureThreshold)
+	if err := s.saveState(state); err != nil {
+		return fmt.Errorf("save state for verification failure: %w", err)
+	}
+	return nil
 }
 
 func (s *Service) persistPreservedConnection(state domain.RuntimeState, reason string) error {
@@ -2763,6 +3304,18 @@ func parseStringList(raw string) []string {
 	return out
 }
 
+func normalizeStringList(values []string) []string {
+	out := make([]string, 0, len(values))
+	for _, value := range values {
+		value = strings.TrimSpace(value)
+		if value == "" {
+			continue
+		}
+		out = append(out, value)
+	}
+	return out
+}
+
 func normalizeFirewallSources(sources []string) []string {
 	out := make([]string, 0, len(sources))
 	for _, source := range sources {
@@ -2779,6 +3332,10 @@ func normalizeFirewallSources(sources []string) []string {
 }
 
 func syncSettingsToRuntime(settings *domain.Settings, state domain.RuntimeState) bool {
+	if state.ZapretTest.Active {
+		return false
+	}
+
 	expectedMode := state.Mode
 	if expectedMode == "" {
 		expectedMode = domain.SelectionModeDisconnected
@@ -2791,19 +3348,289 @@ func syncSettingsToRuntime(settings *domain.Settings, state domain.RuntimeState)
 	return changed
 }
 
+func effectiveActiveTransport(state domain.RuntimeState) domain.TransportMode {
+	transport := domain.NormalizeTransportMode(state.ActiveTransport)
+	if transport == domain.TransportModeDirect &&
+		state.Connected &&
+		strings.TrimSpace(state.ActiveSubscriptionID) != "" &&
+		strings.TrimSpace(state.ActiveNodeID) != "" &&
+		state.Mode != domain.SelectionModeDisconnected {
+		return domain.TransportModeProxy
+	}
+
+	return transport
+}
+
+func clearZapretTestState(state *domain.RuntimeState) {
+	if state == nil {
+		return
+	}
+	state.ZapretTest = domain.ZapretTestState{}
+}
+
+func (s *Service) stopProxyTransport(ctx context.Context) error {
+	if s.dns != nil {
+		if err := s.dns.Disable(ctx); err != nil {
+			return fmt.Errorf("disable dns runtime: %w", err)
+		}
+	}
+	if s.backend != nil {
+		if err := s.backend.Stop(ctx); err != nil {
+			return fmt.Errorf("stop backend: %w", err)
+		}
+	}
+	if s.firewall != nil {
+		if err := s.firewall.Disable(ctx); err != nil {
+			return fmt.Errorf("disable firewall: %w", err)
+		}
+	}
+
+	return nil
+}
+
+func (s *Service) zapretExpandedTargets(settings domain.Settings) ([]string, []string, error) {
+	selectors := domain.CanonicalZapretSettings(settings.Zapret).Selectors
+	domains := domain.NormalizeZapretDomainList(domain.ExpandZapretSelectorDomains(
+		settings.Firewall.TargetServiceCatalog,
+		selectors,
+	))
+	cidrs := domain.NormalizeZapretCIDRList(domain.ExpandZapretSelectorCIDRs(
+		settings.Firewall.TargetServiceCatalog,
+		selectors,
+	))
+	if len(domains) == 0 && len(cidrs) == 0 {
+		return nil, nil, fmt.Errorf("zapret selectors are empty")
+	}
+
+	return domains, cidrs, nil
+}
+
+func (s *Service) activateZapretFallback(ctx context.Context, sub domain.Subscription, state domain.RuntimeState, settings domain.Settings, reason string) error {
+	state.ActiveTransport = effectiveActiveTransport(state)
+	if !settings.Zapret.Enabled {
+		return s.markTransportDirect(ctx, state, sub.ID, state.ActiveNodeID, domain.SelectionModeAuto, reason, "zapret fallback is disabled")
+	}
+	if s.zapret == nil {
+		return s.markTransportDirect(ctx, state, sub.ID, state.ActiveNodeID, domain.SelectionModeAuto, reason, "zapret manager is not configured")
+	}
+
+	domains, cidrs, err := s.zapretExpandedTargets(settings)
+	if err != nil {
+		return s.markTransportDirect(ctx, state, sub.ID, state.ActiveNodeID, domain.SelectionModeAuto, reason, err.Error())
+	}
+
+	if state.ActiveTransport != domain.TransportModeZapret {
+		if err := s.stopProxyTransport(ctx); err != nil {
+			return fmt.Errorf("disable proxy transport before zapret fallback: %w", err)
+		}
+	}
+
+	status, err := s.zapret.Apply(ctx, domains, cidrs)
+	if err != nil {
+		detail := firstNonEmpty(status.LastReason, err.Error())
+		return s.markTransportDirect(ctx, state, sub.ID, state.ActiveNodeID, domain.SelectionModeAuto, reason, detail)
+	}
+	if !status.Installed {
+		return s.markTransportDirect(ctx, state, sub.ID, state.ActiveNodeID, domain.SelectionModeAuto, reason, "zapret package is not installed")
+	}
+	if !status.Managed {
+		detail := firstNonEmpty(status.LastReason, "external/unmanaged zapret is active")
+		return s.markTransportDirect(ctx, state, sub.ID, state.ActiveNodeID, domain.SelectionModeAuto, reason, detail)
+	}
+	if !status.Active {
+		detail := firstNonEmpty(status.LastReason, "zapret fallback did not become active")
+		return s.markTransportDirect(ctx, state, sub.ID, state.ActiveNodeID, domain.SelectionModeAuto, reason, detail)
+	}
+
+	now := s.currentTime().UTC()
+	if state.ActiveTransport != domain.TransportModeZapret {
+		state.LastTransportSwitchAt = now
+	}
+	state.ActiveTransport = domain.TransportModeZapret
+	state.ActiveSubscriptionID = sub.ID
+	state.Mode = domain.SelectionModeAuto
+	state.Connected = true
+	state.LastSuccessAt = now
+	state.LastFailureReason = reason
+	state.LastTransportFailureReason = ""
+	clearZapretTestState(&state)
+
+	if err := s.saveState(state); err != nil {
+		return fmt.Errorf("save state: %w", err)
+	}
+
+	return nil
+}
+
+func (s *Service) markTransportDirect(ctx context.Context, state domain.RuntimeState, subscriptionID, nodeID string, mode domain.SelectionMode, reason, transportFailure string) error {
+	if err := s.stopProxyTransport(ctx); err != nil {
+		return fmt.Errorf("disable proxy transport: %w", err)
+	}
+	if s.zapret != nil {
+		if err := s.zapret.Disable(ctx); err != nil {
+			return fmt.Errorf("disable zapret: %w", err)
+		}
+	}
+
+	now := s.currentTime().UTC()
+	state.ActiveSubscriptionID = subscriptionID
+	if strings.TrimSpace(nodeID) != "" {
+		state.ActiveNodeID = nodeID
+	}
+	state.Mode = mode
+	state.Connected = false
+	if state.ActiveTransport != domain.TransportModeDirect {
+		state.LastTransportSwitchAt = now
+	}
+	state.ActiveTransport = domain.TransportModeDirect
+	state.LastFailureReason = firstNonEmpty(reason, transportFailure)
+	state.LastTransportFailureReason = firstNonEmpty(transportFailure, reason)
+	clearZapretTestState(&state)
+
+	if err := s.saveState(state); err != nil {
+		return fmt.Errorf("save state: %w", err)
+	}
+
+	return fmt.Errorf("%s", state.LastTransportFailureReason)
+}
+
+func (s *Service) canFailbackFromZapret(settings domain.Settings, state domain.RuntimeState, decision autoSelectionDecision) bool {
+	if !decision.HasHealthyCandidate || strings.TrimSpace(decision.CandidateNode.ID) == "" {
+		return false
+	}
+
+	threshold := domain.CanonicalZapretSettings(settings.Zapret).FailbackSuccessThreshold
+	if threshold < 1 {
+		threshold = domain.DefaultZapretSettings().FailbackSuccessThreshold
+	}
+	if decision.Health[decision.CandidateNode.ID].ConsecutiveSuccesses < threshold {
+		return false
+	}
+
+	cooldown := settings.SwitchCooldown.Duration()
+	if cooldown <= 0 || state.LastTransportSwitchAt.IsZero() {
+		return true
+	}
+
+	return s.currentTime().UTC().Sub(state.LastTransportSwitchAt) >= cooldown
+}
+
+func (s *Service) applyZapretTestMode(ctx context.Context, settings domain.Settings, state domain.RuntimeState, restore domain.ZapretTestRestoreState) (domain.ZapretStatus, error) {
+	if s.zapret == nil {
+		return domain.ZapretStatus{}, fmt.Errorf("zapret manager is not configured")
+	}
+
+	domains, cidrs, err := s.zapretExpandedTargets(settings)
+	if err != nil {
+		return domain.ZapretStatus{}, err
+	}
+
+	if err := s.stopProxyTransport(ctx); err != nil {
+		return domain.ZapretStatus{}, fmt.Errorf("disable proxy transport before zapret test: %w", err)
+	}
+
+	status, err := s.zapret.Apply(ctx, domains, cidrs)
+	if activationErr := zapretActivationError(status, err, "zapret test mode did not become active"); activationErr != nil {
+		status.TestActive = false
+		return status, activationErr
+	}
+
+	now := s.currentTime().UTC()
+	if state.ActiveTransport != domain.TransportModeZapret {
+		state.LastTransportSwitchAt = now
+	}
+	state.ActiveTransport = domain.TransportModeZapret
+	state.Connected = true
+	state.LastSuccessAt = now
+	state.LastFailureReason = "zapret test mode active"
+	state.LastTransportFailureReason = ""
+	state.ZapretTest = domain.ZapretTestState{
+		Active:  true,
+		Restore: restore,
+	}
+	if err := s.saveState(state); err != nil {
+		return domain.ZapretStatus{}, fmt.Errorf("save state: %w", err)
+	}
+
+	status.TestActive = true
+	return status, nil
+}
+
+func zapretActivationError(status domain.ZapretStatus, err error, inactiveDetail string) error {
+	if err != nil {
+		return fmt.Errorf("%s", firstNonEmpty(status.LastReason, err.Error()))
+	}
+	if !status.Installed {
+		return fmt.Errorf("zapret package is not installed")
+	}
+	if !status.Managed {
+		return fmt.Errorf("%s", firstNonEmpty(status.LastReason, "external/unmanaged zapret is active"))
+	}
+	if !status.Active {
+		return fmt.Errorf("%s", firstNonEmpty(status.LastReason, inactiveDetail))
+	}
+	return nil
+}
+
+func (s *Service) restoreZapretTestSelection(ctx context.Context, restore domain.ZapretTestRestoreState) error {
+	sub, err := s.subscriptionByID(restore.ActiveSubscriptionID)
+	if err != nil {
+		return err
+	}
+
+	node, ok := sub.NodeByID(restore.ActiveNodeID)
+	if !ok {
+		return fmt.Errorf("node %q not found in subscription %q", restore.ActiveNodeID, restore.ActiveSubscriptionID)
+	}
+
+	mode := restore.Mode
+	if mode == "" {
+		mode = domain.SelectionModeManual
+	}
+
+	return s.applyNodeSelection(ctx, sub, node, mode, applyNodeSelectionOptions{persistFailure: true})
+}
+
 func (s *Service) reapplyCurrentConnection(ctx context.Context) error {
 	state, err := s.store.LoadState()
 	if err != nil {
 		return fmt.Errorf("load state: %w", err)
 	}
+	state.ActiveTransport = effectiveActiveTransport(state)
 
-	if !state.Connected || state.ActiveSubscriptionID == "" || state.ActiveNodeID == "" {
-		if s.firewall != nil {
-			if err := s.firewall.Disable(ctx); err != nil {
-				return fmt.Errorf("disable firewall: %w", err)
-			}
+	if !state.Connected || state.ActiveSubscriptionID == "" {
+		if err := s.disconnectRuntime(ctx); err != nil {
+			return err
 		}
 		return nil
+	}
+
+	if state.ZapretTest.Active {
+		settings, err := s.store.LoadSettings()
+		if err != nil {
+			return fmt.Errorf("load settings: %w", err)
+		}
+
+		_, err = s.applyZapretTestMode(ctx, settings, state, state.ZapretTest.Restore)
+		return err
+	}
+
+	if state.ActiveTransport == domain.TransportModeZapret {
+		settings, err := s.store.LoadSettings()
+		if err != nil {
+			return fmt.Errorf("load settings: %w", err)
+		}
+
+		sub, err := s.subscriptionByID(state.ActiveSubscriptionID)
+		if err != nil {
+			return err
+		}
+
+		return s.activateZapretFallback(ctx, sub, state, settings, firstNonEmpty(state.LastFailureReason, "restore zapret fallback"))
+	}
+
+	if state.ActiveNodeID == "" {
+		return fmt.Errorf("node is not set for proxy transport")
 	}
 
 	sub, err := s.subscriptionByID(state.ActiveSubscriptionID)
@@ -3047,9 +3874,12 @@ func (s *Service) touchRefreshAttempt(subscriptionID string, at time.Time) error
 }
 
 func (s *Service) markConnectionFailed(ctx context.Context, subscriptionID, nodeID string, mode domain.SelectionMode, reason string) error {
-	if s.firewall != nil {
-		if err := s.firewall.Disable(ctx); err != nil {
-			return fmt.Errorf("disable firewall after backend failure: %w", err)
+	if err := s.stopProxyTransport(ctx); err != nil {
+		return fmt.Errorf("disable proxy transport after backend failure: %w", err)
+	}
+	if s.zapret != nil {
+		if err := s.zapret.Disable(ctx); err != nil {
+			return fmt.Errorf("disable zapret after backend failure: %w", err)
 		}
 	}
 
@@ -3057,12 +3887,19 @@ func (s *Service) markConnectionFailed(ctx context.Context, subscriptionID, node
 	if err != nil {
 		return fmt.Errorf("load state after backend failure: %w", err)
 	}
+	state.ActiveTransport = effectiveActiveTransport(state)
 
 	state.ActiveSubscriptionID = subscriptionID
 	state.ActiveNodeID = nodeID
 	state.Mode = mode
 	state.Connected = false
+	if state.ActiveTransport != domain.TransportModeDirect {
+		state.LastTransportSwitchAt = s.currentTime().UTC()
+	}
+	state.ActiveTransport = domain.TransportModeDirect
 	state.LastFailureReason = reason
+	state.LastTransportFailureReason = reason
+	clearZapretTestState(&state)
 
 	if err := s.saveState(state); err != nil {
 		return fmt.Errorf("save state after backend failure: %w", err)
@@ -3073,9 +3910,12 @@ func (s *Service) markConnectionFailed(ctx context.Context, subscriptionID, node
 }
 
 func (s *Service) persistRestoreFailure(ctx context.Context, reason string) error {
-	if s.firewall != nil {
-		if err := s.firewall.Disable(ctx); err != nil {
-			return fmt.Errorf("disable firewall after restore failure: %w", err)
+	if err := s.stopProxyTransport(ctx); err != nil {
+		return fmt.Errorf("disable proxy transport after restore failure: %w", err)
+	}
+	if s.zapret != nil {
+		if err := s.zapret.Disable(ctx); err != nil {
+			return fmt.Errorf("disable zapret after restore failure: %w", err)
 		}
 	}
 
@@ -3083,9 +3923,16 @@ func (s *Service) persistRestoreFailure(ctx context.Context, reason string) erro
 	if err != nil {
 		return fmt.Errorf("load state after restore failure: %w", err)
 	}
+	state.ActiveTransport = effectiveActiveTransport(state)
 
 	state.Connected = false
+	if state.ActiveTransport != domain.TransportModeDirect {
+		state.LastTransportSwitchAt = s.currentTime().UTC()
+	}
+	state.ActiveTransport = domain.TransportModeDirect
 	state.LastFailureReason = reason
+	state.LastTransportFailureReason = reason
+	clearZapretTestState(&state)
 	if err := s.saveState(state); err != nil {
 		return fmt.Errorf("save state after restore failure: %w", err)
 	}

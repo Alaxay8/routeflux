@@ -137,6 +137,45 @@ func TestDNSSetDefaultAppliesRecommendedProfile(t *testing.T) {
 	}
 }
 
+func TestDNSApplyReplacesProfileAtomically(t *testing.T) {
+	t.Parallel()
+
+	store := &cliMemoryStore{
+		settings: domain.DefaultSettings(),
+		state:    domain.DefaultRuntimeState(),
+	}
+
+	cmd := newDNSCmd(&rootOptions{service: app.NewService(app.Dependencies{Store: store})})
+	var stdout bytes.Buffer
+	cmd.SetOut(&stdout)
+	cmd.SetErr(new(bytes.Buffer))
+	cmd.SetArgs([]string{
+		"apply",
+		"--mode=split",
+		"--transport=doh",
+		"--servers=1.1.1.1,1.0.0.1",
+		"--bootstrap=",
+		"--direct-domains=domain:lan,full:router.lan",
+	})
+
+	if err := cmd.Execute(); err != nil {
+		t.Fatalf("execute dns apply: %v", err)
+	}
+
+	if store.settings.DNS.Mode != domain.DNSModeSplit || store.settings.DNS.Transport != domain.DNSTransportDoH {
+		t.Fatalf("unexpected dns profile: %+v", store.settings.DNS)
+	}
+	if len(store.settings.DNS.Servers) != 2 || store.settings.DNS.Servers[0] != "1.1.1.1" || store.settings.DNS.Servers[1] != "1.0.0.1" {
+		t.Fatalf("unexpected dns servers: %+v", store.settings.DNS.Servers)
+	}
+	if len(store.settings.DNS.Bootstrap) != 0 {
+		t.Fatalf("expected bootstrap to be cleared, got %+v", store.settings.DNS.Bootstrap)
+	}
+	if !strings.Contains(stdout.String(), "Applied DNS settings atomically.") {
+		t.Fatalf("unexpected output: %q", stdout.String())
+	}
+}
+
 func TestDNSDefaultCommandAppliesRecommendedProfile(t *testing.T) {
 	t.Parallel()
 

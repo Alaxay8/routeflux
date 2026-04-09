@@ -39,6 +39,9 @@ func (s *Service) runAutoHealthCheck(ctx context.Context) error {
 		return fmt.Errorf("load state: %w", err)
 	}
 	state := s.mergeAutoHealthState(persistedState)
+	if state.ZapretTest.Active {
+		return nil
+	}
 	if state.Mode != domain.SelectionModeAuto || state.ActiveSubscriptionID == "" {
 		return nil
 	}
@@ -55,7 +58,14 @@ func (s *Service) runAutoHealthCheck(ctx context.Context) error {
 
 	s.logAutoDecision("auto health decision", sub, decision)
 
+	if effectiveActiveTransport(state) == domain.TransportModeZapret {
+		return s.handleZapretAutoHealthDecision(ctx, sub, settings, persistedState, state, decision)
+	}
+
 	if !decision.HasHealthyCandidate {
+		if settings.Zapret.Enabled {
+			return s.activateZapretFallback(ctx, sub, state, settings, decision.Reason)
+		}
 		return s.persistAutoFailure(ctx, sub, state, decision)
 	}
 
@@ -82,14 +92,40 @@ func (s *Service) evaluateAutoSelection(ctx context.Context, sub domain.Subscrip
 		health = make(map[string]domain.NodeHealth)
 	}
 
+	failureThreshold := switchPolicyFromSettings(settings).FailureThreshold
+	activeTransport := effectiveActiveTransport(state)
 	currentNodeID := ""
-	if state.ActiveSubscriptionID == sub.ID {
+	if state.ActiveSubscriptionID == sub.ID && activeTransport == domain.TransportModeProxy {
 		currentNodeID = state.ActiveNodeID
 	}
+	currentNodeExcluded := domain.IsAutoExcludedNode(settings.AutoExcludedNodes, sub.ID, currentNodeID)
 
-	s.probeSubscription(ctx, sub, health, switchPolicyFromSettings(settings).FailureThreshold)
+	candidateNodes := autoSelectableNodes(sub, settings)
+	if len(candidateNodes) == 0 {
+		return autoSelectionDecision{
+			CurrentNodeID: currentNodeID,
+			Health:        health,
+			Reason:        "all nodes are excluded from auto mode",
+		}, nil
+	}
 
-	candidateNode, candidateScore, err := probe.SelectBestNode(sub.Nodes, health, probe.DefaultScoreConfig())
+	if currentNodeExcluded {
+		forceHealthFailure(health, currentNodeID, "current node is excluded from auto mode", s.currentTime().UTC(), failureThreshold)
+	}
+
+	probeSub := sub
+	probeSub.Nodes = candidateNodes
+	s.probeSubscription(ctx, probeSub, health, failureThreshold)
+	if state.Connected && activeTransport == domain.TransportModeProxy && currentNodeID != "" {
+		currentHealth := health[currentNodeID]
+		if currentHealth.Healthy {
+			if reason, err := s.ensureBackendEgress(ctx, settings, sub.ID, currentNodeID, domain.SelectionModeAuto); err != nil {
+				forceHealthFailure(health, currentNodeID, reason, s.currentTime().UTC(), failureThreshold)
+			}
+		}
+	}
+
+	candidateNode, candidateScore, err := probe.SelectBestNode(candidateNodes, health, probe.DefaultScoreConfig())
 	if err != nil {
 		return autoSelectionDecision{}, err
 	}
@@ -139,7 +175,24 @@ func (s *Service) evaluateAutoSelection(ctx context.Context, sub domain.Subscrip
 	return decision, nil
 }
 
+func autoSelectableNodes(sub domain.Subscription, settings domain.Settings) []domain.Node {
+	if len(settings.AutoExcludedNodes) == 0 {
+		return sub.Nodes
+	}
+
+	nodes := make([]domain.Node, 0, len(sub.Nodes))
+	for _, node := range sub.Nodes {
+		if domain.IsAutoExcludedNode(settings.AutoExcludedNodes, sub.ID, node.ID) {
+			continue
+		}
+		nodes = append(nodes, node)
+	}
+
+	return nodes
+}
+
 func (s *Service) commitAutoSelection(ctx context.Context, sub domain.Subscription, currentState domain.RuntimeState, decision autoSelectionDecision) (domain.Node, error) {
+	previousTransport := effectiveActiveTransport(currentState)
 	if err := s.applyNodeSelection(ctx, sub, decision.SelectedNode, domain.SelectionModeAuto, selectionOptionsForState(currentState)); err != nil {
 		return domain.Node{}, err
 	}
@@ -154,8 +207,13 @@ func (s *Service) commitAutoSelection(ctx context.Context, sub domain.Subscripti
 	state.Connected = true
 	state.ActiveSubscriptionID = sub.ID
 	state.ActiveNodeID = decision.SelectedNode.ID
+	if previousTransport != domain.TransportModeProxy {
+		state.LastTransportSwitchAt = s.currentTime().UTC()
+	}
+	state.ActiveTransport = domain.TransportModeProxy
+	state.LastTransportFailureReason = ""
 	if decision.Switch {
-		state.LastSwitchAt = time.Now().UTC()
+		state.LastSwitchAt = s.currentTime().UTC()
 	}
 
 	if err := s.saveState(state); err != nil {
@@ -200,6 +258,38 @@ func (s *Service) persistAutoFailure(ctx context.Context, sub domain.Subscriptio
 	return nil
 }
 
+func (s *Service) handleZapretAutoHealthDecision(
+	ctx context.Context,
+	sub domain.Subscription,
+	settings domain.Settings,
+	persistedState domain.RuntimeState,
+	state domain.RuntimeState,
+	decision autoSelectionDecision,
+) error {
+	state.ActiveTransport = domain.TransportModeZapret
+	state.Mode = domain.SelectionModeAuto
+	state.ActiveSubscriptionID = sub.ID
+	state.Connected = true
+	state.Health = decision.Health
+	if state.LastFailureReason == "" {
+		state.LastFailureReason = decision.Reason
+	}
+
+	if !decision.HasHealthyCandidate || !s.canFailbackFromZapret(settings, state, decision) {
+		if s.shouldPersistAutoHealthState(persistedState, state) {
+			if err := s.saveState(state); err != nil {
+				return fmt.Errorf("save state: %w", err)
+			}
+		} else {
+			s.rememberAutoHealthState(state, false)
+		}
+		return nil
+	}
+
+	_, err := s.commitAutoSelection(ctx, sub, state, decision)
+	return err
+}
+
 func (s *Service) logAutoDecision(msg string, sub domain.Subscription, decision autoSelectionDecision) {
 	selectedNodeID := decision.SelectedNode.ID
 	if !decision.HasHealthyCandidate {
@@ -236,4 +326,27 @@ func cloneHealthMap(source map[string]domain.NodeHealth) map[string]domain.NodeH
 		cloned[key] = value
 	}
 	return cloned
+}
+
+func forceHealthFailure(health map[string]domain.NodeHealth, nodeID, reason string, checkedAt time.Time, failureThreshold int) {
+	if health == nil || nodeID == "" {
+		return
+	}
+	if failureThreshold < 1 {
+		failureThreshold = 1
+	}
+
+	updated := health[nodeID]
+	updated.NodeID = nodeID
+	updated.LastCheckedAt = checkedAt
+	updated.FailureCount++
+	updated.ConsecutiveFailures++
+	if updated.ConsecutiveFailures < failureThreshold {
+		updated.ConsecutiveFailures = failureThreshold
+	}
+	updated.ConsecutiveSuccesses = 0
+	updated.Healthy = false
+	updated.LastFailureReason = reason
+	updated.Score = probe.CalculateScore(updated, probe.DefaultScoreConfig()).Score
+	health[nodeID] = updated
 }

@@ -4,10 +4,13 @@
 		"read": {
 			"file": {
 				"/usr/bin/routeflux --json status": [ "exec" ],
+				"/usr/bin/routeflux --json diagnostics": [ "exec" ],
 				"/usr/bin/routeflux --json list subscriptions": [ "exec" ],
 				"/usr/bin/routeflux --json dns get": [ "exec" ],
 				"/usr/bin/routeflux --json firewall get": [ "exec" ],
-				"/usr/bin/routeflux --json services list": [ "exec" ]
+				"/usr/bin/routeflux --json services list": [ "exec" ],
+				"/usr/bin/routeflux --json zapret get": [ "exec" ],
+				"/usr/bin/routeflux --json zapret status": [ "exec" ]
 			}
 		},
 		"write": {

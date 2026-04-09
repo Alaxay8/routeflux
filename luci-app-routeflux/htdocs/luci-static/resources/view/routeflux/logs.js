@@ -991,7 +991,9 @@ return view.extend({
 			this.scrollLogBlocksToBottom();
 		}, this), 0);
 
-		return E(content);
+		return E('div', {
+			'class': routefluxUI.withThemeClass('routeflux-page-shell routeflux-page-shell-logs')
+		}, content);
 	},
 
 	handleSave: null,

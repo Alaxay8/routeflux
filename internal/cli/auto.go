@@ -24,11 +24,21 @@ func newStatusCmd(opts *rootOptions) *cobra.Command {
 			if status.State.Connected {
 				text = "Connected"
 			}
+			text += "\nTransport: " + string(status.ActiveTransport)
 
 			if status.ActiveSubscription != nil && status.ActiveNode != nil {
 				text += "\nSubscription: " + status.ActiveSubscription.DisplayName
 				text += "\nNode: " + status.ActiveNode.DisplayName()
 				text += "\nMode: " + string(status.State.Mode)
+			} else if status.ActiveSubscription != nil {
+				text += "\nSubscription: " + status.ActiveSubscription.DisplayName
+				text += "\nMode: " + string(status.State.Mode)
+			}
+			if status.Zapret.ServiceState != "" || status.Zapret.LastReason != "" {
+				text += "\nZapret Service: " + status.Zapret.ServiceState
+				if status.Zapret.LastReason != "" {
+					text += "\nZapret Reason: " + status.Zapret.LastReason
+				}
 			}
 
 			return printOutput(cmd, false, nil, text)

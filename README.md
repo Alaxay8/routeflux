@@ -73,8 +73,18 @@ ROUTEFLUX_TAG=v0.1.5
 wget -O /tmp/routeflux-install.sh "https://github.com/Alaxay8/routeflux/releases/download/${ROUTEFLUX_TAG}/install.sh" && sh /tmp/routeflux-install.sh
 ```
 
-The installer automatically installs the bundled Xray runtime when the router does not already provide a usable Xray binary and service.
-It updates RouteFlux in place and preserves existing `/etc/routeflux` state files.
+The installer updates RouteFlux in place and preserves existing `/etc/routeflux` state files.
+On OpenWrt it also installs the required runtime pieces automatically:
+
+- base packages such as `ca-bundle`, `nftables`, `kmod-nft-tproxy`, and `dnsmasq-full`
+- a download client (`curl` or `wget-ssl`) when the router image does not already provide one
+- `unzip` when needed for the bundled Zapret package
+- the bundled Xray runtime when the router does not already provide a usable Xray binary and service
+- the bundled `zapret-openwrt` package when Zapret is not already installed
+
+Use `sh /tmp/routeflux-install.sh --without-zapret` if you explicitly do not want the installer to provision Zapret.
+The installer records which packages it had to add so the uninstaller can remove them later.
+If the router image started with plain `dnsmasq`, the installer upgrades it to `dnsmasq-full` and records that `dnsmasq` must be restored during uninstall.
 
 Current easy-install release assets are published for:
 
@@ -82,7 +92,7 @@ Current easy-install release assets are published for:
 - `x86_64`
 - `aarch64_cortex-a53`
 
-To remove RouteFlux and the bundled Xray runtime:
+To remove RouteFlux, the bundled Xray runtime, bundled Zapret, and installer-managed packages:
 
 ```bash
 wget -O /tmp/routeflux-uninstall.sh "https://github.com/Alaxay8/routeflux/releases/latest/download/uninstall.sh" && sh /tmp/routeflux-uninstall.sh
@@ -154,6 +164,8 @@ On OpenWrt, enable the service when you want auto refresh, failover monitoring, 
 ```
 
 ### DNS and firewall helpers
+
+On OpenWrt, `routeflux dns set default` or `routeflux dns set mode remote|split` now affects the real router and LAN DNS path while a node is connected. RouteFlux points `dnsmasq` at a local Xray DNS runtime, keeps `.lan` style names local in split mode, and returns to system DNS on disconnect.
 
 ```bash
 routeflux dns get
@@ -333,7 +345,7 @@ routeflux firewall set targets youtube instagram 1.1.1.1
 
 Target selectors:
 
-- service preset: `discord`, `facetime`, `gemini`, `gemini-mobile`, `instagram`, `netflix`, `notebooklm`, `notebooklm-mobile`, `telegram`, `telegram-web`, `twitter`, `whatsapp`, `youtube`
+- service preset: `discord`, `facetime`, `gemini`, `gemini-mobile`, `instagram`, `netflix`, `notebooklm`, `notebooklm-mobile`, `telegram`, `twitter`, `whatsapp`, `youtube`
 - custom service alias: `openai`
 - domain: `youtube.com`
 - IPv4 address: `1.1.1.1`
@@ -351,6 +363,7 @@ Notes for domain targets:
 - Use `gemini-mobile` and `notebooklm-mobile` for the Android or iOS apps when the web presets are too narrow.
 - The mobile Google AI presets may include a small set of IPv4 targets in addition to domains because some app traffic does not expose a usable hostname.
 - `gemini`, `gemini-mobile`, `notebooklm`, `notebooklm-mobile`, `telegram`, `facetime`, `twitter`, and `netflix` are best-effort presets because those apps may use direct IPs or broader shared vendor infrastructure.
+- `telegram` includes the main Telegram web domains plus the official IPv4 ranges commonly used by MTProto clients.
 - The mobile Google AI presets are intentionally broader and may also catch shared Google infrastructure. If they are still not enough for your device, add the missing Google domains as a custom alias and route that alias instead.
 - Domain targets require `dnsmasq` with `nftset` support, which usually means `dnsmasq-full` on OpenWrt.
 - Domain targets depend on router-visible DNS answers. If clients use their own DoH or DoT directly, target IP sets may stay empty.
@@ -365,7 +378,7 @@ routeflux firewall set split --proxy youtube openai --bypass gosuslugi.ru sberba
 
 Split selectors:
 
-- service preset: `discord`, `facetime`, `gemini`, `gemini-mobile`, `instagram`, `netflix`, `notebooklm`, `notebooklm-mobile`, `telegram`, `telegram-web`, `twitter`, `whatsapp`, `youtube`
+- service preset: `discord`, `facetime`, `gemini`, `gemini-mobile`, `instagram`, `netflix`, `notebooklm`, `notebooklm-mobile`, `telegram`, `twitter`, `whatsapp`, `youtube`
 - custom service alias: `openai`
 - domain: `gosuslugi.ru`
 - IPv4 address: `1.1.1.1`

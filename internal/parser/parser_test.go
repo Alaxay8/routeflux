@@ -46,6 +46,33 @@ func TestParseMixedBase64Subscription(t *testing.T) {
 	assertGoldenNodes(t, nodes, "mixed", "normalized.golden.json")
 }
 
+func TestParseShadowsocksLink(t *testing.T) {
+	t.Parallel()
+
+	input := "ss://YWVzLTI1Ni1nY206cGFzc3dvcmRAc3MuZXhhbXBsZS5jb206ODM4OA#SS-Edge"
+	nodes, err := parser.ParseNodes(input, "Example Provider")
+	if err != nil {
+		t.Fatalf("parse nodes: %v", err)
+	}
+	if len(nodes) != 1 {
+		t.Fatalf("expected 1 node, got %d", len(nodes))
+	}
+
+	got := nodes[0]
+	if got.Protocol != "shadowsocks" {
+		t.Fatalf("expected shadowsocks protocol, got %+v", got)
+	}
+	if got.Address != "ss.example.com" || got.Port != 8388 {
+		t.Fatalf("unexpected endpoint: %+v", got)
+	}
+	if got.Encryption != "aes-256-gcm" || got.Password != "password" {
+		t.Fatalf("unexpected credentials: %+v", got)
+	}
+	if got.Name != "SS-Edge" || got.Remark != "SS-Edge" {
+		t.Fatalf("unexpected label: %+v", got)
+	}
+}
+
 func TestParseXrayJSONConfig(t *testing.T) {
 	t.Parallel()
 

@@ -99,6 +99,30 @@ func TestAboutViewFormatsBuildDateAndSimplifiesWhatsNew(t *testing.T) {
 	}
 }
 
+func TestAboutViewUsesRouteFluxButtonsInsteadOfLegacyThemeClasses(t *testing.T) {
+	t.Parallel()
+
+	source := readAboutViewSource(t)
+
+	for _, want := range []string{
+		"'class': 'cbi-button cbi-button-action'",
+		"'class': 'cbi-button cbi-button-apply'",
+	} {
+		if !strings.Contains(source, want) {
+			t.Fatalf("about view missing RouteFlux button marker %q", want)
+		}
+	}
+
+	for _, forbidden := range []string{
+		"'class': 'btn cbi-button'",
+		"'class': 'btn cbi-button cbi-button-action important'",
+	} {
+		if strings.Contains(source, forbidden) {
+			t.Fatalf("about view must not keep legacy theme class marker %q", forbidden)
+		}
+	}
+}
+
 func readAboutViewSource(t *testing.T) string {
 	t.Helper()
 

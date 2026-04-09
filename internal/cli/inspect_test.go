@@ -3,6 +3,8 @@ package cli
 import (
 	"bytes"
 	"context"
+	"encoding/json"
+	"net"
 	"strings"
 	"testing"
 	"time"
@@ -260,6 +262,118 @@ func TestInspectSpeedDoesNotPrintUsageOnError(t *testing.T) {
 	}
 	if !strings.Contains(err.Error(), speedtest.ErrBusy.Error()) {
 		t.Fatalf("expected busy error, got %v", err)
+	}
+	if strings.Contains(stderr.String(), "Usage:") {
+		t.Fatalf("expected no cobra usage output, got %s", stderr.String())
+	}
+}
+
+func TestInspectPingJSONOutputsNodeResultsEvenWhenOneNodeFails(t *testing.T) {
+	t.Parallel()
+
+	listener, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("listen: %v", err)
+	}
+	t.Cleanup(func() { _ = listener.Close() })
+
+	go func() {
+		for {
+			conn, err := listener.Accept()
+			if err != nil {
+				return
+			}
+			_ = conn.Close()
+		}
+	}()
+
+	openPort := listener.Addr().(*net.TCPAddr).Port
+	closedListener, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("listen closed port: %v", err)
+	}
+	closedPort := closedListener.Addr().(*net.TCPAddr).Port
+	_ = closedListener.Close()
+
+	store := &cliMemoryStore{
+		subs: []domain.Subscription{
+			{
+				ID:          "sub-1",
+				DisplayName: "Demo VPN",
+				Nodes: []domain.Node{
+					{ID: "node-1", SubscriptionID: "sub-1", Name: "Node 1", Address: "127.0.0.1", Port: openPort},
+					{ID: "node-2", SubscriptionID: "sub-1", Name: "Node 2", Address: "127.0.0.1", Port: closedPort},
+				},
+			},
+		},
+		settings: domain.DefaultSettings(),
+		state:    domain.DefaultRuntimeState(),
+	}
+	service := app.NewService(app.Dependencies{Store: store})
+
+	cmd := newInspectCmd(&rootOptions{service: service, jsonOutput: true})
+	stdout := new(bytes.Buffer)
+	cmd.SetOut(stdout)
+	cmd.SetErr(new(bytes.Buffer))
+	cmd.SetArgs([]string{"ping", "--subscription", "sub-1"})
+
+	if err := cmd.Execute(); err != nil {
+		t.Fatalf("execute inspect ping: %v", err)
+	}
+
+	var payload app.PingInspectResponse
+	if err := json.Unmarshal(stdout.Bytes(), &payload); err != nil {
+		t.Fatalf("unmarshal inspect ping output: %v\n%s", err, stdout.String())
+	}
+
+	if payload.SubscriptionID != "sub-1" || payload.TimeoutMS != 2000 {
+		t.Fatalf("unexpected ping payload: %+v", payload)
+	}
+	if len(payload.Results) != 2 {
+		t.Fatalf("expected two results, got %+v", payload)
+	}
+	if payload.Results[0].NodeID != "node-1" || !payload.Results[0].Healthy {
+		t.Fatalf("expected first node to succeed, got %+v", payload.Results[0])
+	}
+	if payload.Results[1].NodeID != "node-2" || payload.Results[1].Healthy {
+		t.Fatalf("expected second node to fail, got %+v", payload.Results[1])
+	}
+	if payload.Results[1].Error == "" {
+		t.Fatalf("expected failed node error, got %+v", payload.Results[1])
+	}
+}
+
+func TestInspectPingDoesNotPrintUsageOnLookupError(t *testing.T) {
+	t.Parallel()
+
+	store := &cliMemoryStore{
+		subs: []domain.Subscription{
+			{
+				ID:          "sub-1",
+				DisplayName: "Demo VPN",
+				Nodes: []domain.Node{
+					{ID: "node-1", SubscriptionID: "sub-1", Name: "Node 1", Address: "127.0.0.1", Port: 443},
+				},
+			},
+		},
+		settings: domain.DefaultSettings(),
+		state:    domain.DefaultRuntimeState(),
+	}
+	service := app.NewService(app.Dependencies{Store: store})
+
+	cmd := newInspectCmd(&rootOptions{service: service, jsonOutput: true})
+	stdout := new(bytes.Buffer)
+	stderr := new(bytes.Buffer)
+	cmd.SetOut(stdout)
+	cmd.SetErr(stderr)
+	cmd.SetArgs([]string{"ping", "--subscription", "sub-1", "--node", "missing-node"})
+
+	err := cmd.Execute()
+	if err == nil {
+		t.Fatal("expected inspect ping error")
+	}
+	if !strings.Contains(err.Error(), "missing-node") {
+		t.Fatalf("unexpected inspect ping error: %v", err)
 	}
 	if strings.Contains(stderr.String(), "Usage:") {
 		t.Fatalf("expected no cobra usage output, got %s", stderr.String())

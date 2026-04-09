@@ -326,7 +326,9 @@ return view.extend({
 			])
 		]));
 
-		return E(content);
+		return E('div', {
+			'class': routefluxUI.withThemeClass('routeflux-page-shell routeflux-page-shell-services')
+		}, content);
 	},
 
 	handleSave: null,

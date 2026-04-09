@@ -15,6 +15,9 @@ type ConfigRequest struct {
 	DNS                         domain.DNSSettings
 	SOCKSPort                   int
 	HTTPPort                    int
+	LocalDNSEnabled             bool
+	LocalDNSListen              string
+	LocalDNSPort                int
 	TransparentProxy            bool
 	TransparentSelectiveCapture bool
 	TransparentBlockQUIC        bool

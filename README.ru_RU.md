@@ -155,6 +155,8 @@ routeflux daemon
 
 ### Полезные команды для DNS и фаервола
 
+На OpenWrt `routeflux dns set default` и режимы `remote|split` теперь влияют на реальный DNS роутера и LAN, пока подключена нода. RouteFlux перенаправляет `dnsmasq` в локальный Xray DNS runtime, сохраняет локальные имена вроде `.lan` локальными в режиме split и возвращает system DNS при disconnect.
+
 ```bash
 routeflux dns get
 routeflux dns set default

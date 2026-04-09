@@ -3,6 +3,7 @@ package domain
 import (
 	"encoding/json"
 	"fmt"
+	"slices"
 	"strconv"
 	"strings"
 	"time"
@@ -71,8 +72,10 @@ type Settings struct {
 	HealthCheckInterval Duration         `json:"health_check_interval"`
 	SwitchCooldown      Duration         `json:"switch_cooldown"`
 	LatencyThreshold    Duration         `json:"latency_threshold"`
+	AutoExcludedNodes   []string         `json:"auto_excluded_nodes"`
 	DNS                 DNSSettings      `json:"dns"`
 	Firewall            FirewallSettings `json:"firewall"`
+	Zapret              ZapretSettings   `json:"zapret"`
 	AutoMode            bool             `json:"auto_mode"`
 	Mode                SelectionMode    `json:"mode"`
 	LogLevel            string           `json:"log_level"`
@@ -111,6 +114,20 @@ type DNSSettings struct {
 	Servers       []string     `json:"servers"`
 	Bootstrap     []string     `json:"bootstrap"`
 	DirectDomains []string     `json:"direct_domains"`
+}
+
+// DNSRuntimeStatus reports the effective OpenWrt DNS runtime managed by RouteFlux.
+type DNSRuntimeStatus struct {
+	Available           bool     `json:"available"`
+	Active              bool     `json:"active"`
+	LocalDNSListen      string   `json:"local_dns_listen,omitempty"`
+	LocalDNSPort        int      `json:"local_dns_port,omitempty"`
+	DNSMasqSnippetPath  string   `json:"dnsmasq_snippet_path,omitempty"`
+	DNSMasqSnippetFound bool     `json:"dnsmasq_snippet_found"`
+	ResolvFile          string   `json:"resolv_file,omitempty"`
+	SystemResolvers     []string `json:"system_resolvers,omitempty"`
+	DegradedReason      string   `json:"degraded_reason,omitempty"`
+	Error               string   `json:"error,omitempty"`
 }
 
 // FirewallMode controls the active transparent-routing strategy.
@@ -201,11 +218,12 @@ type FirewallSettings struct {
 // DefaultSettings returns the baseline configuration used on first start.
 func DefaultSettings() Settings {
 	return Settings{
-		SchemaVersion:       8,
+		SchemaVersion:       10,
 		RefreshInterval:     NewDuration(time.Hour),
 		HealthCheckInterval: NewDuration(30 * time.Second),
 		SwitchCooldown:      NewDuration(5 * time.Minute),
 		LatencyThreshold:    NewDuration(50 * time.Millisecond),
+		AutoExcludedNodes:   nil,
 		DNS:                 DefaultDNSSettings(),
 		Firewall: FirewallSettings{
 			Enabled:              false,
@@ -219,6 +237,7 @@ func DefaultSettings() Settings {
 			ModeDrafts:           FirewallModeDrafts{},
 			BlockQUIC:            false,
 		},
+		Zapret:   DefaultZapretSettings(),
 		AutoMode: false,
 		Mode:     SelectionModeManual,
 		LogLevel: "info",
@@ -309,7 +328,7 @@ func nodeRequiresTransparentQUICBlock(node *Node) bool {
 // CloneFirewallSelectorSet deep-copies one firewall selector set.
 func CloneFirewallSelectorSet(value FirewallSelectorSet) FirewallSelectorSet {
 	return FirewallSelectorSet{
-		Services: append([]string(nil), value.Services...),
+		Services: canonicalFirewallTargetServices(value.Services),
 		Domains:  append([]string(nil), value.Domains...),
 		CIDRs:    append([]string(nil), value.CIDRs...),
 	}
@@ -328,7 +347,7 @@ func CloneFirewallSplitSettings(value FirewallSplitSettings) FirewallSplitSettin
 // CloneFirewallModeDraft deep-copies one firewall mode draft.
 func CloneFirewallModeDraft(draft FirewallModeDraft) FirewallModeDraft {
 	return FirewallModeDraft{
-		TargetServices: append([]string(nil), draft.TargetServices...),
+		TargetServices: canonicalFirewallTargetServices(draft.TargetServices),
 		TargetCIDRs:    append([]string(nil), draft.TargetCIDRs...),
 		TargetDomains:  append([]string(nil), draft.TargetDomains...),
 		SourceCIDRs:    append([]string(nil), draft.SourceCIDRs...),
@@ -351,6 +370,30 @@ func CloneFirewallModeDrafts(drafts FirewallModeDrafts) FirewallModeDrafts {
 		Targets: CloneFirewallModeDraft(drafts.Targets),
 		Split:   CloneFirewallSplitDraft(drafts.Split),
 	}
+}
+
+func canonicalFirewallTargetServices(values []string) []string {
+	if len(values) == 0 {
+		return nil
+	}
+
+	out := make([]string, 0, len(values))
+	seen := make(map[string]struct{}, len(values))
+	for _, value := range values {
+		normalized := canonicalFirewallTargetAlias(value)
+		if normalized == "" {
+			continue
+		}
+		if _, ok := seen[normalized]; ok {
+			continue
+		}
+		seen[normalized] = struct{}{}
+		out = append(out, normalized)
+	}
+	if len(out) == 0 {
+		return nil
+	}
+	return out
 }
 
 // FirewallSelectorSetFromTargets converts parsed mixed selectors into a selector set.
@@ -429,6 +472,94 @@ func CanonicalFirewallSettings(settings FirewallSettings) FirewallSettings {
 	settings.Hosts = append([]string(nil), settings.Hosts...)
 	settings.TargetServiceCatalog = CloneFirewallTargetCatalog(settings.TargetServiceCatalog)
 	return settings
+}
+
+// AutoExcludedNodeKey builds the persisted auto-exclusion key for one node.
+func AutoExcludedNodeKey(subscriptionID, nodeID string) string {
+	subscriptionID = strings.TrimSpace(subscriptionID)
+	nodeID = strings.TrimSpace(nodeID)
+	if subscriptionID == "" || nodeID == "" {
+		return ""
+	}
+
+	return subscriptionID + "/" + nodeID
+}
+
+// SplitAutoExcludedNodeKey parses one persisted auto-exclusion key.
+func SplitAutoExcludedNodeKey(raw string) (string, string, bool) {
+	normalized := strings.TrimSpace(raw)
+	cut := strings.Index(normalized, "/")
+	if cut <= 0 || cut >= len(normalized)-1 {
+		return "", "", false
+	}
+
+	subscriptionID := strings.TrimSpace(normalized[:cut])
+	nodeID := strings.TrimSpace(normalized[cut+1:])
+	if subscriptionID == "" || nodeID == "" {
+		return "", "", false
+	}
+
+	return subscriptionID, nodeID, true
+}
+
+// NormalizeAutoExcludedNodes trims, validates, deduplicates, and sorts node exclusions.
+func NormalizeAutoExcludedNodes(values []string) []string {
+	if len(values) == 0 {
+		return nil
+	}
+
+	seen := make(map[string]struct{}, len(values))
+	out := make([]string, 0, len(values))
+	for _, value := range values {
+		subscriptionID, nodeID, ok := SplitAutoExcludedNodeKey(value)
+		if !ok {
+			continue
+		}
+
+		key := AutoExcludedNodeKey(subscriptionID, nodeID)
+		if key == "" {
+			continue
+		}
+		if _, exists := seen[key]; exists {
+			continue
+		}
+
+		seen[key] = struct{}{}
+		out = append(out, key)
+	}
+
+	if len(out) == 0 {
+		return nil
+	}
+
+	slices.Sort(out)
+	return out
+}
+
+// IsAutoExcludedNode reports whether one node is excluded from auto mode.
+func IsAutoExcludedNode(values []string, subscriptionID, nodeID string) bool {
+	target := AutoExcludedNodeKey(subscriptionID, nodeID)
+	if target == "" {
+		return false
+	}
+
+	for _, value := range values {
+		if strings.TrimSpace(value) == target {
+			return true
+		}
+
+		currentSubscriptionID, currentNodeID, ok := SplitAutoExcludedNodeKey(value)
+		if ok && AutoExcludedNodeKey(currentSubscriptionID, currentNodeID) == target {
+			return true
+		}
+	}
+
+	return false
+}
+
+// CanonicalZapretSettings normalizes Zapret settings for persisted compatibility.
+func CanonicalZapretSettings(settings ZapretSettings) ZapretSettings {
+	return NormalizeZapretSettings(settings)
 }
 
 // ParseDurationValue accepts either a Go duration string or an integer nanosecond value.

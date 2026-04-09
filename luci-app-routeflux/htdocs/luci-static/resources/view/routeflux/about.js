@@ -187,8 +187,8 @@ return view.extend({
 			'.routeflux-about-update-card { min-height:168px; }',
 			'.routeflux-about-update-card-new .routeflux-card-accent { background:linear-gradient(90deg, #22c55e 0%, #16a34a 100%); }',
 			'.routeflux-about-update-title { margin-bottom:10px; }',
-			'.routeflux-about-update-summary { margin:0; color:var(--text-color-secondary, #526175); line-height:1.6; }',
-			'.routeflux-modal-help { margin:0 0 12px; color:var(--text-color-medium, #586677); max-width:100%; overflow-wrap:anywhere; word-break:break-word; line-height:1.45; }'
+			'.routeflux-about-update-summary { margin:0; color:var(--routeflux-text-secondary); line-height:1.6; }',
+			'.routeflux-modal-help { margin:0 0 12px; color:var(--routeflux-text-secondary); max-width:100%; overflow-wrap:anywhere; word-break:break-word; line-height:1.45; }'
 		]));
 
 		content.push(E('h2', {}, [ _('RouteFlux - About') ]));
@@ -214,19 +214,21 @@ return view.extend({
 			]),
 			E('div', { 'class': 'cbi-page-actions' }, [
 				E('button', {
-					'class': 'btn cbi-button',
+					'class': 'cbi-button cbi-button-action',
 					'type': 'button',
 					'click': ui.createHandlerFn(this, 'handleShowWhatsNew')
 				}, [ _('What\'s New') ]),
 				E('button', {
-					'class': 'btn cbi-button cbi-button-action important',
+					'class': 'cbi-button cbi-button-apply',
 					'type': 'button',
 					'click': ui.createHandlerFn(this, 'handleUpgrade')
 				}, [ _('Update to new version') ])
 			])
 		]));
 
-		return E(content);
+		return E('div', {
+			'class': routefluxUI.withThemeClass('routeflux-page-shell routeflux-page-shell-about')
+		}, content);
 	},
 
 	handleSave: null,
