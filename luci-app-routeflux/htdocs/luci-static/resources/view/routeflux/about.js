@@ -214,12 +214,12 @@ return view.extend({
 			]),
 			E('div', { 'class': 'cbi-page-actions' }, [
 				E('button', {
-					'class': 'btn cbi-button',
+					'class': 'cbi-button cbi-button-action',
 					'type': 'button',
 					'click': ui.createHandlerFn(this, 'handleShowWhatsNew')
 				}, [ _('What\'s New') ]),
 				E('button', {
-					'class': 'btn cbi-button cbi-button-action important',
+					'class': 'cbi-button cbi-button-apply',
 					'type': 'button',
 					'click': ui.createHandlerFn(this, 'handleUpgrade')
 				}, [ _('Update to new version') ])

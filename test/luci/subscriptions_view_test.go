@@ -211,7 +211,7 @@ func TestSubscriptionsViewUsesSofterLightAccentsAndReadablePingState(t *testing.
 		".routeflux-theme-light .routeflux-ping-status-group { color:#1d4ed8; }",
 		".routeflux-theme-light .routeflux-add-kicker { background:rgba(37, 99, 235, 0.08); color:#1d4ed8; }",
 		".routeflux-theme-light .routeflux-add-field-shell { border-color:rgba(125, 146, 170, 0.18); background:linear-gradient(180deg, rgba(250, 252, 254, 0.98) 0%, rgba(243, 247, 251, 0.98) 100%);",
-		".routeflux-theme-light .routeflux-subscription-badges .label.notice { border-color:rgba(22, 163, 74, 0.22); background:rgba(22, 163, 74, 0.1); color:#166534; }",
+		".routeflux-theme-light .routeflux-subscription-badges .label.notice, .routeflux-theme-light .routeflux-node-active-badge .label.notice { border-color:rgba(22, 163, 74, 0.22); background:rgba(22, 163, 74, 0.1); color:#166534; }",
 		".routeflux-theme-light .routeflux-provider-group-header { padding:12px 14px; border:1px solid rgba(125, 146, 170, 0.14); border-radius:16px; background:linear-gradient(180deg, rgba(250, 252, 254, 0.96) 0%, rgba(243, 247, 251, 0.96) 100%);",
 		".routeflux-theme-light .routeflux-provider-group-title { color:#162638; }",
 		".routeflux-theme-light .routeflux-provider-group-meta { color:#52667c; }",
@@ -222,6 +222,51 @@ func TestSubscriptionsViewUsesSofterLightAccentsAndReadablePingState(t *testing.
 	} {
 		if !strings.Contains(source, want) {
 			t.Fatalf("subscriptions view missing soft light marker %q", want)
+		}
+	}
+}
+
+func TestSubscriptionsViewSortsNodesByActiveThenPingLatency(t *testing.T) {
+	t.Parallel()
+
+	source := readSubscriptionsViewSource(t)
+
+	for _, want := range []string{
+		"nodePingSortMeta: function(subscriptionId, nodeId, status)",
+		"compareNodeTableEntries: function(left, right)",
+		"sortedEntries = nodes.map(L.bind(function(node, index)",
+		"sortedEntries.sort(L.bind(this.compareNodeTableEntries, this));",
+		"'ping_sort_bucket': pingSort.bucket",
+		"'ping_latency_ms': pingSort.latency_ms",
+		"'original_index': index",
+		"return left.original_index - right.original_index;",
+	} {
+		if !strings.Contains(source, want) {
+			t.Fatalf("subscriptions view missing node sorting marker %q", want)
+		}
+	}
+}
+
+func TestSubscriptionsViewSupportsAutoExcludedNodes(t *testing.T) {
+	t.Parallel()
+
+	source := readSubscriptionsViewSource(t)
+
+	for _, want := range []string{
+		"autoExcludedNodeKey: function(subscriptionId, nodeId)",
+		"isNodeAutoExcluded: function(status, subscriptionId, nodeId)",
+		"handleToggleAutoExcluded: function(subscriptionId, nodeId, shouldExclude, ev)",
+		"'settings', 'set', 'auto.excluded-nodes'",
+		"Auto exclusions",
+		"Auto mode skips these nodes when selecting the best route.",
+		"Exclude",
+		"Allow in Auto",
+		"Auto excluded",
+		"routeflux-auto-exclusions",
+		"routeflux-node-auto-badge",
+	} {
+		if !strings.Contains(source, want) {
+			t.Fatalf("subscriptions view missing auto exclusion marker %q", want)
 		}
 	}
 }

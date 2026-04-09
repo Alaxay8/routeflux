@@ -3,6 +3,7 @@ package domain
 import (
 	"encoding/json"
 	"fmt"
+	"slices"
 	"strconv"
 	"strings"
 	"time"
@@ -71,6 +72,7 @@ type Settings struct {
 	HealthCheckInterval Duration         `json:"health_check_interval"`
 	SwitchCooldown      Duration         `json:"switch_cooldown"`
 	LatencyThreshold    Duration         `json:"latency_threshold"`
+	AutoExcludedNodes   []string         `json:"auto_excluded_nodes"`
 	DNS                 DNSSettings      `json:"dns"`
 	Firewall            FirewallSettings `json:"firewall"`
 	Zapret              ZapretSettings   `json:"zapret"`
@@ -216,11 +218,12 @@ type FirewallSettings struct {
 // DefaultSettings returns the baseline configuration used on first start.
 func DefaultSettings() Settings {
 	return Settings{
-		SchemaVersion:       9,
+		SchemaVersion:       10,
 		RefreshInterval:     NewDuration(time.Hour),
 		HealthCheckInterval: NewDuration(30 * time.Second),
 		SwitchCooldown:      NewDuration(5 * time.Minute),
 		LatencyThreshold:    NewDuration(50 * time.Millisecond),
+		AutoExcludedNodes:   nil,
 		DNS:                 DefaultDNSSettings(),
 		Firewall: FirewallSettings{
 			Enabled:              false,
@@ -469,6 +472,89 @@ func CanonicalFirewallSettings(settings FirewallSettings) FirewallSettings {
 	settings.Hosts = append([]string(nil), settings.Hosts...)
 	settings.TargetServiceCatalog = CloneFirewallTargetCatalog(settings.TargetServiceCatalog)
 	return settings
+}
+
+// AutoExcludedNodeKey builds the persisted auto-exclusion key for one node.
+func AutoExcludedNodeKey(subscriptionID, nodeID string) string {
+	subscriptionID = strings.TrimSpace(subscriptionID)
+	nodeID = strings.TrimSpace(nodeID)
+	if subscriptionID == "" || nodeID == "" {
+		return ""
+	}
+
+	return subscriptionID + "/" + nodeID
+}
+
+// SplitAutoExcludedNodeKey parses one persisted auto-exclusion key.
+func SplitAutoExcludedNodeKey(raw string) (string, string, bool) {
+	normalized := strings.TrimSpace(raw)
+	cut := strings.Index(normalized, "/")
+	if cut <= 0 || cut >= len(normalized)-1 {
+		return "", "", false
+	}
+
+	subscriptionID := strings.TrimSpace(normalized[:cut])
+	nodeID := strings.TrimSpace(normalized[cut+1:])
+	if subscriptionID == "" || nodeID == "" {
+		return "", "", false
+	}
+
+	return subscriptionID, nodeID, true
+}
+
+// NormalizeAutoExcludedNodes trims, validates, deduplicates, and sorts node exclusions.
+func NormalizeAutoExcludedNodes(values []string) []string {
+	if len(values) == 0 {
+		return nil
+	}
+
+	seen := make(map[string]struct{}, len(values))
+	out := make([]string, 0, len(values))
+	for _, value := range values {
+		subscriptionID, nodeID, ok := SplitAutoExcludedNodeKey(value)
+		if !ok {
+			continue
+		}
+
+		key := AutoExcludedNodeKey(subscriptionID, nodeID)
+		if key == "" {
+			continue
+		}
+		if _, exists := seen[key]; exists {
+			continue
+		}
+
+		seen[key] = struct{}{}
+		out = append(out, key)
+	}
+
+	if len(out) == 0 {
+		return nil
+	}
+
+	slices.Sort(out)
+	return out
+}
+
+// IsAutoExcludedNode reports whether one node is excluded from auto mode.
+func IsAutoExcludedNode(values []string, subscriptionID, nodeID string) bool {
+	target := AutoExcludedNodeKey(subscriptionID, nodeID)
+	if target == "" {
+		return false
+	}
+
+	for _, value := range values {
+		if strings.TrimSpace(value) == target {
+			return true
+		}
+
+		currentSubscriptionID, currentNodeID, ok := SplitAutoExcludedNodeKey(value)
+		if ok && AutoExcludedNodeKey(currentSubscriptionID, currentNodeID) == target {
+			return true
+		}
+	}
+
+	return false
 }
 
 // CanonicalZapretSettings normalizes Zapret settings for persisted compatibility.

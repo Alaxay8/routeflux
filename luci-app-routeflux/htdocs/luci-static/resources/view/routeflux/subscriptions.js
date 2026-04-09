@@ -625,6 +625,94 @@ return view.extend({
 		});
 	},
 
+	autoExcludedNodeKey: function(subscriptionId, nodeId) {
+		var normalizedSubscriptionId = trim(subscriptionId);
+		var normalizedNodeId = trim(nodeId);
+
+		if (normalizedSubscriptionId === '' || normalizedNodeId === '')
+			return '';
+
+		return normalizedSubscriptionId + '/' + normalizedNodeId;
+	},
+
+	normalizedAutoExcludedNodes: function(status) {
+		var raw = status && status.settings && Array.isArray(status.settings.auto_excluded_nodes)
+			? status.settings.auto_excluded_nodes
+			: [];
+		var out = [];
+		var seen = {};
+		var i;
+
+		for (i = 0; i < raw.length; i++) {
+			var value = trim(raw[i]);
+			var cut = value.indexOf('/');
+			var key;
+
+			if (cut <= 0 || cut >= value.length - 1)
+				continue;
+
+			key = this.autoExcludedNodeKey(value.substring(0, cut), value.substring(cut + 1));
+			if (key === '' || Object.prototype.hasOwnProperty.call(seen, key))
+				continue;
+
+			seen[key] = true;
+			out.push(key);
+		}
+
+		return out.sort();
+	},
+
+	isNodeAutoExcluded: function(status, subscriptionId, nodeId) {
+		return this.normalizedAutoExcludedNodes(status).indexOf(this.autoExcludedNodeKey(subscriptionId, nodeId)) >= 0;
+	},
+
+	autoExcludedNodesForSubscription: function(subscription, status) {
+		var nodes = Array.isArray(subscription && subscription.nodes) ? subscription.nodes : [];
+		var out = [];
+		var i;
+
+		for (i = 0; i < nodes.length; i++) {
+			if (!this.isNodeAutoExcluded(status, subscription && subscription.id, nodes[i].id))
+				continue;
+
+			out.push(nodes[i]);
+		}
+
+		return out;
+	},
+
+	nextAutoExcludedNodes: function(status, subscriptionId, nodeId, shouldExclude) {
+		var target = this.autoExcludedNodeKey(subscriptionId, nodeId);
+		var current = this.normalizedAutoExcludedNodes(status);
+		var filtered = current.filter(function(value) {
+			return value !== target;
+		});
+
+		if (shouldExclude === true && target !== '')
+			filtered.push(target);
+
+		return filtered.sort();
+	},
+
+	handleToggleAutoExcluded: function(subscriptionId, nodeId, shouldExclude, ev) {
+		var updated;
+
+		if (ev && typeof ev.preventDefault === 'function')
+			ev.preventDefault();
+
+		updated = this.nextAutoExcludedNodes(this.pageData && this.pageData[0], subscriptionId, nodeId, shouldExclude);
+
+		return this.runCLIAction(
+			this.nodeAutoActionKey(subscriptionId, nodeId),
+			[ 'settings', 'set', 'auto.excluded-nodes', updated.join(', ') ],
+			_('Auto exclusions updated.'),
+			shouldExclude === true ? _('Excluding node from Auto...') : _('Allowing node in Auto...'),
+			{
+				'loadingMessage': _('Reloading runtime status...')
+			}
+		);
+	},
+
 	actionKey: function(scope, subscriptionId, nodeId) {
 		return [ trim(scope), trim(subscriptionId), trim(nodeId) ].filter(Boolean).join(':');
 	},
@@ -635,6 +723,10 @@ return view.extend({
 
 	nodeActionKey: function(subscriptionId, nodeId) {
 		return this.actionKey('node', subscriptionId, nodeId);
+	},
+
+	nodeAutoActionKey: function(subscriptionId, nodeId) {
+		return this.actionKey('node-auto', subscriptionId, nodeId);
 	},
 
 	subscriptionPingActionKey: function(subscriptionId) {
@@ -679,7 +771,8 @@ return view.extend({
 
 	isSubscriptionBusy: function(subscriptionId) {
 		return routefluxUI.isPendingAction(this, this.subscriptionActionKey(subscriptionId)) ||
-			this.hasPendingActionPrefix(this.actionKey('node', subscriptionId) + ':');
+			this.hasPendingActionPrefix(this.actionKey('node', subscriptionId) + ':') ||
+			this.hasPendingActionPrefix(this.actionKey('node-auto', subscriptionId) + ':');
 	},
 
 	subscriptionBusyMessage: function(subscriptionId) {
@@ -688,17 +781,23 @@ return view.extend({
 		if (direct !== '')
 			return direct;
 
-		return this.pendingMessageByPrefix(this.actionKey('node', subscriptionId) + ':');
+		return this.pendingMessageByPrefix(this.actionKey('node', subscriptionId) + ':') ||
+			this.pendingMessageByPrefix(this.actionKey('node-auto', subscriptionId) + ':');
 	},
 
 	isNodeBusy: function(subscriptionId, nodeId) {
 		return routefluxUI.isPendingAction(this, this.nodeActionKey(subscriptionId, nodeId)) ||
+			routefluxUI.isPendingAction(this, this.nodeAutoActionKey(subscriptionId, nodeId)) ||
 			routefluxUI.isPendingAction(this, this.subscriptionActionKey(subscriptionId));
 	},
 
 	nodeBusyMessage: function(subscriptionId, nodeId) {
 		var direct = routefluxUI.pendingActionMessage(this, this.nodeActionKey(subscriptionId, nodeId));
 
+		if (direct !== '')
+			return direct;
+
+		direct = routefluxUI.pendingActionMessage(this, this.nodeAutoActionKey(subscriptionId, nodeId));
 		if (direct !== '')
 			return direct;
 
@@ -1132,6 +1231,43 @@ return view.extend({
 		return this.livePingForNode(subscriptionId, nodeId) || this.seededPingForNode(status, nodeId);
 	},
 
+	nodePingSortMeta: function(subscriptionId, nodeId, status) {
+		var ping = this.resolvePingForNode(subscriptionId, nodeId, status);
+		var latencyMS = Number(ping && ping.latency_ms);
+
+		if (ping && ping.healthy === false) {
+			return {
+				'bucket': 2,
+				'latency_ms': Number.POSITIVE_INFINITY
+			};
+		}
+
+		if (isFinite(latencyMS) && ping && ping.healthy === true) {
+			return {
+				'bucket': 0,
+				'latency_ms': latencyMS
+			};
+		}
+
+		return {
+			'bucket': 1,
+			'latency_ms': Number.POSITIVE_INFINITY
+		};
+	},
+
+	compareNodeTableEntries: function(left, right) {
+		if (!!left.is_active !== !!right.is_active)
+			return left.is_active ? -1 : 1;
+
+		if (left.ping_sort_bucket !== right.ping_sort_bucket)
+			return left.ping_sort_bucket - right.ping_sort_bucket;
+
+		if (left.ping_sort_bucket === 0 && left.ping_latency_ms !== right.ping_latency_ms)
+			return left.ping_latency_ms - right.ping_latency_ms;
+
+		return left.original_index - right.original_index;
+	},
+
 	pingPrimaryLabel: function(result) {
 		var latencyLabel = routefluxUI.formatLatencyMS(result && result.latency_ms);
 
@@ -1188,6 +1324,25 @@ return view.extend({
 		];
 
 		return content;
+	},
+
+	renderAutoExclusionSummary: function(subscription, status) {
+		var excludedNodes = this.autoExcludedNodesForSubscription(subscription, status);
+
+		if (excludedNodes.length === 0)
+			return '';
+
+		return E('div', { 'class': 'routeflux-auto-exclusions' }, [
+			E('div', { 'class': 'routeflux-auto-exclusions-title' }, [ _('Auto exclusions') ]),
+			E('p', { 'class': 'routeflux-auto-exclusions-copy' }, [
+				_('Auto mode skips these nodes when selecting the best route.')
+			]),
+			E('div', { 'class': 'routeflux-auto-exclusions-list' }, excludedNodes.map(function(node) {
+				return E('span', { 'class': 'routeflux-auto-exclusions-pill' }, [
+					nodeDisplayName(node, node.id)
+				]);
+			}))
+		]);
 	},
 
 	renderCard: function(label, value, options) {
@@ -1290,12 +1445,29 @@ return view.extend({
 
 	renderNodeTable: function(subscription, activeSubscriptionId, activeNodeId, status) {
 		var nodes = Array.isArray(subscription && subscription.nodes) ? subscription.nodes : [];
+		var sortedEntries;
 
 		if (nodes.length === 0)
 			return E('p', {}, [ _('No nodes found in this subscription.') ]);
 
-		var rows = nodes.map(L.bind(function(node) {
+		sortedEntries = nodes.map(L.bind(function(node, index) {
 			var isActive = subscription.id === activeSubscriptionId && node.id === activeNodeId;
+			var pingSort = this.nodePingSortMeta(subscription.id, node.id, status);
+
+			return {
+				'node': node,
+				'original_index': index,
+				'is_active': isActive,
+				'ping_sort_bucket': pingSort.bucket,
+				'ping_latency_ms': pingSort.latency_ms
+			};
+		}, this));
+		sortedEntries.sort(L.bind(this.compareNodeTableEntries, this));
+
+		var rows = sortedEntries.map(L.bind(function(entry) {
+			var node = entry.node;
+			var isActive = entry.is_active;
+			var autoExcluded = this.isNodeAutoExcluded(status, subscription.id, node.id);
 			var nodeBusy = this.isNodeBusy(subscription.id, node.id);
 			var busyMessage = this.nodeBusyMessage(subscription.id, node.id);
 			var pingBusy = this.isNodePingBusy(subscription.id, node.id);
@@ -1309,7 +1481,10 @@ return view.extend({
 			return E('tr', { 'class': 'tr routeflux-node-row' }, [
 				responsiveTableCell(_('Node'), [
 					name,
-					isActive ? E('div', { 'class': 'routeflux-node-active-badge' }, [ badge(_('Active'), 'notice') ]) : ''
+					(isActive || autoExcluded) ? E('div', { 'class': 'routeflux-node-status-badges' }, [
+						isActive ? E('div', { 'class': 'routeflux-node-active-badge' }, [ badge(_('Active'), 'notice') ]) : '',
+						autoExcluded ? E('div', { 'class': 'routeflux-node-auto-badge' }, [ badge(_('Auto excluded')) ]) : ''
+					]) : ''
 				], 'routeflux-node-cell-primary'),
 				responsiveTableCell(_('Address'), address, 'routeflux-node-cell-address'),
 				responsiveTableCell(_('Stack'), renderNodeStackCell(node), 'routeflux-node-cell-stack'),
@@ -1330,7 +1505,13 @@ return view.extend({
 								'type': 'button',
 								'click': ui.createHandlerFn(this, 'handleRecheckPing', subscription.id, node.id),
 								'disabled': nodeBusy || pingBusy ? 'disabled' : null
-							}, [ _('Recheck') ])
+							}, [ _('Recheck') ]),
+							E('button', {
+								'class': 'cbi-button cbi-button-action routeflux-node-button-compact ' + (autoExcluded ? 'routeflux-node-button-allow' : 'routeflux-node-button-exclude'),
+								'type': 'button',
+								'click': ui.createHandlerFn(this, 'handleToggleAutoExcluded', subscription.id, node.id, !autoExcluded),
+								'disabled': nodeBusy ? 'disabled' : null
+							}, [ autoExcluded ? _('Allow in Auto') : _('Exclude') ])
 						])
 					]),
 					busyMessage !== '' ? E('div', { 'class': 'routeflux-action-status' }, [ busyMessage ]) : '',
@@ -1346,7 +1527,9 @@ return view.extend({
 					E('th', { 'class': 'th' }, [ _('Address') ]),
 					E('th', { 'class': 'th' }, [ _('Stack') ]),
 					E('th', { 'class': 'th' }, [ _('Ping') ]),
-					E('th', { 'class': 'th right routeflux-node-heading-actions' }, [ _('Actions') ])
+					E('th', { 'class': 'th right routeflux-node-heading-actions' }, [
+						E('span', { 'class': 'routeflux-node-heading-actions-label' }, [ _('Actions') ])
+					])
 				])
 			].concat(rows))
 		]);
@@ -1421,6 +1604,7 @@ return view.extend({
 				])
 			]),
 			E('table', { 'class': 'table routeflux-meta-table routeflux-data-table' }, metaRows),
+			this.renderAutoExclusionSummary(subscription, status),
 			trim(subscription.last_error) !== '' ? E('div', { 'class': 'alert-message warning', 'style': 'margin-top:10px' }, [
 				subscription.last_error
 			]) : '',
@@ -1499,6 +1683,11 @@ return view.extend({
 			'.routeflux-subscription-title { color:var(--routeflux-text-primary); font-size:clamp(24px, 1vw + 20px, 34px); font-weight:700; line-height:1.08; letter-spacing:-0.04em; overflow-wrap:anywhere; word-break:break-word; }',
 			'.routeflux-subscription-provider { color:var(--routeflux-text-muted); margin-top:6px; overflow-wrap:anywhere; word-break:break-word; }',
 			'.routeflux-subscription-badges { display:flex; flex-wrap:wrap; gap:8px; margin-top:10px; }',
+			'.routeflux-auto-exclusions { margin:14px 0 0; padding:14px 16px; border:1px solid rgba(145, 175, 220, 0.14); border-radius:18px; background:rgba(8, 15, 26, 0.38); box-shadow:inset 0 1px 0 rgba(255, 255, 255, 0.03); }',
+			'.routeflux-auto-exclusions-title { color:var(--routeflux-text-primary); font-size:12px; font-weight:800; letter-spacing:.12em; text-transform:uppercase; }',
+			'.routeflux-auto-exclusions-copy { margin:8px 0 0; color:var(--routeflux-text-muted); line-height:1.55; }',
+			'.routeflux-auto-exclusions-list { display:flex; flex-wrap:wrap; gap:8px; margin-top:12px; }',
+			'.routeflux-auto-exclusions-pill { display:inline-flex; align-items:center; min-height:30px; padding:0 12px; border:1px solid rgba(245, 158, 11, 0.18); border-radius:999px; background:rgba(245, 158, 11, 0.1); color:#fde68a; font-size:12px; font-weight:700; letter-spacing:.01em; }',
 			'.routeflux-subscription-controls { display:grid; gap:10px; justify-items:end; min-width:0; max-width:100%; }',
 			'.routeflux-subscription-actions { display:flex; flex-wrap:wrap; justify-content:flex-end; gap:10px; align-items:flex-start; max-width:100%; }',
 			'.routeflux-subscription-actions .cbi-button, .routeflux-node-actions .cbi-button { white-space:nowrap; }',
@@ -1523,21 +1712,28 @@ return view.extend({
 			'.routeflux-node-table .th:nth-child(3), .routeflux-node-table .td:nth-child(3) { width:14%; }',
 			'.routeflux-node-table .th:nth-child(4), .routeflux-node-table .td:nth-child(4) { width:22%; }',
 			'.routeflux-node-table .th:nth-child(5), .routeflux-node-table .td:nth-child(5) { width:16%; }',
-			'.routeflux-node-heading-actions { text-align:right; }',
-			'.routeflux-node-action-stack { display:grid; gap:10px; justify-items:end; width:100%; }',
-			'.routeflux-node-actions { display:flex; justify-content:flex-end; width:100%; }',
+			'.routeflux-node-heading-actions, .routeflux-node-cell-actions { text-align:right; padding-right:14px; box-sizing:border-box; }',
+			'.routeflux-node-heading-actions-label { display:grid; justify-items:center; width:132px; max-width:100%; margin-left:auto; text-align:center; transform:translateX(-6px); }',
+			'.routeflux-node-action-stack { display:grid; gap:10px; width:132px; max-width:100%; margin-left:auto; }',
+			'.routeflux-node-actions { display:grid; grid-template-columns:minmax(0, 1fr); width:100%; gap:8px; }',
 			'.routeflux-node-actions-secondary { margin-top:0; }',
 			'.routeflux-node-cell-address { color:var(--routeflux-text-primary); font-weight:600; line-height:1.5; }',
 			'.routeflux-node-cell-stack { min-width:0; }',
+			'.routeflux-node-status-badges { display:flex; flex-wrap:wrap; gap:8px; margin-top:10px; }',
 			'.routeflux-node-stack { display:grid; gap:6px; justify-items:start; }',
 			'.routeflux-node-stack-vertical { grid-auto-flow:row; }',
 			'.routeflux-node-stack-chip { display:flex; align-items:center; justify-content:center; min-height:28px; padding:0 11px; border:1px solid transparent; border-radius:999px; font-size:11px; font-weight:700; letter-spacing:.03em; box-shadow:inset 0 1px 0 rgba(255, 255, 255, 0.03); }',
 			'.routeflux-node-stack-chip-protocol { background:rgba(70, 170, 235, 0.18); border-color:rgba(111, 202, 255, 0.16); color:#c9ecff; }',
 			'.routeflux-node-stack-chip-transport { background:rgba(117, 137, 176, 0.18); border-color:rgba(154, 182, 228, 0.14); color:#dae6f8; }',
 			'.routeflux-node-stack-chip-security { background:rgba(44, 173, 133, 0.18); border-color:rgba(103, 233, 197, 0.14); color:#c8fff0; }',
+			'.routeflux-node-auto-badge .label { border-color:rgba(245, 158, 11, 0.2); background:rgba(245, 158, 11, 0.12); color:#fde68a; }',
 			'.routeflux-theme-light .routeflux-subscription-card-active { border-color:rgba(37, 99, 235, 0.18); box-shadow:0 16px 30px rgba(63, 87, 118, 0.1), inset 0 1px 0 rgba(255, 255, 255, 0.9); }',
 			'.routeflux-theme-light .routeflux-subscription-provider { color:#52667c; }',
-			'.routeflux-theme-light .routeflux-subscription-badges .label.notice { border-color:rgba(22, 163, 74, 0.22); background:rgba(22, 163, 74, 0.1); color:#166534; }',
+			'.routeflux-theme-light .routeflux-subscription-badges .label.notice, .routeflux-theme-light .routeflux-node-active-badge .label.notice { border-color:rgba(22, 163, 74, 0.22); background:rgba(22, 163, 74, 0.1); color:#166534; }',
+			'.routeflux-theme-light .routeflux-auto-exclusions { border-color:rgba(245, 158, 11, 0.16); background:linear-gradient(180deg, rgba(255, 251, 235, 0.98) 0%, rgba(255, 247, 237, 0.98) 100%); box-shadow:0 10px 22px rgba(148, 163, 184, 0.06), inset 0 1px 0 rgba(255, 255, 255, 0.9); }',
+			'.routeflux-theme-light .routeflux-auto-exclusions-title { color:#9a3412; }',
+			'.routeflux-theme-light .routeflux-auto-exclusions-copy { color:#7c5a37; }',
+			'.routeflux-theme-light .routeflux-auto-exclusions-pill { border-color:rgba(245, 158, 11, 0.18); background:rgba(245, 158, 11, 0.12); color:#9a3412; }',
 			'.routeflux-theme-light .routeflux-provider-group-header { padding:12px 14px; border:1px solid rgba(125, 146, 170, 0.14); border-radius:16px; background:linear-gradient(180deg, rgba(250, 252, 254, 0.96) 0%, rgba(243, 247, 251, 0.96) 100%); box-shadow:0 10px 20px rgba(63, 87, 118, 0.06), inset 0 1px 0 rgba(255, 255, 255, 0.88); }',
 			'.routeflux-theme-light .routeflux-provider-group-title { color:#162638; }',
 			'.routeflux-theme-light .routeflux-provider-group-meta { color:#52667c; }',
@@ -1549,10 +1745,19 @@ return view.extend({
 			'.routeflux-theme-light .routeflux-node-stack-chip-protocol { background:rgba(14, 165, 233, 0.12); border-color:rgba(14, 165, 233, 0.18); color:#075985; }',
 			'.routeflux-theme-light .routeflux-node-stack-chip-transport { background:rgba(100, 116, 139, 0.12); border-color:rgba(100, 116, 139, 0.18); color:#334155; }',
 			'.routeflux-theme-light .routeflux-node-stack-chip-security { background:rgba(16, 185, 129, 0.12); border-color:rgba(16, 185, 129, 0.18); color:#047857; }',
+			'.routeflux-theme-light .routeflux-node-auto-badge .label { border-color:rgba(245, 158, 11, 0.18); background:rgba(245, 158, 11, 0.12); color:#9a3412; }',
 			'.routeflux-theme-light .routeflux-subscription-actions .cbi-button-action, .routeflux-theme-light .routeflux-node-actions .cbi-button-action { border-color:rgba(37, 99, 235, 0.18); background:linear-gradient(180deg, rgba(243, 248, 253, 0.98) 0%, rgba(232, 240, 248, 0.98) 100%); color:#17324b; box-shadow:0 12px 22px rgba(63, 87, 118, 0.08), inset 0 1px 0 rgba(255, 255, 255, 0.84); }',
 			'.routeflux-theme-light .routeflux-subscription-actions .cbi-button-action:hover, .routeflux-theme-light .routeflux-node-actions .cbi-button-action:hover { border-color:rgba(37, 99, 235, 0.28); background:linear-gradient(180deg, rgba(236, 244, 251, 0.99) 0%, rgba(225, 236, 247, 0.99) 100%); color:#102f4c; }',
 			'.routeflux-theme-light .routeflux-subscription-actions .cbi-button-apply { border-color:rgba(37, 99, 235, 0.34); background:linear-gradient(180deg, #2563eb 0%, #1d4ed8 100%); color:#f8fbff; box-shadow:0 14px 28px rgba(37, 99, 235, 0.18), inset 0 1px 0 rgba(255, 255, 255, 0.16); }',
 			'.routeflux-theme-light .routeflux-subscription-actions .cbi-button-apply:hover { border-color:rgba(29, 78, 216, 0.42); background:linear-gradient(180deg, #1d4ed8 0%, #1e40af 100%); color:#ffffff; box-shadow:0 16px 30px rgba(29, 78, 216, 0.22), inset 0 1px 0 rgba(255, 255, 255, 0.18); }',
+			'.routeflux-node-button-exclude { border-color:rgba(245, 158, 11, 0.22); background:linear-gradient(180deg, rgba(68, 45, 12, 0.9) 0%, rgba(54, 36, 11, 0.94) 100%); color:#fcd34d; }',
+			'.routeflux-node-button-exclude:hover { border-color:rgba(245, 158, 11, 0.3); background:linear-gradient(180deg, rgba(92, 58, 15, 0.96) 0%, rgba(68, 45, 12, 0.98) 100%); color:#fde68a; }',
+			'.routeflux-node-button-allow { border-color:rgba(34, 197, 94, 0.2); background:linear-gradient(180deg, rgba(18, 62, 39, 0.9) 0%, rgba(14, 46, 29, 0.94) 100%); color:#bbf7d0; }',
+			'.routeflux-node-button-allow:hover { border-color:rgba(34, 197, 94, 0.3); background:linear-gradient(180deg, rgba(26, 86, 52, 0.96) 0%, rgba(18, 62, 39, 0.98) 100%); color:#dcfce7; }',
+			'.routeflux-theme-light .routeflux-node-button-exclude { border-color:rgba(245, 158, 11, 0.18); background:linear-gradient(180deg, rgba(255, 251, 235, 0.98) 0%, rgba(255, 247, 237, 0.98) 100%); color:#9a3412; }',
+			'.routeflux-theme-light .routeflux-node-button-exclude:hover { border-color:rgba(245, 158, 11, 0.28); background:linear-gradient(180deg, rgba(255, 247, 237, 1) 0%, rgba(255, 237, 213, 0.98) 100%); color:#7c2d12; }',
+			'.routeflux-theme-light .routeflux-node-button-allow { border-color:rgba(22, 163, 74, 0.18); background:linear-gradient(180deg, rgba(240, 253, 244, 0.98) 0%, rgba(220, 252, 231, 0.98) 100%); color:#166534; }',
+			'.routeflux-theme-light .routeflux-node-button-allow:hover { border-color:rgba(22, 163, 74, 0.28); background:linear-gradient(180deg, rgba(220, 252, 231, 0.98) 0%, rgba(187, 247, 208, 0.98) 100%); color:#14532d; }',
 			'.routeflux-theme-light .routeflux-add-field-shell { border-color:rgba(125, 146, 170, 0.18); background:linear-gradient(180deg, rgba(250, 252, 254, 0.98) 0%, rgba(243, 247, 251, 0.98) 100%); box-shadow:inset 0 1px 0 rgba(255, 255, 255, 0.86), 0 10px 20px rgba(63, 87, 118, 0.06); }',
 			'.routeflux-theme-light .routeflux-add-format-badge { border-color:rgba(125, 146, 170, 0.16); background:rgba(37, 99, 235, 0.08); color:#294861; }',
 			'.routeflux-theme-light .routeflux-add-kicker { background:rgba(37, 99, 235, 0.08); color:#1d4ed8; }',
@@ -1569,7 +1774,7 @@ return view.extend({
 			'.routeflux-ping-meta-status { text-transform:uppercase; letter-spacing:.08em; font-weight:700; }',
 			'.routeflux-ping-detail { overflow-wrap:anywhere; word-break:break-word; }',
 			'.routeflux-ping-actions { display:flex; justify-content:flex-start; width:100%; }',
-			'.routeflux-node-button-compact { min-height:32px; padding:0 10px; font-size:12px; }',
+			'.routeflux-node-button-compact { width:100%; min-height:32px; padding:0 10px; font-size:12px; }',
 			'.routeflux-action-status { margin-top:8px; color:var(--routeflux-text-muted); font-size:12px; line-height:1.45; }',
 			'.routeflux-action-status-group { width:100%; text-align:right; }',
 			'.routeflux-ping-status-group { color:#bfe8ff; }',
@@ -1599,9 +1804,9 @@ return view.extend({
 			'.routeflux-provider-group-header { display:grid; grid-template-columns:minmax(0, 1fr) auto; gap:8px 12px; align-items:end; margin:12px 0 10px; }',
 			'.routeflux-provider-group-title { color:var(--routeflux-text-primary); font-size:clamp(26px, 1.4vw + 18px, 38px); font-weight:700; line-height:1.02; letter-spacing:-0.05em; overflow-wrap:anywhere; word-break:break-word; }',
 			'.routeflux-provider-group-meta { color:var(--routeflux-text-muted); }',
-			'@media (max-width: 980px) { .routeflux-subscriptions-hero-actions, .routeflux-subscription-header, .routeflux-provider-group-header, .routeflux-add-grid { grid-template-columns:minmax(0, 1fr); } .routeflux-subscription-controls { justify-items:stretch; min-width:0; } .routeflux-subscription-actions, .routeflux-ping-actions, .routeflux-node-actions { justify-content:flex-start; } .routeflux-node-action-stack { justify-items:start; } .routeflux-action-status-group { text-align:left; } .routeflux-node-table .th, .routeflux-node-table .td { padding-left:6px; padding-right:6px; } .routeflux-node-button-compact { min-height:30px; padding:0 8px; font-size:11px; } }',
+			'@media (max-width: 980px) { .routeflux-subscriptions-hero-actions, .routeflux-subscription-header, .routeflux-provider-group-header, .routeflux-add-grid { grid-template-columns:minmax(0, 1fr); } .routeflux-subscription-controls { justify-items:stretch; min-width:0; } .routeflux-subscription-actions, .routeflux-ping-actions { justify-content:flex-start; } .routeflux-action-status-group { text-align:left; } .routeflux-node-table .th, .routeflux-node-table .td { padding-left:6px; padding-right:6px; } .routeflux-node-heading-actions, .routeflux-node-cell-actions { padding-right:6px; } .routeflux-node-heading-actions-label, .routeflux-node-action-stack { width:126px; } .routeflux-node-button-compact { min-height:30px; padding:0 8px; font-size:11px; } }',
 			'@media (max-width: 700px) { .routeflux-page-status-actions, .routeflux-add-actions { flex-direction:column; } .routeflux-page-status-actions .cbi-button, .routeflux-add-actions .cbi-button { width:100%; } .routeflux-meta-table, .routeflux-meta-table .tr, .routeflux-meta-table .td { display:block; width:100%; box-sizing:border-box; } .routeflux-meta-table .tr { padding:10px 0; border-top:1px solid rgba(145, 175, 220, 0.1); } .routeflux-meta-table .tr:first-child { padding-top:0; border-top:0; } .routeflux-meta-label { width:100%; padding-bottom:4px; } .routeflux-meta-value { padding-top:0; } .routeflux-add-panel { padding:16px; border-radius:18px; } .routeflux-add-grid .cbi-input-textarea { min-height:152px; padding:14px 15px; } }',
-			'@media (max-width: 560px) { .routeflux-subscription-actions, .routeflux-ping-actions, .routeflux-node-actions { flex-direction:column; align-items:stretch; width:100%; } .routeflux-subscription-actions .cbi-button, .routeflux-ping-actions .cbi-button, .routeflux-node-actions .cbi-button { width:100%; } .routeflux-node-table, .routeflux-node-table .tr, .routeflux-node-table .td { display:block; width:100%; box-sizing:border-box; } .routeflux-node-table { min-width:0; } .routeflux-node-table .cbi-section-table-titles { display:none; } .routeflux-node-table .routeflux-node-row { margin-bottom:12px; padding:12px 14px; border:1px solid rgba(145, 175, 220, 0.12); border-radius:16px; background:rgba(8, 15, 26, 0.5); box-shadow:0 10px 18px rgba(0, 0, 0, 0.16), inset 0 1px 0 rgba(255, 255, 255, 0.03); text-align:center; } .routeflux-theme-light .routeflux-node-table .routeflux-node-row { background:linear-gradient(180deg, rgba(250, 252, 254, 0.98) 0%, rgba(243, 247, 251, 0.98) 100%); box-shadow:0 10px 20px rgba(63, 87, 118, 0.06), inset 0 1px 0 rgba(255, 255, 255, 0.88); } .routeflux-node-table .routeflux-node-row:last-child { margin-bottom:0; } .routeflux-node-table .routeflux-node-row > .td { width:100%; min-width:0; padding:8px 0; border-top:1px solid rgba(145, 175, 220, 0.08); text-align:center; } .routeflux-node-table .routeflux-node-row > .td:first-child { padding-top:0; border-top:0; } .routeflux-node-table .routeflux-node-row > .td:last-child { padding-bottom:0; } .routeflux-node-table .routeflux-node-row > .td::before { content:attr(data-title); display:block; margin-bottom:4px; color:var(--routeflux-text-muted); font-size:10px; text-transform:uppercase; letter-spacing:.12em; font-weight:700; white-space:nowrap; text-align:center; } .routeflux-node-stack, .routeflux-node-stack-vertical { justify-items:center; } .routeflux-ping-cell, .routeflux-node-action-stack { justify-items:center; } .routeflux-node-stack-chip { width:max-content; min-width:78px; max-width:100%; justify-content:center; } }'
+			'@media (max-width: 560px) { .routeflux-subscription-actions, .routeflux-ping-actions, .routeflux-node-actions { flex-direction:column; align-items:stretch; width:100%; } .routeflux-subscription-actions .cbi-button, .routeflux-ping-actions .cbi-button, .routeflux-node-actions .cbi-button { width:100%; } .routeflux-node-table, .routeflux-node-table .tr, .routeflux-node-table .td { display:block; width:100%; box-sizing:border-box; } .routeflux-node-table { min-width:0; } .routeflux-node-table .cbi-section-table-titles { display:none; } .routeflux-node-table .routeflux-node-row { margin-bottom:12px; padding:12px 14px; border:1px solid rgba(145, 175, 220, 0.12); border-radius:16px; background:rgba(8, 15, 26, 0.5); box-shadow:0 10px 18px rgba(0, 0, 0, 0.16), inset 0 1px 0 rgba(255, 255, 255, 0.03); text-align:center; } .routeflux-theme-light .routeflux-node-table .routeflux-node-row { background:linear-gradient(180deg, rgba(250, 252, 254, 0.98) 0%, rgba(243, 247, 251, 0.98) 100%); box-shadow:0 10px 20px rgba(63, 87, 118, 0.06), inset 0 1px 0 rgba(255, 255, 255, 0.88); } .routeflux-node-table .routeflux-node-row:last-child { margin-bottom:0; } .routeflux-node-table .routeflux-node-row > .td { width:100%; min-width:0; padding:8px 0; border-top:1px solid rgba(145, 175, 220, 0.08); text-align:center; } .routeflux-node-table .routeflux-node-row > .td:first-child { padding-top:0; border-top:0; } .routeflux-node-table .routeflux-node-row > .td:last-child { padding-bottom:0; } .routeflux-node-table .routeflux-node-row > .td::before { content:attr(data-title); display:block; margin-bottom:4px; color:var(--routeflux-text-muted); font-size:10px; text-transform:uppercase; letter-spacing:.12em; font-weight:700; white-space:nowrap; text-align:center; } .routeflux-node-stack, .routeflux-node-stack-vertical { justify-items:center; } .routeflux-ping-cell, .routeflux-node-action-stack { justify-items:center; } .routeflux-node-action-stack { margin:0 auto; } .routeflux-node-stack-chip { width:max-content; min-width:78px; max-width:100%; justify-content:center; } }'
 		]));
 
 		content.push(E('section', { 'class': 'routeflux-page-hero routeflux-surface routeflux-surface-elevated routeflux-subscriptions-hero' }, [

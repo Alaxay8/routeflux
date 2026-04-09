@@ -2837,6 +2837,88 @@ func TestSetSettingAutoModeFalsePinsCurrentNode(t *testing.T) {
 	}
 }
 
+func TestConnectAutoSkipsExcludedNodes(t *testing.T) {
+	t.Parallel()
+
+	store := &memoryStore{
+		settings: domain.DefaultSettings(),
+		state:    domain.DefaultRuntimeState(),
+		subs: []domain.Subscription{
+			{
+				ID: "sub-1",
+				Nodes: []domain.Node{
+					{ID: "node-1", Name: "Slow", Protocol: domain.ProtocolVLESS, Address: "slow.example.com", Port: 443, UUID: "11111111-1111-1111-1111-111111111111"},
+					{ID: "node-2", Name: "Fast", Protocol: domain.ProtocolVLESS, Address: "fast.example.com", Port: 443, UUID: "22222222-2222-2222-2222-222222222222"},
+				},
+			},
+		},
+	}
+	store.settings.AutoExcludedNodes = []string{"sub-1/node-2"}
+
+	service := NewService(Dependencies{
+		Store: store,
+		Checker: fakeChecker{results: map[string]probe.Result{
+			"node-1": {NodeID: "node-1", Healthy: true, Latency: 150 * time.Millisecond, Checked: time.Now().UTC()},
+			"node-2": {NodeID: "node-2", Healthy: true, Latency: 20 * time.Millisecond, Checked: time.Now().UTC()},
+		}},
+	})
+
+	selected, err := service.ConnectAuto(context.Background(), "sub-1")
+	if err != nil {
+		t.Fatalf("connect auto: %v", err)
+	}
+
+	if selected.ID != "node-1" {
+		t.Fatalf("expected non-excluded node to be selected, got %s", selected.ID)
+	}
+}
+
+func TestSetSettingAutoExcludedNodesReconnectsAutoSelection(t *testing.T) {
+	t.Parallel()
+
+	store := &memoryStore{
+		settings: domain.DefaultSettings(),
+		state: domain.RuntimeState{
+			Connected:            true,
+			Mode:                 domain.SelectionModeAuto,
+			ActiveSubscriptionID: "sub-1",
+			ActiveNodeID:         "node-2",
+			Health:               map[string]domain.NodeHealth{},
+		},
+		subs: []domain.Subscription{
+			{
+				ID: "sub-1",
+				Nodes: []domain.Node{
+					{ID: "node-1", Name: "Slow", Protocol: domain.ProtocolVLESS, Address: "slow.example.com", Port: 443, UUID: "11111111-1111-1111-1111-111111111111"},
+					{ID: "node-2", Name: "Fast", Protocol: domain.ProtocolVLESS, Address: "fast.example.com", Port: 443, UUID: "22222222-2222-2222-2222-222222222222"},
+				},
+			},
+		},
+	}
+	store.settings.AutoMode = true
+	store.settings.Mode = domain.SelectionModeAuto
+
+	service := NewService(Dependencies{
+		Store: store,
+		Checker: fakeChecker{results: map[string]probe.Result{
+			"node-1": {NodeID: "node-1", Healthy: true, Latency: 80 * time.Millisecond, Checked: time.Now().UTC()},
+			"node-2": {NodeID: "node-2", Healthy: true, Latency: 10 * time.Millisecond, Checked: time.Now().UTC()},
+		}},
+	})
+
+	settings, err := service.SetSetting("auto.excluded-nodes", "sub-1/node-2")
+	if err != nil {
+		t.Fatalf("set auto excluded nodes: %v", err)
+	}
+
+	if want := []string{"sub-1/node-2"}; !reflect.DeepEqual(settings.AutoExcludedNodes, want) {
+		t.Fatalf("unexpected excluded nodes: %+v", settings.AutoExcludedNodes)
+	}
+	if store.state.ActiveNodeID != "node-1" {
+		t.Fatalf("expected auto mode to reconnect away from excluded node, got %s", store.state.ActiveNodeID)
+	}
+}
+
 func TestSetSettingRefreshIntervalUpdatesStoredSubscriptions(t *testing.T) {
 	t.Parallel()
 

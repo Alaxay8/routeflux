@@ -86,6 +86,7 @@ func decodeSettings(data []byte, path string) (domain.Settings, error) {
 		HealthCheckInterval *domain.Duration      `json:"health_check_interval"`
 		SwitchCooldown      *domain.Duration      `json:"switch_cooldown"`
 		LatencyThreshold    *domain.Duration      `json:"latency_threshold"`
+		AutoExcludedNodes   *[]string             `json:"auto_excluded_nodes"`
 		DNS                 *rawDNSSettings       `json:"dns"`
 		Firewall            *rawFirewallSettings  `json:"firewall"`
 		Zapret              *rawZapretSettings    `json:"zapret"`
@@ -119,6 +120,9 @@ func decodeSettings(data []byte, path string) (domain.Settings, error) {
 	}
 	if raw.LatencyThreshold != nil {
 		settings.LatencyThreshold = *raw.LatencyThreshold
+	}
+	if raw.AutoExcludedNodes != nil {
+		settings.AutoExcludedNodes = append([]string(nil), (*raw.AutoExcludedNodes)...)
 	}
 	if raw.AutoMode != nil {
 		settings.AutoMode = *raw.AutoMode
@@ -302,6 +306,7 @@ func decodeSettings(data []byte, path string) (domain.Settings, error) {
 		settings.Mode = domain.SelectionModeAuto
 	}
 
+	settings.AutoExcludedNodes = domain.NormalizeAutoExcludedNodes(settings.AutoExcludedNodes)
 	settings.SchemaVersion = domain.DefaultSettings().SchemaVersion
 	return settings, nil
 }

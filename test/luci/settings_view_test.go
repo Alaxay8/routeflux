@@ -63,6 +63,23 @@ func TestSettingsViewRemovesLegacyRuntimeConfigurationControls(t *testing.T) {
 	}
 }
 
+func TestSettingsViewUsesReadableLightThemeChoices(t *testing.T) {
+	t.Parallel()
+
+	source := readSettingsViewSource(t)
+
+	for _, want := range []string{
+		".routeflux-theme-light .routeflux-settings-choice-control:focus-visible + .routeflux-settings-choice-indicator { outline:2px solid rgba(37, 99, 235, 0.22); outline-offset:3px; }",
+		".routeflux-theme-light .routeflux-settings-choice-title { color:#162638; }",
+		".routeflux-theme-light .routeflux-settings-choice-description { color:#41566d; }",
+		".routeflux-theme-light .routeflux-settings-choice-selected .routeflux-settings-choice-note { background:rgba(22, 163, 74, 0.1); color:#166534; }",
+	} {
+		if !strings.Contains(source, want) {
+			t.Fatalf("settings view missing light-theme marker %q", want)
+		}
+	}
+}
+
 func readSettingsViewSource(t *testing.T) string {
 	t.Helper()
 

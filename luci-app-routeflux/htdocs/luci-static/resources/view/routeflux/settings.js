@@ -85,7 +85,11 @@ return view.extend({
 			'.routeflux-theme-light .routeflux-settings-choice:hover { border-color:rgba(37, 99, 235, 0.24); box-shadow:0 14px 26px rgba(63, 87, 118, 0.1), inset 0 1px 0 rgba(255, 255, 255, 0.88); }',
 			'.routeflux-theme-light .routeflux-settings-choice-selected { border-color:rgba(22, 163, 74, 0.28); background:linear-gradient(180deg, rgba(248, 252, 249, 0.99) 0%, rgba(238, 247, 241, 0.96) 100%); box-shadow:0 16px 28px rgba(21, 128, 61, 0.08), inset 0 1px 0 rgba(255, 255, 255, 0.9); }',
 			'.routeflux-theme-light .routeflux-settings-choice-indicator { border-color:rgba(125, 146, 170, 0.28); background:linear-gradient(180deg, rgba(250, 252, 254, 0.99) 0%, rgba(241, 245, 249, 0.99) 100%); box-shadow:inset 0 1px 0 rgba(255, 255, 255, 0.9), 0 8px 16px rgba(63, 87, 118, 0.06); }',
+			'.routeflux-theme-light .routeflux-settings-choice-control:focus-visible + .routeflux-settings-choice-indicator { outline:2px solid rgba(37, 99, 235, 0.22); outline-offset:3px; }',
+			'.routeflux-theme-light .routeflux-settings-choice-title { color:#162638; }',
+			'.routeflux-theme-light .routeflux-settings-choice-description { color:#41566d; }',
 			'.routeflux-theme-light .routeflux-settings-choice-note { background:rgba(37, 99, 235, 0.08); color:#1d4ed8; }',
+			'.routeflux-theme-light .routeflux-settings-choice-selected .routeflux-settings-choice-note { background:rgba(22, 163, 74, 0.1); color:#166534; }',
 			'@media (max-width: 700px) { .routeflux-settings-actions { flex-direction:column; } .routeflux-settings-actions .cbi-button { width:100%; } }'
 		]));
 

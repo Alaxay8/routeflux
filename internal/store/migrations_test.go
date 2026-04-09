@@ -375,7 +375,7 @@ func TestLoadSettingsPreservesZapretSettingsForCurrentSchema(t *testing.T) {
 	fileStore := store.NewFileStore(root)
 
 	settingsJSON := `{
-  "schema_version": 9,
+  "schema_version": 10,
   "zapret": {
     "enabled": true,
     "selectors": {
@@ -409,6 +409,34 @@ func TestLoadSettingsPreservesZapretSettingsForCurrentSchema(t *testing.T) {
 	}
 	if settings.Zapret.FailbackSuccessThreshold != 5 {
 		t.Fatalf("unexpected zapret failback threshold: %d", settings.Zapret.FailbackSuccessThreshold)
+	}
+}
+
+func TestLoadSettingsPreservesAutoExcludedNodesForCurrentSchema(t *testing.T) {
+	t.Parallel()
+
+	root := t.TempDir()
+	fileStore := store.NewFileStore(root)
+
+	settingsJSON := `{
+  "schema_version": 10,
+  "auto_excluded_nodes": [
+    "sub-1/node-2",
+    " sub-1/node-2 ",
+    "sub-1/node-1"
+  ]
+}`
+	if err := os.WriteFile(filepath.Join(root, "settings.json"), []byte(settingsJSON), 0o644); err != nil {
+		t.Fatalf("write settings file: %v", err)
+	}
+
+	settings, err := fileStore.LoadSettings()
+	if err != nil {
+		t.Fatalf("load settings: %v", err)
+	}
+
+	if want := []string{"sub-1/node-1", "sub-1/node-2"}; !reflect.DeepEqual(settings.AutoExcludedNodes, want) {
+		t.Fatalf("unexpected auto excluded nodes: %+v", settings.AutoExcludedNodes)
 	}
 }
 

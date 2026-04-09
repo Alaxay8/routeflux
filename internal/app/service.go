@@ -1871,6 +1871,8 @@ func (s *Service) setSetting(key, value string) (domain.Settings, error) {
 			return domain.Settings{}, err
 		}
 		settings.LatencyThreshold = d
+	case "auto.excluded-nodes":
+		settings.AutoExcludedNodes = domain.NormalizeAutoExcludedNodes(parseStringList(value))
 	case "auto-mode":
 		enableAuto := strings.EqualFold(value, "true")
 		state, stateErr := s.store.LoadState()
@@ -1938,6 +1940,19 @@ func (s *Service) setSetting(key, value string) (domain.Settings, error) {
 
 	if err := s.store.SaveSettings(settings); err != nil {
 		return domain.Settings{}, fmt.Errorf("save settings: %w", err)
+	}
+
+	if key == "auto.excluded-nodes" {
+		state, err := s.store.LoadState()
+		if err == nil &&
+			state.Connected &&
+			state.Mode == domain.SelectionModeAuto &&
+			strings.TrimSpace(state.ActiveSubscriptionID) != "" {
+			if _, err := s.connectAuto(context.Background(), state.ActiveSubscriptionID); err != nil {
+				return domain.Settings{}, err
+			}
+			return s.store.LoadSettings()
+		}
 	}
 
 	if reapplyRuntime {

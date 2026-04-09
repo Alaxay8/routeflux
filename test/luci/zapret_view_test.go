@@ -145,6 +145,26 @@ func TestZapretViewUsesReadableLightInputsAndPlaceholders(t *testing.T) {
 	}
 }
 
+func TestZapretViewUsesPremiumDarkThemeChoicesAndEditors(t *testing.T) {
+	t.Parallel()
+
+	source := readZapretViewSource(t)
+
+	for _, want := range []string{
+		"#routeflux-zapret-root.routeflux-theme-dark { --routeflux-zapret-ink:#eef4ff; --routeflux-zapret-ink-muted:#a8b8ce; --routeflux-zapret-ink-soft:#8ea0b8;",
+		".routeflux-theme-dark .routeflux-zapret-choice { border-color:rgba(145, 175, 220, 0.16); background:linear-gradient(180deg, rgba(11, 18, 30, 0.94) 0%, rgba(8, 14, 24, 0.98) 100%);",
+		".routeflux-theme-dark .routeflux-zapret-choice-selected { border-color:rgba(34, 197, 94, 0.42); background:linear-gradient(180deg, rgba(13, 35, 28, 0.96) 0%, rgba(10, 24, 21, 1) 100%);",
+		".routeflux-theme-dark .routeflux-zapret-inline > .cbi-input-text, .routeflux-theme-dark .routeflux-zapret-inline > .cbi-input-select { border-color:rgba(145, 175, 220, 0.16); background:rgba(6, 12, 22, 0.72); color:#eef4ff;",
+		".routeflux-theme-dark .routeflux-zapret-item { background:linear-gradient(180deg, rgba(11, 18, 30, 0.94) 0%, rgba(8, 14, 24, 0.98) 100%); border-color:rgba(145, 175, 220, 0.14);",
+		".routeflux-theme-dark .routeflux-zapret-empty { background:rgba(8, 15, 26, 0.5); border-color:rgba(145, 175, 220, 0.24); color:#a8b8ce; }",
+		".routeflux-theme-dark .routeflux-zapret-summary-shell { background:rgba(8, 15, 26, 0.58); border-color:rgba(145, 175, 220, 0.16);",
+	} {
+		if !strings.Contains(source, want) {
+			t.Fatalf("zapret view missing dark-theme marker %q", want)
+		}
+	}
+}
+
 func readZapretViewSource(t *testing.T) string {
 	t.Helper()
 

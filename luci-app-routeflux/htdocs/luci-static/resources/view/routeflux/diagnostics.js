@@ -492,6 +492,7 @@ return view.extend({
 		content.push(routefluxUI.renderSharedStyles());
 		content.push(E('style', { 'type': 'text/css' }, [
 			'#routeflux-diagnostics-root { --routeflux-diagnostics-ink:#102234; --routeflux-diagnostics-ink-muted:#405468; --routeflux-diagnostics-ink-soft:#576d82; --routeflux-diagnostics-panel-bg:linear-gradient(160deg, rgba(248, 250, 253, 0.98) 0%, rgba(240, 245, 249, 0.98) 55%, rgba(232, 239, 246, 0.98) 100%); --routeflux-diagnostics-surface-bg:linear-gradient(180deg, rgba(251, 252, 254, 0.97) 0%, rgba(244, 248, 252, 0.97) 100%); --routeflux-diagnostics-surface-strong:linear-gradient(180deg, rgba(243, 248, 253, 0.98) 0%, rgba(232, 240, 248, 0.98) 100%); }',
+			'#routeflux-diagnostics-root.routeflux-theme-dark { --routeflux-diagnostics-ink:#eef4ff; --routeflux-diagnostics-ink-muted:#a8b8ce; --routeflux-diagnostics-ink-soft:#8ea0b8; --routeflux-diagnostics-panel-bg:linear-gradient(160deg, rgba(15, 23, 37, 0.96) 0%, rgba(10, 17, 29, 0.98) 55%, rgba(8, 13, 24, 0.99) 100%); --routeflux-diagnostics-surface-bg:linear-gradient(180deg, rgba(11, 18, 30, 0.94) 0%, rgba(8, 14, 24, 0.98) 100%); --routeflux-diagnostics-surface-strong:linear-gradient(180deg, rgba(52, 147, 235, 0.92) 0%, rgba(30, 116, 211, 0.94) 100%); }',
 			'#routeflux-diagnostics-root.routeflux-theme-dark::before, #routeflux-diagnostics-root.routeflux-theme-dark::after { display:none; }',
 			'#routeflux-diagnostics-root .routeflux-diagnostics-layout { display:grid; gap:14px; padding:0; border:0; background:transparent; box-shadow:none; color:var(--routeflux-diagnostics-ink); overflow:visible; }',
 			'#routeflux-diagnostics-root .routeflux-diagnostics-layout::before { display:none; }',
@@ -503,9 +504,14 @@ return view.extend({
 			'.routeflux-diagnostics-summary-list { margin:0; padding-left:18px; color:var(--routeflux-diagnostics-ink-soft); line-height:1.65; font-size:15px; }',
 			'.routeflux-diagnostics-summary-list li { color:var(--routeflux-diagnostics-ink); font-weight:500; }',
 			'.routeflux-diagnostics-summary-list li + li { margin-top:6px; }',
+			'.routeflux-theme-dark .routeflux-diagnostics-panel { border-color:rgba(145, 175, 220, 0.16); background:var(--routeflux-diagnostics-panel-bg); box-shadow:0 24px 42px rgba(0, 0, 0, 0.28), inset 0 1px 0 rgba(255, 255, 255, 0.04); }',
+			'.routeflux-theme-dark .routeflux-diagnostics-summary-shell { background:rgba(8, 15, 26, 0.58); border-color:rgba(145, 175, 220, 0.16); box-shadow:0 12px 24px rgba(0, 0, 0, 0.2), inset 0 1px 0 rgba(255, 255, 255, 0.03); }',
 			'.routeflux-diagnostics-file-table { background:rgba(250, 252, 254, 0.76); border-color:rgba(125, 145, 168, 0.24); box-shadow:none; }',
 			'.routeflux-diagnostics-file-table .th { background:rgba(125, 145, 168, 0.08); color:var(--routeflux-diagnostics-ink-soft); }',
 			'.routeflux-diagnostics-file-table .td { background:transparent; color:var(--routeflux-diagnostics-ink); }',
+			'.routeflux-theme-dark .routeflux-diagnostics-file-table { background:rgba(8, 15, 26, 0.5); border-color:rgba(145, 175, 220, 0.16); box-shadow:none; }',
+			'.routeflux-theme-dark .routeflux-diagnostics-file-table .th { background:rgba(145, 175, 220, 0.06); color:#8ea0b8; }',
+			'.routeflux-theme-dark .routeflux-diagnostics-file-table .td { background:transparent; color:#eef4ff; }',
 			'.routeflux-diagnostics-actions { display:flex; flex-wrap:wrap; gap:10px; }',
 			'.routeflux-diagnostics-actions .cbi-button { min-height:48px; padding:0 18px; border:1px solid rgba(37, 99, 235, 0.18); border-radius:15px; background:linear-gradient(180deg, rgba(243, 248, 253, 0.98) 0%, rgba(232, 240, 248, 0.98) 100%); color:#17324b; font-weight:800; box-shadow:0 12px 22px rgba(63, 87, 118, 0.08), inset 0 1px 0 rgba(255, 255, 255, 0.84); }',
 			'.routeflux-diagnostics-actions .cbi-button:hover { border-color:rgba(37, 99, 235, 0.28); background:linear-gradient(180deg, rgba(236, 244, 251, 0.99) 0%, rgba(225, 236, 247, 0.99) 100%); color:#102f4c; }',
@@ -513,6 +519,10 @@ return view.extend({
 			'.routeflux-diagnostics-advanced summary { cursor:pointer; font-weight:800; color:var(--routeflux-diagnostics-ink); }',
 			'.routeflux-diagnostics-advanced-shell { margin-top:12px; }',
 			'.routeflux-diagnostics-advanced-grid { display:grid; gap:12px; margin-top:12px; }',
+			'.routeflux-theme-dark .routeflux-diagnostics-actions .cbi-button-action { border-color:rgba(120, 160, 214, 0.2); background:rgba(12, 20, 34, 0.82); color:#a8d7ff; box-shadow:0 12px 24px rgba(0, 0, 0, 0.18), inset 0 1px 0 rgba(255, 255, 255, 0.03); }',
+			'.routeflux-theme-dark .routeflux-diagnostics-actions .cbi-button-action:hover, .routeflux-theme-dark .routeflux-diagnostics-warning-actions .cbi-button-action:hover { border-color:rgba(145, 190, 246, 0.28); background:rgba(14, 24, 40, 0.9); color:#c6e6ff; box-shadow:0 16px 26px rgba(0, 0, 0, 0.22), inset 0 1px 0 rgba(255, 255, 255, 0.04); }',
+			'.routeflux-theme-dark .routeflux-diagnostics-warning-actions .cbi-button-action { border-color:rgba(120, 160, 214, 0.2); background:rgba(12, 20, 34, 0.82); color:#a8d7ff; box-shadow:0 12px 24px rgba(0, 0, 0, 0.18), inset 0 1px 0 rgba(255, 255, 255, 0.03); }',
+			'.routeflux-theme-dark .routeflux-diagnostics-advanced summary { color:#eef4ff; }',
 			'@media (max-width: 720px) { .routeflux-diagnostics-actions .cbi-button { width:100%; } }'
 		]));
 

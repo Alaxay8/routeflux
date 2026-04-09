@@ -92,23 +92,40 @@ func (s *Service) evaluateAutoSelection(ctx context.Context, sub domain.Subscrip
 		health = make(map[string]domain.NodeHealth)
 	}
 
+	failureThreshold := switchPolicyFromSettings(settings).FailureThreshold
 	activeTransport := effectiveActiveTransport(state)
 	currentNodeID := ""
 	if state.ActiveSubscriptionID == sub.ID && activeTransport == domain.TransportModeProxy {
 		currentNodeID = state.ActiveNodeID
 	}
+	currentNodeExcluded := domain.IsAutoExcludedNode(settings.AutoExcludedNodes, sub.ID, currentNodeID)
 
-	s.probeSubscription(ctx, sub, health, switchPolicyFromSettings(settings).FailureThreshold)
+	candidateNodes := autoSelectableNodes(sub, settings)
+	if len(candidateNodes) == 0 {
+		return autoSelectionDecision{
+			CurrentNodeID: currentNodeID,
+			Health:        health,
+			Reason:        "all nodes are excluded from auto mode",
+		}, nil
+	}
+
+	if currentNodeExcluded {
+		forceHealthFailure(health, currentNodeID, "current node is excluded from auto mode", s.currentTime().UTC(), failureThreshold)
+	}
+
+	probeSub := sub
+	probeSub.Nodes = candidateNodes
+	s.probeSubscription(ctx, probeSub, health, failureThreshold)
 	if state.Connected && activeTransport == domain.TransportModeProxy && currentNodeID != "" {
 		currentHealth := health[currentNodeID]
 		if currentHealth.Healthy {
 			if reason, err := s.ensureBackendEgress(ctx, settings, sub.ID, currentNodeID, domain.SelectionModeAuto); err != nil {
-				forceHealthFailure(health, currentNodeID, reason, s.currentTime().UTC(), switchPolicyFromSettings(settings).FailureThreshold)
+				forceHealthFailure(health, currentNodeID, reason, s.currentTime().UTC(), failureThreshold)
 			}
 		}
 	}
 
-	candidateNode, candidateScore, err := probe.SelectBestNode(sub.Nodes, health, probe.DefaultScoreConfig())
+	candidateNode, candidateScore, err := probe.SelectBestNode(candidateNodes, health, probe.DefaultScoreConfig())
 	if err != nil {
 		return autoSelectionDecision{}, err
 	}
@@ -156,6 +173,22 @@ func (s *Service) evaluateAutoSelection(ctx context.Context, sub domain.Subscrip
 	decision.Switch = selectedNode.ID != currentNodeID
 	decision.Reason = reason
 	return decision, nil
+}
+
+func autoSelectableNodes(sub domain.Subscription, settings domain.Settings) []domain.Node {
+	if len(settings.AutoExcludedNodes) == 0 {
+		return sub.Nodes
+	}
+
+	nodes := make([]domain.Node, 0, len(sub.Nodes))
+	for _, node := range sub.Nodes {
+		if domain.IsAutoExcludedNode(settings.AutoExcludedNodes, sub.ID, node.ID) {
+			continue
+		}
+		nodes = append(nodes, node)
+	}
+
+	return nodes
 }
 
 func (s *Service) commitAutoSelection(ctx context.Context, sub domain.Subscription, currentState domain.RuntimeState, decision autoSelectionDecision) (domain.Node, error) {

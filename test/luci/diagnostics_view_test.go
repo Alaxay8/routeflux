@@ -120,6 +120,25 @@ func TestDiagnosticsViewKeepsFileChecksLightAndUndarkened(t *testing.T) {
 	}
 }
 
+func TestDiagnosticsViewUsesPremiumDarkThemePanels(t *testing.T) {
+	t.Parallel()
+
+	source := readDiagnosticsViewSource(t)
+
+	for _, want := range []string{
+		"#routeflux-diagnostics-root.routeflux-theme-dark { --routeflux-diagnostics-ink:#eef4ff; --routeflux-diagnostics-ink-muted:#a8b8ce; --routeflux-diagnostics-ink-soft:#8ea0b8;",
+		".routeflux-theme-dark .routeflux-diagnostics-panel { border-color:rgba(145, 175, 220, 0.16); background:var(--routeflux-diagnostics-panel-bg);",
+		".routeflux-theme-dark .routeflux-diagnostics-summary-shell { background:rgba(8, 15, 26, 0.58); border-color:rgba(145, 175, 220, 0.16);",
+		".routeflux-theme-dark .routeflux-diagnostics-file-table { background:rgba(8, 15, 26, 0.5); border-color:rgba(145, 175, 220, 0.16);",
+		".routeflux-theme-dark .routeflux-diagnostics-actions .cbi-button-action { border-color:rgba(120, 160, 214, 0.2); background:rgba(12, 20, 34, 0.82); color:#a8d7ff;",
+		".routeflux-theme-dark .routeflux-diagnostics-advanced summary { color:#eef4ff; }",
+	} {
+		if !strings.Contains(source, want) {
+			t.Fatalf("diagnostics view missing dark-theme marker %q", want)
+		}
+	}
+}
+
 func readDiagnosticsViewSource(t *testing.T) string {
 	t.Helper()
 
