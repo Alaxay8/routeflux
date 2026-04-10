@@ -88,6 +88,10 @@ routeflux_self_update_helper_path() {
 	scope_path "/usr/libexec/routeflux-self-update"
 }
 
+routeflux_xray_update_helper_path() {
+	scope_path "/usr/libexec/routeflux-xray-update"
+}
+
 install_manifest_path() {
 	printf '%s/install-manifest.txt\n' "$(routeflux_root_path)"
 }
@@ -210,6 +214,16 @@ remove_manifest_packages() {
 	done
 }
 
+remove_opkg_package_if_installed() {
+	pkg="$1"
+
+	opkg_available || return 0
+	if opkg list-installed "${pkg}" 2>/dev/null | grep -Fq "${pkg} -"; then
+		log "Removing legacy installer-managed package ${pkg}"
+		opkg remove "${pkg}" || true
+	fi
+}
+
 restore_manifest_packages() {
 	manifest="$1"
 
@@ -253,6 +267,56 @@ cleanup_zapret_state() {
 	remove_path "${marker}"
 }
 
+strip_routeflux_opkg_feed_entries() {
+	for config in "$(scope_path "/etc/opkg/customfeeds.conf")" $(scope_path "/etc/opkg/"*.conf); do
+		if [ ! -f "${config}" ]; then
+			continue
+		fi
+
+		tmp="${config}.routeflux-tmp.$$"
+		if grep -vi "routeflux" "${config}" > "${tmp}" 2>/dev/null; then
+			mv "${tmp}" "${config}"
+		else
+			: > "${config}"
+			rm -f "${tmp}"
+		fi
+	done
+}
+
+remove_routeflux_opkg_keys() {
+	for key in $(scope_path "/etc/opkg/keys/"*); do
+		if [ ! -f "${key}" ]; then
+			continue
+		fi
+
+		if grep -Fq "RouteFlux opkg feed" "${key}" 2>/dev/null; then
+			remove_path "${key}"
+		fi
+	done
+}
+
+legacy_routeflux_install_detected() {
+	if [ -e "${routeflux_self_update_helper}" ] || [ -e "${routeflux_xray_update_helper}" ]; then
+		return 0
+	fi
+
+	if [ -d "${routeflux_root}" ] || [ -e "${routeflux_binary}" ] || [ -e "${routeflux_service}" ]; then
+		return 0
+	fi
+
+	if [ -e "$(scope_path "/etc/sysctl.d/99-routeflux-ipv6.conf")" ]; then
+		return 0
+	fi
+
+	for path in $(scope_path "/etc/init.d/routeflux.bak."*); do
+		if [ -e "${path}" ] || [ -L "${path}" ]; then
+			return 0
+		fi
+	done
+
+	return 1
+}
+
 while [ "$#" -gt 0 ]; do
 	case "$1" in
 		--install-root)
@@ -294,6 +358,7 @@ zapret_marker="$(zapret_marker_path)"
 install_manifest="$(install_manifest_path)"
 routeflux_cron_helper="$(routeflux_cron_helper_path)"
 routeflux_self_update_helper="$(routeflux_self_update_helper_path)"
+routeflux_xray_update_helper="$(routeflux_xray_update_helper_path)"
 rpcd_service="$(scope_path "/etc/init.d/rpcd")"
 uhttpd_service="$(scope_path "/etc/init.d/uhttpd")"
 remove_installer_zapret=0
@@ -315,6 +380,8 @@ fi
 
 if manifest_has_matching_pkg "zapret" "${install_manifest}"; then
 	remove_installer_zapret=1
+elif legacy_routeflux_install_detected; then
+	remove_installer_zapret=1
 fi
 
 if [ -x "${routeflux_binary}" ]; then
@@ -330,6 +397,9 @@ run_service_if_present "${zapret_service}" stop || true
 run_service_if_present "${zapret_service}" disable || true
 ROUTEFLUX_INSTALL_ROOT="${ROUTEFLUX_INSTALL_ROOT}" "${routeflux_cron_helper}" remove-xray-log-retention >/dev/null 2>&1 || true
 remove_manifest_packages "${install_manifest}"
+if [ "${remove_installer_zapret}" = "1" ] && ! manifest_has_matching_pkg "zapret" "${install_manifest}"; then
+	remove_opkg_package_if_installed "zapret"
+fi
 restore_manifest_packages "${install_manifest}"
 cleanup_zapret_state "${zapret_config}" "${zapret_config_backup}" "${zapret_hostlist}" "${zapret_hostlist_backup}" "${zapret_iplist}" "${zapret_iplist_backup}" "${zapret_marker}"
 
@@ -351,18 +421,30 @@ if [ "${remove_installer_zapret}" = "1" ]; then
 fi
 remove_path "${routeflux_cron_helper}"
 remove_path "${routeflux_self_update_helper}"
+remove_path "${routeflux_xray_update_helper}"
 remove_path "$(scope_path "/var/log/xray.log")"
 remove_path "$(scope_path "/var/run/xray.pid")"
+remove_path "$(scope_path "/etc/sysctl.d/99-routeflux-ipv6.conf")"
+if [ "${remove_installer_zapret}" = "1" ]; then
+	remove_path "$(scope_path "/etc/config/zapret")"
+	remove_path "$(scope_path "/etc/hotplug.d/iface/90-zapret")"
+	remove_path "$(scope_path "/etc/uci-defaults/zapret-uci-def-cfg.sh")"
+fi
 
 remove_glob "$(scope_path "/etc/rc.d/*routeflux")"
 remove_glob "$(scope_path "/etc/rc.d/*xray")"
 if [ "${remove_installer_zapret}" = "1" ]; then
 	remove_glob "$(scope_path "/etc/rc.d/*zapret")"
 fi
+remove_glob "$(scope_path "/etc/init.d/routeflux.bak.*")"
 remove_glob "$(scope_path "/tmp/routeflux*")"
 remove_glob "$(scope_path "/tmp/xray*")"
+remove_glob "$(scope_path "/tmp/lock/procd_routeflux*")"
+remove_glob "$(scope_path "/tmp/lock/procd_zapret*")"
 remove_glob "$(scope_path "/tmp/luci-indexcache*")"
 remove_path "$(scope_path "/tmp/luci-modulecache")"
+strip_routeflux_opkg_feed_entries
+remove_routeflux_opkg_keys
 
 run_service_if_present "${rpcd_service}" reload || true
 run_service_if_present "${uhttpd_service}" reload || true
