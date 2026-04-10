@@ -58,23 +58,34 @@ func NormalizeTransportMode(mode TransportMode) TransportMode {
 // NormalizeZapretSettings deep-copies selectors and restores safe defaults.
 func NormalizeZapretSettings(settings ZapretSettings) ZapretSettings {
 	settings.Selectors = CloneFirewallSelectorSet(settings.Selectors)
-	settings.Selectors.CIDRs = nil
 	if settings.FailbackSuccessThreshold < 1 {
 		settings.FailbackSuccessThreshold = DefaultZapretSettings().FailbackSuccessThreshold
 	}
 	return settings
 }
 
+// CanonicalZapretSettingsWithCatalog expands any legacy service aliases into
+// plain domains and IPv4 selectors so runtime settings stay explicit.
+func CanonicalZapretSettingsWithCatalog(settings ZapretSettings, customCatalog map[string]FirewallTargetDefinition) ZapretSettings {
+	settings = NormalizeZapretSettings(settings)
+	settings.Selectors.Domains = NormalizeZapretDomainList(ExpandZapretSelectorDomains(customCatalog, settings.Selectors))
+	settings.Selectors.CIDRs = NormalizeZapretCIDRList(ExpandZapretSelectorCIDRs(customCatalog, settings.Selectors))
+	settings.Selectors.Services = canonicalFirewallTargetServices(settings.Selectors.Services)
+	return settings
+}
+
 // ParseZapretSelectors validates selectors supported by Zapret fallback.
 func ParseZapretSelectors(selectors []string, customCatalog map[string]FirewallTargetDefinition) (FirewallSelectorSet, error) {
-	registry := mergeFirewallTargetRegistry(customCatalog)
+	_ = customCatalog
 	result := FirewallSelectorSet{
 		Services: make([]string, 0, len(selectors)),
 		Domains:  make([]string, 0, len(selectors)),
+		CIDRs:    make([]string, 0, len(selectors)),
 	}
 
 	seenServices := make(map[string]struct{}, len(selectors))
 	seenDomains := make(map[string]struct{}, len(selectors))
+	seenCIDRs := make(map[string]struct{}, len(selectors))
 
 	for _, selector := range selectors {
 		selector = strings.TrimSpace(selector)
@@ -85,27 +96,28 @@ func ParseZapretSelectors(selectors []string, customCatalog map[string]FirewallT
 		if normalized, ok, err := normalizeFirewallIPv4Selector(selector); err != nil {
 			return FirewallSelectorSet{}, err
 		} else if ok {
-			return FirewallSelectorSet{}, fmt.Errorf("unsupported zapret selector %q: only service aliases and fully qualified domains are supported", normalized)
-		}
-
-		if normalized, ok := normalizeFirewallTargetService(selector, registry); ok {
-			definition := registry[normalized]
-			if len(definition.Domains) == 0 && len(definition.CIDRs) == 0 {
-				return FirewallSelectorSet{}, fmt.Errorf("zapret service %q does not resolve to any domains or CIDRs", normalized)
-			}
-			if _, seen := seenServices[normalized]; seen {
+			if _, seen := seenCIDRs[normalized]; seen {
 				continue
 			}
-			seenServices[normalized] = struct{}{}
-			result.Services = append(result.Services, normalized)
+			seenCIDRs[normalized] = struct{}{}
+			result.CIDRs = append(result.CIDRs, normalized)
 			continue
 		}
 
-		if normalized, err := normalizeFirewallTargetAlias(selector); err == nil && !strings.Contains(selector, ".") {
-			return FirewallSelectorSet{}, fmt.Errorf("unknown zapret service %q: create it with routeflux services set %s <domain...> or use a fully qualified domain", selector, normalized)
+		if service, ok := LookupFirewallTargetService(customCatalog, selector); ok {
+			if _, seen := seenServices[service.Name]; seen {
+				continue
+			}
+			seenServices[service.Name] = struct{}{}
+			result.Services = append(result.Services, service.Name)
+			continue
 		}
 
-		normalized, err := normalizeFirewallDomain(selector)
+		if !strings.Contains(selector, ".") {
+			return FirewallSelectorSet{}, fmt.Errorf("unsupported zapret selector %q: use a fully qualified domain like youtube.com", strings.TrimSpace(strings.ToLower(selector)))
+		}
+
+		normalized, err := normalizeZapretDomain(selector)
 		if err != nil {
 			return FirewallSelectorSet{}, err
 		}
@@ -119,19 +131,19 @@ func ParseZapretSelectors(selectors []string, customCatalog map[string]FirewallT
 	return result, nil
 }
 
-// ExpandZapretSelectorDomains expands Zapret selectors to routeable domains.
+// ExpandZapretSelectorDomains expands any legacy service aliases into domains.
 func ExpandZapretSelectorDomains(customCatalog map[string]FirewallTargetDefinition, selectors FirewallSelectorSet) []string {
 	return ExpandFirewallTargetDomains(customCatalog, selectors.Services, selectors.Domains)
 }
 
-// ExpandZapretSelectorCIDRs expands Zapret selectors to static IPv4 selectors.
+// ExpandZapretSelectorCIDRs expands legacy service aliases to static IPv4 selectors.
 func ExpandZapretSelectorCIDRs(customCatalog map[string]FirewallTargetDefinition, selectors FirewallSelectorSet) []string {
 	return ExpandFirewallTargetCIDRs(customCatalog, selectors.Services, selectors.CIDRs)
 }
 
 // ZapretSelectorSetHasEntries reports whether the selector set contains usable Zapret selectors.
 func ZapretSelectorSetHasEntries(value FirewallSelectorSet) bool {
-	return len(value.Services) > 0 || len(value.Domains) > 0
+	return len(value.Services) > 0 || len(value.Domains) > 0 || len(value.CIDRs) > 0
 }
 
 // NormalizeZapretDomainList sorts and deduplicates expanded domains.
@@ -163,4 +175,47 @@ func normalizeZapretList(values []string) []string {
 	}
 	slices.Sort(cleaned)
 	return cleaned
+}
+
+func normalizeZapretDomain(value string) (string, error) {
+	value = strings.TrimSpace(strings.ToLower(value))
+	value = strings.TrimSuffix(value, ".")
+
+	switch {
+	case value == "":
+		return "", fmt.Errorf("unsupported zapret selector %q: empty values are not supported", value)
+	case strings.Contains(value, "://"):
+		return "", fmt.Errorf("unsupported zapret selector %q: URLs are not supported", value)
+	case strings.ContainsAny(value, "/:@"):
+		return "", fmt.Errorf("unsupported zapret selector %q: only fully qualified domains are supported", value)
+	case strings.Contains(value, "*"):
+		return "", fmt.Errorf("unsupported zapret selector %q: wildcard domains are not supported", value)
+	case strings.Count(value, ".") == 0:
+		return "", fmt.Errorf("unsupported zapret selector %q: use a fully qualified domain like youtube.com", value)
+	}
+
+	labels := strings.Split(value, ".")
+	for _, label := range labels {
+		switch {
+		case label == "":
+			return "", fmt.Errorf("unsupported zapret selector %q: invalid domain name", value)
+		case strings.HasPrefix(label, "-"), strings.HasSuffix(label, "-"):
+			return "", fmt.Errorf("unsupported zapret selector %q: invalid domain label %q", value, label)
+		}
+
+		for _, r := range label {
+			if r >= 'a' && r <= 'z' {
+				continue
+			}
+			if r >= '0' && r <= '9' {
+				continue
+			}
+			if r == '-' {
+				continue
+			}
+			return "", fmt.Errorf("unsupported zapret selector %q: invalid domain label %q", value, label)
+		}
+	}
+
+	return value, nil
 }

@@ -45,7 +45,7 @@ routeflux connect --auto --subscription sub-1234567890
 
 После установки можно использовать:
 
-- LuCI: `Services -> RouteFlux`
+- LuCI: `Services -> RouteFlux` открывает `Subscriptions`
 - CLI: по SSH через `routeflux ...`
 - TUI: `routeflux tui`
 
@@ -153,9 +153,17 @@ routeflux daemon
 /etc/init.d/routeflux start
 ```
 
+### Страницы LuCI
+
+- `Subscriptions`: импорт провайдеров, просмотр профилей и подключение.
+- `Routing`: упрощённый повседневный flow для `Off`, `Bypass`, прямых доменов, IPv4 selector-ов и выбора DNS preset.
+- `DNS`: полный контроль DNS для `system`, `remote`, `split` и `disabled`.
+- `Zapret`: только fallback-домены. Используйте fully qualified domains вроде `youtube.com` или `googlevideo.com`.
+- `services` в CLI остаются advanced alias-ами для firewall targets.
+
 ### Полезные команды для DNS и фаервола
 
-На OpenWrt `routeflux dns set default` и режимы `remote|split` теперь влияют на реальный DNS роутера и LAN, пока подключена нода. RouteFlux перенаправляет `dnsmasq` в локальный Xray DNS runtime, сохраняет локальные имена вроде `.lan` локальными в режиме split и возвращает system DNS при disconnect.
+На OpenWrt `routeflux dns set default` применяет Recommended DNS preset. Это preset, а не пятый DNS-режим. Режимы `remote|split` и остальные реальные DNS-режимы по-прежнему влияют на реальный DNS роутера и LAN, пока подключена нода. RouteFlux перенаправляет `dnsmasq` в локальный Xray DNS runtime, сохраняет локальные имена вроде `.lan` локальными в режиме split и возвращает system DNS при disconnect.
 
 ```bash
 routeflux dns get
@@ -167,6 +175,8 @@ routeflux firewall set hosts 192.168.1.150
 routeflux firewall set targets youtube instagram 1.1.1.1
 routeflux services set openai openai.com chatgpt.com oaistatic.com
 routeflux services list
+routeflux zapret get
+routeflux zapret set selectors youtube.com googlevideo.com
 routeflux firewall explain
 ```
 
@@ -249,6 +259,8 @@ routeflux firewall set targets openai youtube
 
 ## Режимы DNS
 
+CLI help показывает только короткий основной путь. Этот раздел — подробный справочник по DNS.
+
 Если не хочется разбираться в деталях DNS, используйте это:
 
 ```bash
@@ -293,6 +305,8 @@ routeflux dns set mode disabled
 - `doh`: зашифрованный DNS Over HTTPS
 
 ## Режимы фаервола
+
+CLI help показывает только короткий основной путь. Этот раздел — подробный справочник по фаерволу.
 
 - `disabled`: не перенаправлять трафик роутера через RouteFlux  
 Пример: RouteFlux установлен, но ни одно устройство не  направляется принудительно через прокси.

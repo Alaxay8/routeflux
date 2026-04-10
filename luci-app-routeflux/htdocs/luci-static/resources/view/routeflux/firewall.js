@@ -373,20 +373,23 @@ function selectorEditorFromSet(value) {
 	var selectors = cloneSelectorSet(value);
 
 	return {
-		'services': selectors.services,
+		'cli_services': selectors.services,
 		'domains': selectors.domains,
 		'cidrs': selectors.cidrs,
-		'serviceChoice': '',
 		'selectorInput': ''
 	};
 }
 
 function selectorSetFromEditor(editor) {
 	return {
-		'services': cleanList((editor || {}).services || []),
+		'services': [],
 		'domains': cleanList((editor || {}).domains || []),
 		'cidrs': cleanList((editor || {}).cidrs || [])
 	};
+}
+
+function editorCLIServiceValues(editor) {
+	return cleanList((editor || {}).cli_services || []);
 }
 
 function listEditorFromEntries(entries) {
@@ -540,7 +543,7 @@ function canonicalFirewall(firewall) {
 		else {
 			supported = false;
 			currentMode = mode;
-			warning = _('The current routing config was created outside this simplified LuCI flow. Switch to Off or Bypass and save to replace it from LuCI.');
+			warning = _('The current routing config uses an advanced RouteFlux mode. This Routing page only edits Off and Bypass; advanced routing stays in the CLI.');
 		}
 	}
 
@@ -600,7 +603,7 @@ function canonicalDNS(dns) {
 	return {
 		'supported': supported,
 		'choice': supported ? choice : '',
-		'warning': supported ? '' : _('The current DNS profile was created outside this simplified LuCI flow. Choose System DNS or RouteFlux Recommended DNS and save to replace it.'),
+		'warning': supported ? '' : _('The current DNS profile is custom. Routing only edits System DNS or the Recommended DNS preset here. Advanced DNS settings are available in the CLI.'),
 		'summary_lines': [
 			_('Mode: %s').format(normalized.mode || '-'),
 			_('Transport: %s').format(normalized.transport || '-'),
@@ -653,7 +656,7 @@ function dnsChoiceSummary(value) {
 	case 'system':
 		return _('System DNS');
 	case 'default':
-		return _('RouteFlux Recommended DNS');
+		return _('Recommended DNS preset');
 	default:
 		return _('Custom DNS');
 	}
@@ -675,9 +678,6 @@ return view.extend({
 				return { '__error__': err.message || String(err) };
 			}),
 			this.execJSON([ '--json', 'list', 'subscriptions' ]).catch(function(err) {
-				return { '__error__': err.message || String(err) };
-			}),
-			this.execJSON([ '--json', 'services', 'list' ]).catch(function(err) {
 				return { '__error__': err.message || String(err) };
 			}),
 			this.execJSON([ '--json', 'dns', 'get' ]).catch(function(err) {
@@ -762,25 +762,22 @@ return view.extend({
 		var firewallPayload = data[1] && !data[1].__error__
 			? data[1]
 			: ((status.settings || {}).firewall || {});
-		var dnsPayload = data[4] && !data[4].__error__
-			? data[4]
+		var dnsPayload = data[3] && !data[3].__error__
+			? data[3]
 			: ((status.settings || {}).dns || {});
-		var servicesPayload = Array.isArray(data[3]) ? data[3] : [];
 
 		this.pageData = {
 			'status': status,
 			'firewall': canonicalFirewall(firewallPayload),
 			'dns': canonicalDNS(dnsPayload),
-			'subscriptions': Array.isArray(data[2]) ? data[2] : [],
-			'services': servicesPayload
+			'subscriptions': Array.isArray(data[2]) ? data[2] : []
 		};
 		this.formState = buildFormState(firewallPayload, dnsPayload);
 		this.rootErrors = {
 			'status': trim(data[0] && data[0].__error__),
 			'firewall': trim(data[1] && data[1].__error__),
 			'subscriptions': trim(data[2] && data[2].__error__),
-			'services': trim(data[3] && data[3].__error__),
-			'dns': trim(data[4] && data[4].__error__)
+			'dns': trim(data[3] && data[3].__error__)
 		};
 	},
 
@@ -801,33 +798,12 @@ return view.extend({
 		this.renderIntoRoot();
 	},
 
-	handleServiceChoiceChange: function(ev) {
-		this.formState.bypass.selectors.serviceChoice = trim(ev.currentTarget.value);
-	},
-
 	handleSelectorInputChange: function(ev) {
 		this.formState.bypass.selectors.selectorInput = ev.currentTarget.value;
 	},
 
 	handleExcludedInputChange: function(ev) {
 		this.formState.bypass.excluded.input = ev.currentTarget.value;
-	},
-
-	handleAddService: function(ev) {
-		var editor;
-		var value;
-
-		if (ev && typeof ev.preventDefault === 'function')
-			ev.preventDefault();
-
-		editor = this.formState.bypass.selectors;
-		value = trim(editor.serviceChoice).toLowerCase();
-		if (value === '')
-			return;
-
-		editor.services = cleanList(editor.services.concat([ value ]));
-		editor.serviceChoice = '';
-		this.renderIntoRoot();
 	},
 
 	handleAddSelector: function(ev) {
@@ -937,7 +913,7 @@ return view.extend({
 		}
 
 		if (!dnsState.supported && dnsChoice === '') {
-			ui.addNotification(null, notificationParagraph(_('Choose System DNS or RouteFlux Recommended DNS to replace the current custom DNS profile.')));
+			ui.addNotification(null, notificationParagraph(_('Choose System DNS or the Recommended DNS preset here. Advanced DNS settings are available in the CLI.')));
 			return Promise.resolve();
 		}
 
@@ -987,44 +963,11 @@ return view.extend({
 		return this.runCommands(commands, _('Routing settings saved.'));
 	},
 
-	renderServiceOptions: function(selectedValue) {
-		var services = Array.isArray(this.pageData.services) ? this.pageData.services : [];
-		var options = [
-			E('option', { 'value': '', 'selected': trim(selectedValue) === '' ? 'selected' : null }, [ _('Choose a service preset') ])
-		];
-
-		for (var i = 0; i < services.length; i++) {
-			var entry = services[i];
-			var suffix = entry.readonly === true ? _('Built-in') : _('Custom');
-			var label = trim(entry.name) + ' · ' + suffix;
-
-			options.push(E('option', {
-				'value': trim(entry.name),
-				'selected': trim(selectedValue) === trim(entry.name) ? 'selected' : null
-			}, [ label ]));
-		}
-
-		return options;
-	},
-
 	renderSelectorItems: function(editor) {
 		var rows = [];
 		var selectors = selectorSetFromEditor(editor);
 		var total = 0;
 		var i;
-
-		for (i = 0; i < selectors.services.length; i++) {
-			total++;
-			rows.push(E('div', { 'class': 'routeflux-routing-item routeflux-routing-item-preset' }, [
-				E('span', { 'class': 'routeflux-routing-badge' }, [ _('Preset') ]),
-				E('span', { 'class': 'routeflux-routing-item-value' }, [ selectors.services[i] ]),
-				E('button', {
-					'class': 'cbi-button cbi-button-remove',
-					'type': 'button',
-					'click': ui.createHandlerFn(this, 'handleRemoveSelector', 'services', selectors.services[i])
-				}, [ _('Remove') ])
-			]));
-		}
 
 		for (i = 0; i < selectors.domains.length; i++) {
 			total++;
@@ -1057,7 +1000,7 @@ return view.extend({
 				E('div', { 'class': 'routeflux-routing-selector-copy' }, [
 					E('h4', {}, [ _('Direct selectors') ]),
 					E('p', {}, [
-						_('Domains, presets, and IPv4 selectors stay direct only while bypass mode is active.')
+						_('Domains and IPv4 selectors stay direct only while bypass mode is active.')
 					])
 				]),
 				E('div', { 'class': 'routeflux-routing-selector-meta' }, [
@@ -1105,6 +1048,19 @@ return view.extend({
 		]);
 	},
 
+	renderCLIOnlyAliasSummary: function(aliases) {
+		var values = cleanList(aliases || []);
+
+		if (values.length === 0)
+			return '';
+
+		return this.renderSummaryShell(_('CLI-only alias summary'), [
+			_('Current bypass aliases: %s').format(values.join(', ')),
+			_('Routing in LuCI edits only direct domains and IPv4 selectors. Saving here replaces these aliases with the direct selectors shown on this page.'),
+			_('Use the CLI when you want to keep reusable preset or service aliases in routing rules.')
+		]);
+	},
+
 	renderPageContent: function() {
 		var status = this.pageData.status || {};
 		var routing = this.pageData.firewall || canonicalFirewall({});
@@ -1131,8 +1087,6 @@ return view.extend({
 			ui.addNotification(null, notificationParagraph(_('Routing error: %s').format(this.rootErrors.firewall)));
 		if (this.rootErrors.subscriptions !== '')
 			ui.addNotification(null, notificationParagraph(_('Subscriptions error: %s').format(this.rootErrors.subscriptions)));
-		if (this.rootErrors.services !== '')
-			ui.addNotification(null, notificationParagraph(_('Services error: %s').format(this.rootErrors.services)));
 		if (this.rootErrors.dns !== '')
 			ui.addNotification(null, notificationParagraph(_('DNS error: %s').format(this.rootErrors.dns)));
 
@@ -1227,7 +1181,7 @@ return view.extend({
 
 		content.push(E('h2', {}, [ _('RouteFlux - Routing') ]));
 		content.push(E('p', { 'class': 'cbi-section-descr' }, [
-			_('RouteFlux status, the active connection, and the basic routing actions you need every day.')
+			_('RouteFlux status, the active connection, and the safe everyday routing actions. Advanced DNS settings and reusable aliases stay in the CLI.')
 		]));
 
 		content.push(E('div', { 'class': 'routeflux-overview-grid' }, [
@@ -1254,6 +1208,15 @@ return view.extend({
 				E('div', { 'class': 'alert-message warning' }, [ dnsState.warning ])
 			]));
 			content.push(this.renderSummaryShell(_('Current DNS Summary'), dnsState.summary_lines));
+		}
+
+		if (editorCLIServiceValues(this.formState.bypass.selectors).length > 0) {
+			content.push(E('div', { 'class': 'cbi-section' }, [
+				E('div', { 'class': 'alert-message warning' }, [
+					_('The current Keep Direct config includes CLI-only aliases. Routing in LuCI edits only direct domains and IPv4 selectors.')
+				])
+			]));
+			content.push(this.renderCLIOnlyAliasSummary(editorCLIServiceValues(this.formState.bypass.selectors)));
 		}
 
 		content.push(E('div', { 'class': 'cbi-section routeflux-routing-layout' }, [
@@ -1295,7 +1258,7 @@ return view.extend({
 							E('span', { 'class': 'routeflux-routing-choice-copy' }, [
 								E('span', { 'class': 'routeflux-routing-choice-title' }, [ _('Bypass') ]),
 								E('span', { 'class': 'routeflux-routing-choice-description' }, [
-									_('Proxy everything except the services, domains, IPv4 targets, and optional device exclusions listed below.')
+									_('Proxy everything except the direct domains, IPv4 targets, and optional device exclusions listed below.')
 								])
 							])
 						])
@@ -1336,45 +1299,32 @@ return view.extend({
 							}),
 							E('span', { 'class': 'routeflux-routing-choice-indicator', 'aria-hidden': 'true' }, []),
 							E('span', { 'class': 'routeflux-routing-choice-copy' }, [
-								E('span', { 'class': 'routeflux-routing-choice-title' }, [ _('RouteFlux Recommended DNS') ]),
+								E('span', { 'class': 'routeflux-routing-choice-title' }, [ _('Recommended DNS preset') ]),
 								E('span', { 'class': 'routeflux-routing-choice-description' }, [
-									_('Use the everyday RouteFlux DNS profile: encrypted public DNS with local names kept on the router. On OpenWrt while connected, router and LAN public DNS also follow this profile through the local Xray DNS runtime.')
+									_('Use the everyday preset: split mode plus DoH, with local names kept on the router. On OpenWrt while connected, router and LAN public DNS also follow this profile through the local Xray DNS runtime.')
 								])
 							])
 						])
+					]),
+					E('p', { 'class': 'cbi-section-descr' }, [
+						_('Routing keeps DNS choices intentionally small: System DNS or the Recommended DNS preset. Advanced settings are available in the CLI.')
 					])
 				])
 			]),
 			E('div', { 'class': 'routeflux-routing-panel' }, [
-				E('div', { 'class': 'routeflux-routing-editor-head' }, [
-					E('span', { 'class': 'routeflux-routing-editor-kicker' }, [ _('Bypass') ]),
-					E('h3', {}, [ _('Keep Direct') ]),
-					E('p', { 'class': 'cbi-section-descr' }, [
-						_('Add built-in presets, custom aliases, domains, or IPv4 ranges that should stay direct while bypass mode is active.')
-					])
-				]),
-				E('div', { 'class': 'routeflux-routing-editor-grid' }, [
-					E('div', { 'class': 'cbi-value' }, [
-						E('label', { 'class': 'cbi-value-title' }, [ _('Service Preset') ]),
-						E('div', { 'class': 'routeflux-routing-inline' }, [
-							E('select', {
-								'class': 'cbi-input-select',
-								'change': L.bind(function(ev) {
-									this.handleServiceChoiceChange(ev);
-								}, this)
-							}, this.renderServiceOptions(this.formState.bypass.selectors.serviceChoice)),
-							E('button', {
-								'class': 'cbi-button cbi-button-action',
-								'type': 'button',
-								'click': ui.createHandlerFn(this, 'handleAddService')
-							}, [ _('Add Preset') ])
+					E('div', { 'class': 'routeflux-routing-editor-head' }, [
+						E('span', { 'class': 'routeflux-routing-editor-kicker' }, [ _('Bypass') ]),
+						E('h3', {}, [ _('Keep Direct') ]),
+						E('p', { 'class': 'cbi-section-descr' }, [
+							_('Add direct domains or IPv4 selectors that should stay direct while bypass mode is active. Reusable aliases stay in the CLI-only workflow.')
 						])
 					]),
-					E('div', { 'class': 'cbi-value' }, [
-						E('label', { 'class': 'cbi-value-title' }, [ _('Extra Domain or IPv4') ]),
-						E('div', { 'class': 'routeflux-routing-inline' }, [
-							E('input', {
-								'class': 'cbi-input-text',
+					E('div', { 'class': 'routeflux-routing-editor-grid' }, [
+						E('div', { 'class': 'cbi-value' }, [
+							E('label', { 'class': 'cbi-value-title' }, [ _('Direct Domain or IPv4') ]),
+							E('div', { 'class': 'routeflux-routing-inline' }, [
+								E('input', {
+									'class': 'cbi-input-text',
 								'type': 'text',
 								'placeholder': _('Examples: gosuslugi.ru 203.0.113.10 203.0.113.10-203.0.113.20'),
 								'value': this.formState.bypass.selectors.selectorInput,

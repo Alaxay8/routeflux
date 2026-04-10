@@ -4,7 +4,7 @@
 		"order": 60,
 		"action": {
 			"type": "alias",
-			"path": "admin/services/routeflux/firewall"
+			"path": "admin/services/routeflux/subscriptions"
 		},
 		"depends": {
 			"fs": {

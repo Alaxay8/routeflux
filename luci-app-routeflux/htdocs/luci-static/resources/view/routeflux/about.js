@@ -10,7 +10,7 @@ var whatsNewEntries = [
 	{
 		kind: _('New'),
 		title: _('Simplified LuCI interface'),
-		summary: _('LuCI now focuses on the everyday Subscriptions, Routing, and About flow with a cleaner and more compact interface.')
+		summary: _('LuCI now opens on Subscriptions, keeps Routing focused on direct selectors, and keeps Zapret focused on compact custom presets.')
 	}
 ];
 
@@ -223,6 +223,13 @@ return view.extend({
 					'type': 'button',
 					'click': ui.createHandlerFn(this, 'handleUpgrade')
 				}, [ _('Update to new version') ])
+			])
+		]));
+
+		content.push(E('div', { 'class': 'cbi-section' }, [
+			E('h3', {}, [ _('Maintenance') ]),
+			E('p', { 'class': 'cbi-section-descr' }, [
+				_('About intentionally keeps destructive maintenance actions out of LuCI. For full removal over SSH, use the documented uninstall.sh command from README.')
 			])
 		]));
 

@@ -40,7 +40,7 @@ func newConnectCmd(opts *rootOptions) *cobra.Command {
 		},
 	}
 
-	cmd.Flags().StringVar(&subscriptionID, "subscription", "", "Subscription ID")
+	cmd.Flags().StringVar(&subscriptionID, "subscription", "", "Subscription ID or unique prefix")
 	cmd.Flags().StringVar(&nodeID, "node", "", "Node ID")
 	cmd.Flags().BoolVar(&auto, "auto", false, "Automatically select the best node")
 	_ = cmd.MarkFlagRequired("subscription")

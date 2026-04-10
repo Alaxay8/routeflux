@@ -40,6 +40,9 @@ func newRootCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "routeflux",
 		Short: "RouteFlux manages subscription-based Xray routing on OpenWrt",
+		CompletionOptions: cobra.CompletionOptions{
+			DisableDefaultCmd: true,
+		},
 		RunE: func(cmd *cobra.Command, args []string) error {
 			if opts.showVersion && opts.runUpgrade {
 				return fmt.Errorf("--version and --upgrade cannot be used together")

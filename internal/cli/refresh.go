@@ -32,7 +32,7 @@ func newRefreshCmd(opts *rootOptions) *cobra.Command {
 			}
 
 			if strings.TrimSpace(subscriptionID) == "" {
-				return fmt.Errorf("use --all or --subscription <id>")
+				return fmt.Errorf("use --all or --subscription <id-or-prefix>")
 			}
 
 			sub, err := opts.service.RefreshSubscription(context.Background(), subscriptionID)
@@ -43,7 +43,7 @@ func newRefreshCmd(opts *rootOptions) *cobra.Command {
 		},
 	}
 
-	cmd.Flags().StringVar(&subscriptionID, "subscription", "", "Subscription ID")
+	cmd.Flags().StringVar(&subscriptionID, "subscription", "", "Subscription ID or unique prefix")
 	cmd.Flags().BoolVar(&all, "all", false, "Refresh all subscriptions")
 
 	return cmd

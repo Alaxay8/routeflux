@@ -213,6 +213,47 @@ func TestConfigureFirewallBypassStoresExcludedSources(t *testing.T) {
 	}
 }
 
+func TestSetZapretEnabledRejectsEmptySelectors(t *testing.T) {
+	t.Parallel()
+
+	store := &memoryStore{
+		settings: domain.DefaultSettings(),
+		state:    domain.DefaultRuntimeState(),
+	}
+	service := NewService(Dependencies{Store: store})
+
+	_, err := service.SetZapretEnabled(context.Background(), true)
+	if err == nil {
+		t.Fatal("expected zapret enable to reject empty selectors")
+	}
+	if !strings.Contains(err.Error(), "needs at least one allowed preset or selector") {
+		t.Fatalf("unexpected error: %v", err)
+	}
+}
+
+func TestSetZapretSelectorsAutoDisablesEmptySelectorsWhileEnabled(t *testing.T) {
+	t.Parallel()
+
+	store := &memoryStore{
+		settings: domain.DefaultSettings(),
+		state:    domain.DefaultRuntimeState(),
+	}
+	store.settings.Zapret.Enabled = true
+	store.settings.Zapret.Selectors = domain.FirewallSelectorSet{Services: []string{"youtube"}}
+	service := NewService(Dependencies{Store: store})
+
+	settings, err := service.SetZapretSelectors(context.Background(), nil)
+	if err != nil {
+		t.Fatalf("set zapret selectors: %v", err)
+	}
+	if settings.Enabled {
+		t.Fatal("expected empty selectors to auto-disable zapret fallback")
+	}
+	if len(settings.Selectors.Services) != 0 || len(settings.Selectors.Domains) != 0 || len(settings.Selectors.CIDRs) != 0 {
+		t.Fatalf("expected empty selectors after auto-disable, got %+v", settings.Selectors)
+	}
+}
+
 func TestUpdateFirewallBlockQUICCanonicalizesLegacyTargetsMode(t *testing.T) {
 	t.Parallel()
 
@@ -561,6 +602,59 @@ func TestSetFirewallTargetServiceReappliesConnectedRuntime(t *testing.T) {
 	}
 }
 
+func TestSetFirewallTargetServiceSkipsReapplyForUnusedAlias(t *testing.T) {
+	t.Parallel()
+
+	store := &memoryStore{
+		settings: domain.DefaultSettings(),
+		state:    domain.DefaultRuntimeState(),
+		subs: []domain.Subscription{
+			{
+				ID: "sub-1",
+				Nodes: []domain.Node{
+					{
+						ID:       "node-1",
+						Protocol: domain.ProtocolVLESS,
+						Address:  "de.example.com",
+						Port:     443,
+						UUID:     "11111111-1111-1111-1111-111111111111",
+					},
+				},
+			},
+		},
+	}
+	store.settings.Firewall.Enabled = true
+	store.settings.Firewall.Mode = domain.FirewallModeTargets
+	store.settings.Firewall.Targets = domain.FirewallSelectorSet{Services: []string{"openai"}}
+	store.state.Connected = true
+	store.state.ActiveSubscriptionID = "sub-1"
+	store.state.ActiveNodeID = "node-1"
+	store.state.Mode = domain.SelectionModeManual
+
+	runtimeBackend := &recordingBackend{}
+	firewall := &recordingFirewaller{}
+	service := NewService(Dependencies{
+		Store:      store,
+		Backend:    runtimeBackend,
+		Firewaller: firewall,
+	})
+
+	entry, err := service.SetFirewallTargetService(context.Background(), "media-kit", []string{"youtube.com", "googlevideo.com"})
+	if err != nil {
+		t.Fatalf("set unused firewall target service: %v", err)
+	}
+
+	if entry.Name != "media-kit" || entry.Source != domain.FirewallTargetServiceSourceCustom || entry.ReadOnly {
+		t.Fatalf("unexpected target service entry: %+v", entry)
+	}
+	if len(runtimeBackend.requests) != 0 {
+		t.Fatalf("expected no backend reapply, got %d", len(runtimeBackend.requests))
+	}
+	if len(firewall.applied) != 0 {
+		t.Fatalf("expected no firewall apply, got %d", len(firewall.applied))
+	}
+}
+
 func TestDeleteFirewallTargetServiceRejectsUsedAlias(t *testing.T) {
 	t.Parallel()
 
@@ -582,6 +676,58 @@ func TestDeleteFirewallTargetServiceRejectsUsedAlias(t *testing.T) {
 	}
 	if !strings.Contains(strings.ToLower(err.Error()), "remove it from firewall targets first") {
 		t.Fatalf("unexpected error: %v", err)
+	}
+}
+
+func TestDeleteFirewallTargetServiceSkipsReapplyForUnusedAlias(t *testing.T) {
+	t.Parallel()
+
+	store := &memoryStore{
+		settings: domain.DefaultSettings(),
+		state:    domain.DefaultRuntimeState(),
+		subs: []domain.Subscription{
+			{
+				ID: "sub-1",
+				Nodes: []domain.Node{
+					{
+						ID:       "node-1",
+						Protocol: domain.ProtocolVLESS,
+						Address:  "de.example.com",
+						Port:     443,
+						UUID:     "11111111-1111-1111-1111-111111111111",
+					},
+				},
+			},
+		},
+	}
+	store.settings.Firewall.Enabled = true
+	store.settings.Firewall.Mode = domain.FirewallModeTargets
+	store.settings.Firewall.Targets = domain.FirewallSelectorSet{Services: []string{"openai"}}
+	store.settings.Firewall.TargetServiceCatalog = map[string]domain.FirewallTargetDefinition{
+		"openai":    {Domains: []string{"openai.com"}},
+		"media-kit": {Domains: []string{"youtube.com", "googlevideo.com"}},
+	}
+	store.state.Connected = true
+	store.state.ActiveSubscriptionID = "sub-1"
+	store.state.ActiveNodeID = "node-1"
+	store.state.Mode = domain.SelectionModeManual
+
+	runtimeBackend := &recordingBackend{}
+	firewall := &recordingFirewaller{}
+	service := NewService(Dependencies{
+		Store:      store,
+		Backend:    runtimeBackend,
+		Firewaller: firewall,
+	})
+
+	if err := service.DeleteFirewallTargetService(context.Background(), "media-kit"); err != nil {
+		t.Fatalf("delete unused firewall target service: %v", err)
+	}
+	if len(runtimeBackend.requests) != 0 {
+		t.Fatalf("expected no backend reapply, got %d", len(runtimeBackend.requests))
+	}
+	if len(firewall.applied) != 0 {
+		t.Fatalf("expected no firewall apply, got %d", len(firewall.applied))
 	}
 }
 
@@ -1636,6 +1782,81 @@ func TestRefreshSubscriptionKeepsExistingExpiryWhenOnlyDDoSGuardCookieIsPresent(
 
 	if sub.ExpiresAt == nil || !sub.ExpiresAt.Equal(expiresAt) {
 		t.Fatalf("unexpected expiration date: got %v want %s", sub.ExpiresAt, expiresAt)
+	}
+	assertSubscriptionTraffic(t, sub, 0, 0, 0)
+}
+
+func TestRefreshSubscriptionClearsExpiredStaleExpiryWhenProviderOmitsIt(t *testing.T) {
+	t.Parallel()
+
+	expiredAt := time.Date(2026, time.April, 5, 10, 0, 0, 0, time.UTC)
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Subscription-Userinfo", "upload=0; download=0; total=0; expire=0")
+		writeResponse(w, `[
+		  {
+		    "outbounds": [
+		      {
+		        "protocol": "vless",
+		        "tag": "proxy",
+		        "settings": {
+		          "vnext": [
+		            {
+		              "address": "one.example.com",
+		              "port": 443,
+		              "users": [
+		                {
+		                  "id": "11111111-1111-1111-1111-111111111111",
+		                  "encryption": "none",
+		                  "flow": "xtls-rprx-vision"
+		                }
+		              ]
+		            }
+		          ]
+		        },
+		        "streamSettings": {
+		          "network": "tcp",
+		          "security": "reality",
+		          "realitySettings": {
+		            "serverName": "gateway-one.example",
+		            "publicKey": "public-key-one",
+		            "shortId": "short-one",
+		            "fingerprint": "random"
+		          }
+		        }
+		      }
+		    ]
+		  }
+		]`)
+	}))
+	defer server.Close()
+
+	store := &memoryStore{
+		settings: domain.DefaultSettings(),
+		state:    domain.DefaultRuntimeState(),
+		subs: []domain.Subscription{
+			{
+				ID:           "sub-1",
+				SourceType:   domain.SourceTypeURL,
+				Source:       server.URL,
+				ProviderName: "Demo VPN",
+				DisplayName:  "Demo VPN",
+				ExpiresAt:    &expiredAt,
+				Nodes: []domain.Node{
+					{ID: "old-node"},
+				},
+			},
+		},
+	}
+
+	service := NewService(Dependencies{Store: store, HTTPClient: server.Client()})
+
+	sub, err := service.RefreshSubscription(context.Background(), "sub-1")
+	if err != nil {
+		t.Fatalf("refresh subscription: %v", err)
+	}
+
+	if sub.ExpiresAt != nil {
+		t.Fatalf("expected stale expired date to be cleared, got %v", sub.ExpiresAt)
 	}
 	assertSubscriptionTraffic(t, sub, 0, 0, 0)
 }

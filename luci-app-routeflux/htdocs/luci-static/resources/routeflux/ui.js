@@ -161,6 +161,40 @@ return baseclass.extend({
 		}
 	},
 
+	copyValueToClipboard: function(text) {
+		var value = trim(text);
+		var input;
+
+		if (value === '')
+			return Promise.reject(new Error('missing clipboard text'));
+
+		if (typeof navigator !== 'undefined' && navigator.clipboard && typeof navigator.clipboard.writeText === 'function')
+			return navigator.clipboard.writeText(value);
+
+		if (typeof document === 'undefined' || !document.body || typeof document.execCommand !== 'function')
+			return Promise.reject(new Error('clipboard unavailable'));
+
+		input = document.createElement('textarea');
+		input.value = value;
+		input.setAttribute('readonly', 'readonly');
+		input.style.position = 'fixed';
+		input.style.opacity = '0';
+		input.style.pointerEvents = 'none';
+		document.body.appendChild(input);
+		input.focus();
+		input.select();
+
+		try {
+			if (!document.execCommand('copy'))
+				throw new Error('clipboard copy failed');
+		}
+		finally {
+			document.body.removeChild(input);
+		}
+
+		return Promise.resolve();
+	},
+
 	currentTheme: function() {
 		var stored = trim(readLocalStorageValue(themePreferenceKey)).toLowerCase();
 

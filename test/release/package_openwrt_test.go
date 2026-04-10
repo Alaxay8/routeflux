@@ -22,11 +22,13 @@ func TestPackageOpenWrtFallsBackToTarWhenBSDTarMissing(t *testing.T) {
 	writeExecutable(t, filepath.Join(repoDir, "openwrt", "root", "etc", "init.d", "routeflux"), "#!/bin/sh\nexit 0\n")
 	writeExecutable(t, filepath.Join(repoDir, "openwrt", "root", "usr", "libexec", "routeflux-cron"), "#!/bin/sh\nexit 0\n")
 	writeExecutable(t, filepath.Join(repoDir, "openwrt", "root", "usr", "libexec", "routeflux-self-update"), "#!/bin/sh\nexit 0\n")
+	writeExecutable(t, filepath.Join(repoDir, "openwrt", "root", "usr", "libexec", "routeflux-xray-update"), "#!/bin/sh\nexit 0\n")
 	writeFile(t, filepath.Join(repoDir, "luci-app-routeflux", "root", "usr", "share", "luci", "menu.d", "luci-app-routeflux.json"), "{}\n", 0o644)
 	writeFile(t, filepath.Join(repoDir, "luci-app-routeflux", "root", "usr", "share", "rpcd", "acl.d", "luci-app-routeflux.json"), "{}\n", 0o644)
 	writeFile(t, filepath.Join(repoDir, "luci-app-routeflux", "htdocs", "luci-static", "resources", "routeflux", "ui.js"), "'use strict';\n", 0o644)
 	writeFile(t, filepath.Join(repoDir, "luci-app-routeflux", "htdocs", "luci-static", "resources", "view", "routeflux", "subscriptions.js"), "'use strict';\n", 0o644)
 	writeFile(t, filepath.Join(repoDir, "luci-app-routeflux", "htdocs", "luci-static", "resources", "view", "routeflux", "firewall.js"), "'use strict';\n", 0o644)
+	writeFile(t, filepath.Join(repoDir, "luci-app-routeflux", "htdocs", "luci-static", "resources", "view", "routeflux", "dns.js"), "'use strict';\n", 0o644)
 	writeFile(t, filepath.Join(repoDir, "luci-app-routeflux", "htdocs", "luci-static", "resources", "view", "routeflux", "about.js"), "'use strict';\n", 0o644)
 	writeFile(t, filepath.Join(repoDir, "luci-app-routeflux", "htdocs", "luci-static", "resources", "view", "routeflux", "overview.js"), "'use strict';\n", 0o644)
 	writeFile(t, filepath.Join(repoDir, "luci-app-routeflux", "htdocs", "luci-static", "resources", "view", "routeflux", "diagnostics.js"), "'use strict';\n", 0o644)
@@ -72,6 +74,12 @@ func TestPackageOpenWrtFallsBackToTarWhenBSDTarMissing(t *testing.T) {
 	if _, err := os.Stat(filepath.Join(repoDir, "dist", "routeflux-ipk", "data", "www", "luci-static", "resources", "view", "routeflux", "firewall.js")); err != nil {
 		t.Fatalf("expected routing view in package data: %v", err)
 	}
+	if _, err := os.Stat(filepath.Join(repoDir, "dist", "routeflux-ipk", "data", "www", "luci-static", "resources", "view", "routeflux", "dns.js")); err != nil {
+		t.Fatalf("expected dns view in package data: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(repoDir, "dist", "routeflux-ipk", "data", "www", "luci-static", "resources", "view", "routeflux", "services.js")); err == nil {
+		t.Fatal("services view must not be packaged anymore")
+	}
 	if _, err := os.Stat(filepath.Join(repoDir, "dist", "routeflux-ipk", "data", "www", "luci-static", "resources", "view", "routeflux", "about.js")); err != nil {
 		t.Fatalf("expected about view in package data: %v", err)
 	}
@@ -93,6 +101,9 @@ func TestPackageOpenWrtFallsBackToTarWhenBSDTarMissing(t *testing.T) {
 	if _, err := os.Stat(filepath.Join(repoDir, "dist", "routeflux-ipk", "data", "usr", "libexec", "routeflux-self-update")); err != nil {
 		t.Fatalf("expected self-update helper in package data: %v", err)
 	}
+	if _, err := os.Stat(filepath.Join(repoDir, "dist", "routeflux-ipk", "data", "usr", "libexec", "routeflux-xray-update")); err != nil {
+		t.Fatalf("expected xray update helper in package data: %v", err)
+	}
 	postinstPath := filepath.Join(repoDir, "dist", "routeflux-ipk", "control", "postinst")
 	postinst, err := os.ReadFile(postinstPath)
 	if err != nil {
@@ -104,12 +115,18 @@ func TestPackageOpenWrtFallsBackToTarWhenBSDTarMissing(t *testing.T) {
 		"/etc/routeflux/speedtest.lock",
 		"find /etc/routeflux -maxdepth 1 -type f -name '*.corrupt-*' -exec chmod 0600 {} \\;",
 		"/etc/xray/config.json.last-known-good",
-		"/www/luci-static/resources/view/routeflux/dns.js",
 		"/www/luci-static/resources/view/routeflux/logs.js",
-		"/www/luci-static/resources/view/routeflux/services.js",
 	} {
 		if !strings.Contains(string(postinst), want) {
 			t.Fatalf("expected generated postinst to contain %q, got:\n%s", want, postinst)
+		}
+	}
+
+	for _, forbidden := range []string{
+		"/www/luci-static/resources/view/routeflux/dns.js",
+	} {
+		if strings.Contains(string(postinst), forbidden) {
+			t.Fatalf("expected generated postinst to keep %q installed, got:\n%s", forbidden, postinst)
 		}
 	}
 

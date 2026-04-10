@@ -41,36 +41,35 @@ func TestNormalizeZapretSettingsCanonicalizesDeprecatedServiceAliases(t *testing
 	if want := []string{"telegram"}; !reflect.DeepEqual(got.Selectors.Services, want) {
 		t.Fatalf("unexpected canonical zapret services: %+v", got.Selectors.Services)
 	}
-	if len(got.Selectors.CIDRs) != 0 {
-		t.Fatalf("expected direct zapret cidrs to be dropped, got %+v", got.Selectors.CIDRs)
+	if want := []string{"1.1.1.1/32"}; !reflect.DeepEqual(got.Selectors.CIDRs, want) {
+		t.Fatalf("unexpected preserved zapret cidrs: %+v", got.Selectors.CIDRs)
 	}
 }
 
-func TestParseZapretSelectorsSupportsServicesAndDomains(t *testing.T) {
+func TestCanonicalZapretSettingsWithCatalogExpandsLegacyAliasesToDomains(t *testing.T) {
 	t.Parallel()
 
-	selectors, err := ParseZapretSelectors([]string{
-		"youtube",
-		"YOUTUBE",
-		"example.com",
-		"EXAMPLE.com",
+	got := CanonicalZapretSettingsWithCatalog(ZapretSettings{
+		Enabled: true,
+		Selectors: FirewallSelectorSet{
+			Services: []string{"youtube", "youtube"},
+			Domains:  []string{"example.com"},
+			CIDRs:    []string{"1.1.1.1/32"},
+		},
 	}, nil)
-	if err != nil {
-		t.Fatalf("parse zapret selectors: %v", err)
-	}
 
-	if want := []string{"youtube"}; !reflect.DeepEqual(selectors.Services, want) {
-		t.Fatalf("unexpected zapret services: %+v", selectors.Services)
+	if want := []string{"youtube"}; !reflect.DeepEqual(got.Selectors.Services, want) {
+		t.Fatalf("unexpected canonical zapret services:\nwant: %+v\n got: %+v", want, got.Selectors.Services)
 	}
-	if want := []string{"example.com"}; !reflect.DeepEqual(selectors.Domains, want) {
-		t.Fatalf("unexpected zapret domains: %+v", selectors.Domains)
+	if want := []string{"1.1.1.1/32"}; !reflect.DeepEqual(got.Selectors.CIDRs, want) {
+		t.Fatalf("unexpected canonical zapret cidrs:\nwant: %+v\n got: %+v", want, got.Selectors.CIDRs)
 	}
-	if len(selectors.CIDRs) != 0 {
-		t.Fatalf("expected no zapret cidrs, got %+v", selectors.CIDRs)
+	if want := []string{"example.com", "ggpht.com", "googlevideo.com", "youtu.be", "youtube-nocookie.com", "youtube.com", "youtube.googleapis.com", "youtubei.googleapis.com", "ytimg.com"}; !reflect.DeepEqual(got.Selectors.Domains, want) {
+		t.Fatalf("unexpected canonical zapret domains:\nwant: %+v\n got: %+v", want, got.Selectors.Domains)
 	}
 }
 
-func TestParseZapretSelectorsRejectsIPv4Selectors(t *testing.T) {
+func TestParseZapretSelectorsSupportsIPv4Selectors(t *testing.T) {
 	t.Parallel()
 
 	for _, input := range []string{"1.1.1.1", "1.1.1.0/24", "1.1.1.1-1.1.1.9"} {
@@ -78,66 +77,61 @@ func TestParseZapretSelectorsRejectsIPv4Selectors(t *testing.T) {
 		t.Run(input, func(t *testing.T) {
 			t.Parallel()
 
-			_, err := ParseZapretSelectors([]string{input}, nil)
-			if err == nil {
-				t.Fatal("expected zapret parser to reject IPv4 selectors")
+			selectors, err := ParseZapretSelectors([]string{input}, nil)
+			if err != nil {
+				t.Fatalf("parse zapret selectors: %v", err)
 			}
-			if !strings.Contains(err.Error(), "only service aliases and fully qualified domains are supported") {
-				t.Fatalf("unexpected error: %v", err)
+			if want := []string{input}; !reflect.DeepEqual(selectors.CIDRs, want) {
+				t.Fatalf("unexpected zapret cidrs: %+v", selectors.CIDRs)
 			}
 		})
 	}
 }
 
-func TestParseZapretSelectorsAllowsServicesWithCIDRsOnly(t *testing.T) {
+func TestParseZapretSelectorsSupportsDomainsAndIPv4Selectors(t *testing.T) {
 	t.Parallel()
 
-	selectors, err := ParseZapretSelectors([]string{"direct-ip-only"}, map[string]FirewallTargetDefinition{
-		"direct-ip-only": {
-			CIDRs: []string{"91.108.0.0/16"},
-		},
-	})
+	selectors, err := ParseZapretSelectors([]string{
+		"example.com",
+		"EXAMPLE.com",
+		"api.example.com",
+		"1.1.1.1",
+		"1.1.1.0/24",
+	}, nil)
 	if err != nil {
-		t.Fatalf("expected CIDR-only zapret service to pass, got %v", err)
+		t.Fatalf("parse zapret selectors: %v", err)
 	}
-	if want := []string{"direct-ip-only"}; !reflect.DeepEqual(selectors.Services, want) {
+	if len(selectors.Services) != 0 {
+		t.Fatalf("expected no zapret services, got %+v", selectors.Services)
+	}
+	if want := []string{"example.com", "api.example.com"}; !reflect.DeepEqual(selectors.Domains, want) {
+		t.Fatalf("unexpected zapret domains: %+v", selectors.Domains)
+	}
+	if want := []string{"1.1.1.1", "1.1.1.0/24"}; !reflect.DeepEqual(selectors.CIDRs, want) {
+		t.Fatalf("unexpected zapret cidrs: %+v", selectors.CIDRs)
+	}
+}
+
+func TestParseZapretSelectorsAcceptsKnownAliases(t *testing.T) {
+	t.Parallel()
+
+	selectors, err := ParseZapretSelectors([]string{"youtube", "YouTube"}, nil)
+	if err != nil {
+		t.Fatalf("parse zapret selectors: %v", err)
+	}
+	if want := []string{"youtube"}; !reflect.DeepEqual(selectors.Services, want) {
 		t.Fatalf("unexpected zapret services: %+v", selectors.Services)
 	}
 }
 
-func TestExpandZapretSelectorDomainsUsesServiceCatalog(t *testing.T) {
+func TestParseZapretSelectorsRejectsUnknownAliases(t *testing.T) {
 	t.Parallel()
 
-	got := ExpandZapretSelectorDomains(map[string]FirewallTargetDefinition{
-		"openai": {
-			Domains: []string{"openai.com", "chatgpt.com"},
-		},
-	}, FirewallSelectorSet{
-		Services: []string{"openai"},
-		Domains:  []string{"oaistatic.com"},
-		CIDRs:    []string{"1.1.1.1/32"},
-	})
-
-	want := []string{"openai.com", "chatgpt.com", "oaistatic.com"}
-	if !reflect.DeepEqual(got, want) {
-		t.Fatalf("unexpected expanded zapret domains:\nwant: %+v\n got: %+v", want, got)
+	_, err := ParseZapretSelectors([]string{"not-a-service"}, nil)
+	if err == nil {
+		t.Fatal("expected zapret parser to reject unknown aliases")
 	}
-}
-
-func TestExpandZapretSelectorCIDRsUsesServiceCatalog(t *testing.T) {
-	t.Parallel()
-
-	got := ExpandZapretSelectorCIDRs(map[string]FirewallTargetDefinition{
-		"telegram": {
-			CIDRs: []string{"91.108.0.0/16", "149.154.0.0/16"},
-		},
-	}, FirewallSelectorSet{
-		Services: []string{"telegram"},
-		CIDRs:    []string{"1.1.1.1/32"},
-	})
-
-	want := []string{"91.108.0.0/16", "149.154.0.0/16", "1.1.1.1/32"}
-	if !reflect.DeepEqual(got, want) {
-		t.Fatalf("unexpected expanded zapret cidrs:\nwant: %+v\n got: %+v", want, got)
+	if !strings.Contains(err.Error(), "use a fully qualified domain like youtube.com") {
+		t.Fatalf("unexpected error: %v", err)
 	}
 }

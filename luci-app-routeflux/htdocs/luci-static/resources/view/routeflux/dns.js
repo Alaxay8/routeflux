@@ -490,7 +490,7 @@ return view.extend({
 	handleRestoreDefault: function(ev) {
 		return this.runCommands([
 			[ 'dns', 'default' ]
-		], _('RouteFlux default DNS profile applied.'));
+		], _('Recommended DNS preset applied.'));
 	},
 
 	render: function(data) {
@@ -504,7 +504,7 @@ return view.extend({
 		var connected = !!(status.state && status.state.connected === true);
 		var activeSubscription = status.active_subscription || {};
 		var activeNode = status.active_node || {};
-		var profile = isDefaultProfile(dns) ? _('RouteFlux Default') : _('Custom');
+		var profile = isDefaultProfile(dns) ? _('Recommended DNS preset') : _('Custom');
 		var activeEntry = presentationForSubscription(activeSubscription, presentation);
 		var activeProvider = trim(activeSubscription.id) !== ''
 			? (activeEntry ? activeEntry.provider_title : providerTitle(activeSubscription))
@@ -545,7 +545,7 @@ return view.extend({
 
 		content.push(E('h2', {}, [ _('RouteFlux - DNS') ]));
 		content.push(E('p', { 'class': 'cbi-section-descr' }, [
-			_('Manage DNS mode, transport, upstream servers, bootstrap resolvers, and split-DNS local domains from LuCI.')
+			_('Manage all four RouteFlux DNS modes from LuCI. Routing only exposes System DNS and the Recommended DNS preset; use this page for remote, split, disabled, transport, servers, and direct domains.')
 		]));
 
 		content.push(E('div', { 'class': 'routeflux-overview-grid' }, [
@@ -657,7 +657,7 @@ return view.extend({
 				E('button', {
 					'class': 'cbi-button cbi-button-action',
 					'click': ui.createHandlerFn(this, 'handleRestoreDefault')
-				}, [ _('Restore Default') ])
+				}, [ _('Apply Recommended Preset') ])
 			])
 		]));
 

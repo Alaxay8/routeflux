@@ -81,8 +81,8 @@ func TestStartZapretTestActivatesManagedZapretAndStoresRestoreState(t *testing.T
 	if len(zapret.applyDomains) != 1 || !slices.Contains(zapret.applyDomains[0], "telegram.org") {
 		t.Fatalf("expected telegram domain expansion, got %+v", zapret.applyDomains)
 	}
-	if len(zapret.applyCIDRs) != 1 || !slices.Contains(zapret.applyCIDRs[0], "91.108.0.0/16") || !slices.Contains(zapret.applyCIDRs[0], "149.154.0.0/16") {
-		t.Fatalf("expected telegram cidr expansion, got %+v", zapret.applyCIDRs)
+	if len(zapret.applyCIDRs) != 1 || len(zapret.applyCIDRs[0]) != 0 {
+		t.Fatalf("expected zapret test mode to stay domain-only, got %+v", zapret.applyCIDRs)
 	}
 	if !store.state.ZapretTest.Active {
 		t.Fatal("expected persisted zapret test state to be active")

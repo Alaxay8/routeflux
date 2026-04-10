@@ -15,13 +15,15 @@ func TestFirewallViewUsesSimplifiedRoutingCopy(t *testing.T) {
 
 	for _, want := range []string{
 		"RouteFlux - Routing",
-		"RouteFlux status, the active connection, and the basic routing actions you need every day.",
+		"RouteFlux status, the active connection, and the safe everyday routing actions.",
 		"System DNS",
-		"RouteFlux Recommended DNS",
+		"Recommended DNS preset",
 		"Keep Direct",
 		"Excluded Devices",
-		"Switch to Off or Bypass and save to replace it from LuCI.",
-		"The current DNS profile was created outside this simplified LuCI flow.",
+		"advanced RouteFlux mode",
+		"current DNS profile is custom",
+		"Advanced DNS settings are available in the CLI.",
+		"CLI-only aliases",
 	} {
 		if !strings.Contains(source, want) {
 			t.Fatalf("routing view missing marker %q", want)
@@ -97,6 +99,7 @@ func TestFirewallViewUsesStructuredKeepDirectSelectorShell(t *testing.T) {
 		"routeflux-routing-selector-meta",
 		"routeflux-routing-item-value-code",
 		"stay direct only while bypass mode is active",
+		"Direct Domain or IPv4",
 	} {
 		if !strings.Contains(source, want) {
 			t.Fatalf("routing view missing Keep Direct selector marker %q", want)
@@ -165,13 +168,13 @@ func TestFirewallViewReRendersAfterRoutingChoiceChange(t *testing.T) {
 
 	modeStart := strings.Index(source, "handleModeChange: function(ev) {")
 	dnsStart := strings.Index(source, "handleDNSChoiceChange: function(ev) {")
-	serviceStart := strings.Index(source, "handleServiceChoiceChange: function(ev) {")
-	if modeStart < 0 || dnsStart < 0 || serviceStart < 0 {
+	selectorStart := strings.Index(source, "handleSelectorInputChange: function(ev) {")
+	if modeStart < 0 || dnsStart < 0 || selectorStart < 0 {
 		t.Fatal("routing view missing expected change handlers")
 	}
 
 	modeBlock := source[modeStart:dnsStart]
-	dnsBlock := source[dnsStart:serviceStart]
+	dnsBlock := source[dnsStart:selectorStart]
 
 	if !strings.Contains(modeBlock, "this.renderIntoRoot();") {
 		t.Fatal("handleModeChange must re-render the routing cards")
@@ -265,7 +268,7 @@ func TestLuCIMenuKeepsSubscriptionsRoutingZapretDiagnosticsSettingsAndAbout(t *t
 	if !ok {
 		t.Fatal("missing RouteFlux root menu entry")
 	}
-	if rootEntry.Action.Path != "admin/services/routeflux/firewall" {
+	if rootEntry.Action.Path != "admin/services/routeflux/subscriptions" {
 		t.Fatalf("root RouteFlux alias path mismatch: %q", rootEntry.Action.Path)
 	}
 
@@ -288,6 +291,17 @@ func TestLuCIMenuKeepsSubscriptionsRoutingZapretDiagnosticsSettingsAndAbout(t *t
 	if routingEntry.Title != "Routing" {
 		t.Fatalf("unexpected routing title %q", routingEntry.Title)
 	}
+	if routingEntry.Order != 20 {
+		t.Fatalf("unexpected routing order %d", routingEntry.Order)
+	}
+
+	if _, exists := payload["admin/services/routeflux/dns"]; exists {
+		t.Fatal("dns menu entry must be removed")
+	}
+
+	if _, exists := payload["admin/services/routeflux/services"]; exists {
+		t.Fatal("services menu entry must be removed")
+	}
 
 	zapretEntry, ok := payload["admin/services/routeflux/zapret"]
 	if !ok {
@@ -296,6 +310,9 @@ func TestLuCIMenuKeepsSubscriptionsRoutingZapretDiagnosticsSettingsAndAbout(t *t
 	if zapretEntry.Title != "Zapret" {
 		t.Fatalf("unexpected zapret title %q", zapretEntry.Title)
 	}
+	if zapretEntry.Order != 30 {
+		t.Fatalf("unexpected zapret order %d", zapretEntry.Order)
+	}
 
 	diagnosticsEntry, ok := payload["admin/services/routeflux/diagnostics"]
 	if !ok {
@@ -303,6 +320,9 @@ func TestLuCIMenuKeepsSubscriptionsRoutingZapretDiagnosticsSettingsAndAbout(t *t
 	}
 	if diagnosticsEntry.Title != "Diagnostics" {
 		t.Fatalf("unexpected diagnostics title %q", diagnosticsEntry.Title)
+	}
+	if diagnosticsEntry.Order != 40 {
+		t.Fatalf("unexpected diagnostics order %d", diagnosticsEntry.Order)
 	}
 
 	settingsEntry, ok := payload["admin/services/routeflux/settings"]
@@ -329,9 +349,7 @@ func TestLuCIMenuKeepsSubscriptionsRoutingZapretDiagnosticsSettingsAndAbout(t *t
 
 	for _, forbidden := range []string{
 		"admin/services/routeflux/overview",
-		"admin/services/routeflux/dns",
 		"admin/services/routeflux/logs",
-		"admin/services/routeflux/services",
 	} {
 		if _, exists := payload[forbidden]; exists {
 			t.Fatalf("menu must not keep removed entry %q", forbidden)

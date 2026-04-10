@@ -37,9 +37,9 @@ func TestLuCIACLReadPermissionsUseSafeWhitelist(t *testing.T) {
 		"/usr/bin/routeflux --json list subscriptions": {},
 		"/usr/bin/routeflux --json dns get":            {},
 		"/usr/bin/routeflux --json firewall get":       {},
-		"/usr/bin/routeflux --json services list":      {},
 		"/usr/bin/routeflux --json zapret get":         {},
 		"/usr/bin/routeflux --json zapret status":      {},
+		"/usr/bin/routeflux --json services list":      {},
 	}
 
 	if len(payload.App.Read.File) != len(wantRead) {
@@ -63,5 +63,18 @@ func TestLuCIACLReadPermissionsUseSafeWhitelist(t *testing.T) {
 	}
 	if len(writePermissions) != 1 || writePermissions[0] != "exec" {
 		t.Fatalf("unexpected write ACL permissions: %v", writePermissions)
+	}
+
+	for _, helper := range []string{
+		"/usr/libexec/routeflux-self-update",
+		"/usr/libexec/routeflux-xray-update",
+	} {
+		permissions, ok := payload.App.Write.File[helper]
+		if !ok {
+			t.Fatalf("expected write ACL helper %q, got %v", helper, payload.App.Write.File)
+		}
+		if len(permissions) != 1 || permissions[0] != "exec" {
+			t.Fatalf("unexpected write ACL permissions for %q: %v", helper, permissions)
+		}
 	}
 }

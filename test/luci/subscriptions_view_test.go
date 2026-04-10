@@ -30,14 +30,18 @@ func TestSubscriptionsViewKeepsSafeGeneratedXrayPreview(t *testing.T) {
 	}
 }
 
-func TestSubscriptionsViewShowsExpirationDateAndRemoveAction(t *testing.T) {
+func TestSubscriptionsViewShowsConditionalExpirationDateAndRemoveAction(t *testing.T) {
 	t.Parallel()
 
 	source := readSubscriptionsViewSource(t)
 
 	for _, want := range []string{
 		"Expiration date",
+		"if (trim(subscription.expires_at) !== '')",
 		"handleRemoveSubscription",
+		"handleCopySubscriptionID",
+		"Subscription ID copied to clipboard.",
+		"routeflux-meta-copy-button",
 		"cbi-button-negative",
 		"[ _('Remove') ]",
 	} {
@@ -195,6 +199,63 @@ func TestSubscriptionsViewCentersNodeCardsOnSmartphones(t *testing.T) {
 	} {
 		if !strings.Contains(source, want) {
 			t.Fatalf("subscriptions view missing smartphone centering marker %q", want)
+		}
+	}
+}
+
+func TestSubscriptionsViewCentersHeroCardsAndSummaryBlocksOnSmartphones(t *testing.T) {
+	t.Parallel()
+
+	source := readSubscriptionsViewSource(t)
+
+	for _, want := range []string{
+		".routeflux-subscriptions-hero, .routeflux-subscription-card, .routeflux-provider-group-header, .routeflux-auto-exclusions, .routeflux-node-details summary { text-align:center; }",
+		".routeflux-overview-grid { justify-items:center; }",
+		".routeflux-overview-grid .routeflux-card { width:100%; text-align:center; }",
+		".routeflux-overview-grid .routeflux-card-accent, .routeflux-overview-grid .routeflux-card-label, .routeflux-overview-grid .routeflux-card-value { text-align:center; justify-self:center; margin-left:auto; margin-right:auto; }",
+		".routeflux-page-hero-meta, .routeflux-subscription-controls { justify-items:center; }",
+		".routeflux-page-hero-meta-item, .routeflux-page-hero-meta-label, .routeflux-page-hero-meta-value, .routeflux-action-status-group { text-align:center; justify-self:center; }",
+		".routeflux-subscription-badges, .routeflux-node-status-badges, .routeflux-auto-exclusions-list, .routeflux-subscription-actions, .routeflux-ping-actions, .routeflux-node-actions { justify-content:center; }",
+		".routeflux-traffic-meter, .routeflux-node-action-stack, .routeflux-node-heading-actions-label { margin-left:auto; margin-right:auto; }",
+		".routeflux-node-heading-actions, .routeflux-node-cell-actions { text-align:center; padding-right:0; }",
+	} {
+		if !strings.Contains(source, want) {
+			t.Fatalf("subscriptions view missing smartphone symmetry marker %q", want)
+		}
+	}
+}
+
+func TestSubscriptionsViewCentersSubscriptionMetaTableOnMobile(t *testing.T) {
+	t.Parallel()
+
+	source := readSubscriptionsViewSource(t)
+
+	for _, want := range []string{
+		".routeflux-meta-table .tr { padding:10px 0; border-top:1px solid rgba(145, 175, 220, 0.1); text-align:center; }",
+		".routeflux-subscription-card .routeflux-meta-table, .routeflux-subscription-card .routeflux-meta-table .tr, .routeflux-subscription-card .routeflux-meta-table .td, .routeflux-subscription-card .routeflux-meta-table .td.left { text-align:center !important; }",
+		".routeflux-meta-table .td.routeflux-meta-label, .routeflux-subscription-card .routeflux-meta-table .td.routeflux-meta-label.left { width:100%; padding-bottom:4px; text-align:center !important; }",
+		".routeflux-meta-table .td.routeflux-meta-value, .routeflux-subscription-card .routeflux-meta-table .td.routeflux-meta-value.left { padding-top:0; text-align:center !important; }",
+		".routeflux-meta-copy-shell { display:flex; flex-direction:column; align-items:center; justify-content:center; gap:10px; width:100%; }",
+		".routeflux-meta-copy-value { width:auto; max-width:100%; text-align:center !important; margin:0 auto; }",
+		".routeflux-meta-copy-button { align-self:center; margin:0 auto; }",
+	} {
+		if !strings.Contains(source, want) {
+			t.Fatalf("subscriptions view missing centered mobile meta-table marker %q", want)
+		}
+	}
+}
+
+func TestSubscriptionsViewKeepsCopyButtonCloseToIDOnDesktop(t *testing.T) {
+	t.Parallel()
+
+	source := readSubscriptionsViewSource(t)
+
+	for _, want := range []string{
+		".routeflux-meta-copy-shell { display:inline-flex; align-items:center; justify-content:flex-start; gap:8px; min-width:0; width:auto; max-width:100%; }",
+		".routeflux-meta-copy-value { min-width:0; flex:0 1 auto; overflow-wrap:anywhere; word-break:break-word; }",
+	} {
+		if !strings.Contains(source, want) {
+			t.Fatalf("subscriptions view missing desktop copy alignment marker %q", want)
 		}
 	}
 }

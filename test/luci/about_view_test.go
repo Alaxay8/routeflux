@@ -52,13 +52,39 @@ func TestAboutUpdateHelperRunsExactInstallCommand(t *testing.T) {
 	}
 }
 
-func TestRouteFluxACLAllowsOnlySelfUpdateHelper(t *testing.T) {
+func TestXrayUpdateHelperUsesOfficialUpstreamSource(t *testing.T) {
+	t.Parallel()
+
+	source := readXrayUpdateHelperSource(t)
+
+	for _, want := range []string{
+		"#!/bin/sh",
+		"set -eu",
+		"https://api.github.com/repos/XTLS/Xray-core/releases/latest",
+		"https://github.com/XTLS/Xray-core/releases/download",
+		"Official Xray releases do not publish a soft-float MIPS build.",
+		"Xray-linux-64.zip",
+		"Xray-linux-arm64-v8a.zip",
+		"ROUTEFLUX_XRAY_UPDATE_STATUS=",
+		"exit_with_status",
+		"Xray is up to date",
+	} {
+		if !strings.Contains(source, want) {
+			t.Fatalf("xray update helper missing marker %q", want)
+		}
+	}
+}
+
+func TestRouteFluxACLAllowsUpdateHelpers(t *testing.T) {
 	t.Parallel()
 
 	source := readACLSource(t)
 
 	if !strings.Contains(source, "\"/usr/libexec/routeflux-self-update\": [ \"exec\" ]") {
 		t.Fatal("acl must allow routeflux self-update helper")
+	}
+	if !strings.Contains(source, "\"/usr/libexec/routeflux-xray-update\": [ \"exec\" ]") {
+		t.Fatal("acl must allow xray update helper")
 	}
 
 	for _, forbidden := range []string{
@@ -81,7 +107,8 @@ func TestAboutViewFormatsBuildDateAndSimplifiesWhatsNew(t *testing.T) {
 		"routefluxUI.renderSummaryCard(_('Build Date'), formattedBuildDate)",
 		"var versionText = 'RouteFlux ' + version + '\\nCommit: ' + commit + '\\nBuilt: ' + formattedBuildDate;",
 		"Simplified LuCI interface",
-		"LuCI now focuses on the everyday Subscriptions, Routing, and About flow with a cleaner and more compact interface.",
+		"LuCI now opens on Subscriptions, keeps Routing focused on direct selectors, and keeps Zapret focused on compact custom presets.",
+		"About intentionally keeps destructive maintenance actions out of LuCI.",
 	} {
 		if !strings.Contains(source, want) {
 			t.Fatalf("about view missing marker %q", want)
@@ -92,6 +119,9 @@ func TestAboutViewFormatsBuildDateAndSimplifiesWhatsNew(t *testing.T) {
 		"Subscription expiration date is now shown",
 		"Update RouteFlux from LuCI",
 		"Bypass mode and target bundles",
+		"Update Zapret",
+		"Update Xray",
+		"Remove RouteFlux",
 	} {
 		if strings.Contains(source, forbidden) {
 			t.Fatalf("about view must not keep old what's new marker %q", forbidden)
@@ -149,6 +179,23 @@ func readSelfUpdateHelperSource(t *testing.T) string {
 	}
 
 	path := filepath.Join(root, "openwrt", "root", "usr", "libexec", "routeflux-self-update")
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("read %s: %v", path, err)
+	}
+
+	return string(data)
+}
+
+func readXrayUpdateHelperSource(t *testing.T) string {
+	t.Helper()
+
+	root, err := filepath.Abs(filepath.Join("..", ".."))
+	if err != nil {
+		t.Fatalf("resolve repo root: %v", err)
+	}
+
+	path := filepath.Join(root, "openwrt", "root", "usr", "libexec", "routeflux-xray-update")
 	data, err := os.ReadFile(path)
 	if err != nil {
 		t.Fatalf("read %s: %v", path, err)

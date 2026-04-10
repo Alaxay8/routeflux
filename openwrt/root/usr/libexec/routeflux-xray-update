@@ -1,0 +1,241 @@
+#!/bin/sh
+set -eu
+
+ROUTEFLUX_XRAY_BINARY="${ROUTEFLUX_XRAY_BINARY:-/usr/bin/xray}"
+ROUTEFLUX_XRAY_SERVICE="${ROUTEFLUX_XRAY_SERVICE:-/etc/init.d/xray}"
+ROUTEFLUX_XRAY_WGET="${ROUTEFLUX_XRAY_WGET:-wget}"
+ROUTEFLUX_XRAY_CURL="${ROUTEFLUX_XRAY_CURL:-curl}"
+ROUTEFLUX_XRAY_UNZIP="${ROUTEFLUX_XRAY_UNZIP:-unzip}"
+ROUTEFLUX_XRAY_RELEASES_API="${ROUTEFLUX_XRAY_RELEASES_API:-https://api.github.com/repos/XTLS/Xray-core/releases/latest}"
+ROUTEFLUX_XRAY_RELEASE_BASE_URL="${ROUTEFLUX_XRAY_RELEASE_BASE_URL:-https://github.com/XTLS/Xray-core/releases/download}"
+ROUTEFLUX_XRAY_ARCH_OVERRIDE="${ROUTEFLUX_XRAY_ARCH_OVERRIDE:-}"
+ROUTEFLUX_XRAY_ASSET_NAME="${ROUTEFLUX_XRAY_ASSET_NAME:-}"
+ROUTEFLUX_XRAY_WORKDIR="${ROUTEFLUX_XRAY_WORKDIR:-/tmp/routeflux-xray-update}"
+ROUTEFLUX_XRAY_MIN_WORKDIR_KB="${ROUTEFLUX_XRAY_MIN_WORKDIR_KB:-12288}"
+ROUTEFLUX_XRAY_UNSUPPORTED_MIPS_MESSAGE="Official Xray releases do not publish a soft-float MIPS build. This router uses a soft-float Xray runtime, so direct upstream self-update stays disabled to avoid installing an incompatible binary."
+
+trim() {
+	printf '%s' "${1:-}" | sed 's/^[[:space:]]*//; s/[[:space:]]*$//'
+}
+
+json_string_value() {
+	key="$1"
+	sed -n "s/.*\"${key}\":[[:space:]]*\"\\([^\"]*\\)\".*/\\1/p" | head -n1
+}
+
+fetch_text() {
+	url="$1"
+
+	if [ -x "${ROUTEFLUX_XRAY_WGET}" ] || command -v "${ROUTEFLUX_XRAY_WGET}" >/dev/null 2>&1; then
+		"${ROUTEFLUX_XRAY_WGET}" -qO- "${url}"
+		return 0
+	fi
+
+	if [ -x "${ROUTEFLUX_XRAY_CURL}" ] || command -v "${ROUTEFLUX_XRAY_CURL}" >/dev/null 2>&1; then
+		"${ROUTEFLUX_XRAY_CURL}" -fsSL "${url}"
+		return 0
+	fi
+
+	printf 'Neither wget nor curl is available for Xray update.\n' >&2
+	exit 1
+}
+
+download_file() {
+	url="$1"
+	destination="$2"
+
+	if [ -x "${ROUTEFLUX_XRAY_WGET}" ] || command -v "${ROUTEFLUX_XRAY_WGET}" >/dev/null 2>&1; then
+		"${ROUTEFLUX_XRAY_WGET}" -O "${destination}" "${url}"
+		return 0
+	fi
+
+	if [ -x "${ROUTEFLUX_XRAY_CURL}" ] || command -v "${ROUTEFLUX_XRAY_CURL}" >/dev/null 2>&1; then
+		"${ROUTEFLUX_XRAY_CURL}" -fsSL -o "${destination}" "${url}"
+		return 0
+	fi
+
+	printf 'Neither wget nor curl is available for Xray update.\n' >&2
+	exit 1
+}
+
+current_version() {
+	if [ ! -x "${ROUTEFLUX_XRAY_BINARY}" ]; then
+		return 0
+	fi
+
+	"${ROUTEFLUX_XRAY_BINARY}" version 2>/dev/null | awk '/^Xray / { print $2; exit }' | sed 's/^v//'
+}
+
+list_opkg_architectures() {
+	if ! command -v opkg >/dev/null 2>&1; then
+		return 0
+	fi
+
+	opkg print-architecture 2>/dev/null | while read -r _ arch _; do
+		arch="$(trim "${arch}")"
+		[ -n "${arch}" ] || continue
+		[ "${arch}" = "all" ] && continue
+		[ "${arch}" = "noarch" ] && continue
+		printf '%s\n' "${arch}"
+	done
+}
+
+detect_uname_arch() {
+	if ! command -v uname >/dev/null 2>&1; then
+		return 0
+	fi
+
+	uname -m 2>/dev/null || true
+}
+
+resolve_arch() {
+	if [ -n "${ROUTEFLUX_XRAY_ARCH_OVERRIDE}" ]; then
+		printf '%s\n' "${ROUTEFLUX_XRAY_ARCH_OVERRIDE}"
+		return 0
+	fi
+
+	opkg_arches="$(list_opkg_architectures)"
+	if [ -n "${opkg_arches}" ]; then
+		printf '%s\n' "${opkg_arches}" | head -n1
+		return 0
+	fi
+
+	detect_uname_arch
+}
+
+resolve_asset_name() {
+	if [ -n "${ROUTEFLUX_XRAY_ASSET_NAME}" ]; then
+		printf '%s\n' "${ROUTEFLUX_XRAY_ASSET_NAME}"
+		return 0
+	fi
+
+	arch="$(resolve_arch)"
+	case "${arch}" in
+		x86_64|amd64)
+			printf 'Xray-linux-64.zip\n'
+			;;
+		i386|i486|i586|i686)
+			printf 'Xray-linux-32.zip\n'
+			;;
+		aarch64|arm64|armv8*|arm_cortex-a53*)
+			printf 'Xray-linux-arm64-v8a.zip\n'
+			;;
+		armv7*|arm_cortex-a7*|arm_cortex-a9*)
+			printf 'Xray-linux-arm32-v7a.zip\n'
+			;;
+		armv6*|arm_cortex-a5*)
+			printf 'Xray-linux-arm32-v6.zip\n'
+			;;
+		armv5*)
+			printf 'Xray-linux-arm32-v5.zip\n'
+			;;
+		mips*|mipsel*)
+			return 2
+			;;
+		*)
+			printf 'Unsupported router architecture for official Xray updates: %s\n' "${arch}" >&2
+			exit 1
+			;;
+	esac
+}
+
+available_kb() {
+	path="$1"
+	df -k "${path}" 2>/dev/null | awk 'NR==2 { print $4 }'
+}
+
+require_workdir_space() {
+	available="$(available_kb "${ROUTEFLUX_XRAY_WORKDIR}")"
+	minimum="$(trim "${ROUTEFLUX_XRAY_MIN_WORKDIR_KB}")"
+
+	case "${available}" in
+		''|*[!0-9]*)
+			return 0
+			;;
+	esac
+
+	case "${minimum}" in
+		''|*[!0-9]*)
+			return 0
+			;;
+	esac
+
+	if [ "${available}" -lt "${minimum}" ]; then
+		printf 'Not enough temporary space for Xray update. Need at least %s KB free in %s.\n' "${minimum}" "${ROUTEFLUX_XRAY_WORKDIR}" >&2
+		exit 1
+	fi
+}
+
+cleanup() {
+	rm -rf "${ROUTEFLUX_XRAY_WORKDIR}"
+}
+
+exit_with_status() {
+	status="$1"
+	message="$2"
+
+	printf 'ROUTEFLUX_XRAY_UPDATE_STATUS=%s\n' "${status}"
+	printf '%s\n' "${message}"
+	exit 0
+}
+
+latest_tag="$(fetch_text "${ROUTEFLUX_XRAY_RELEASES_API}" | json_string_value tag_name)"
+latest_version="${latest_tag#v}"
+current="$(trim "$(current_version)")"
+
+if [ -n "${current}" ] && [ -n "${latest_version}" ] && [ "${current}" = "${latest_version}" ]; then
+	printf '%s\n' 'ROUTEFLUX_XRAY_UPDATE_STATUS=up-to-date'
+	printf 'Xray is up to date (%s).\n' "${current}"
+	exit 0
+fi
+
+asset_status=0
+asset_name="$(resolve_asset_name)" || asset_status=$?
+
+if [ "${asset_status}" -eq 2 ]; then
+	exit_with_status "unsupported" "${ROUTEFLUX_XRAY_UNSUPPORTED_MIPS_MESSAGE}"
+fi
+
+if [ "${asset_status}" -ne 0 ]; then
+	exit "${asset_status}"
+fi
+
+asset_url="${ROUTEFLUX_XRAY_RELEASE_BASE_URL}/${latest_tag}/${asset_name}"
+
+mkdir -p "${ROUTEFLUX_XRAY_WORKDIR}"
+trap cleanup EXIT INT TERM
+require_workdir_space
+
+archive_path="${ROUTEFLUX_XRAY_WORKDIR}/xray.zip"
+binary_path="${ROUTEFLUX_XRAY_WORKDIR}/xray"
+
+download_file "${asset_url}" "${archive_path}"
+"${ROUTEFLUX_XRAY_UNZIP}" -p "${archive_path}" xray > "${binary_path}"
+rm -f "${archive_path}"
+chmod 0755 "${binary_path}"
+"${binary_path}" version >/dev/null 2>&1
+
+target_dir="$(dirname "${ROUTEFLUX_XRAY_BINARY}")"
+target_tmp="${target_dir}/.xray.new.$$"
+cp "${binary_path}" "${target_tmp}"
+chmod 0755 "${target_tmp}"
+mv "${target_tmp}" "${ROUTEFLUX_XRAY_BINARY}"
+
+if [ -x "${ROUTEFLUX_XRAY_SERVICE}" ]; then
+	"${ROUTEFLUX_XRAY_SERVICE}" restart >/dev/null 2>&1 || "${ROUTEFLUX_XRAY_SERVICE}" reload >/dev/null 2>&1 || true
+fi
+
+updated="$(trim "$(current_version)")"
+
+printf '%s\n' 'ROUTEFLUX_XRAY_UPDATE_STATUS=updated'
+if [ -n "${current}" ] && [ -n "${updated}" ]; then
+	printf 'Xray updated from %s to %s.\n' "${current}" "${updated}"
+	exit 0
+fi
+
+if [ -n "${updated}" ]; then
+	printf 'Xray installed successfully (%s).\n' "${updated}"
+	exit 0
+fi
+
+printf 'Xray installed successfully.\n'
