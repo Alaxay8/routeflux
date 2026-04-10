@@ -15,10 +15,9 @@ func TestAboutViewUsesLatestInstallScriptUpgradeFlow(t *testing.T) {
 	for _, want := range []string{
 		"RouteFlux - About",
 		"Update to new version",
-		"/usr/libexec/routeflux-self-update",
+		"this.execHelper(routefluxBinary, [ '--upgrade' ])",
 		"Existing /etc/routeflux state is preserved by the installer.",
-		"function extractSelfUpdateStatus(output)",
-		"status !== 'up-to-date'",
+		"window.location.reload()",
 	} {
 		if !strings.Contains(source, want) {
 			t.Fatalf("about view missing marker %q", want)
@@ -26,8 +25,9 @@ func TestAboutViewUsesLatestInstallScriptUpgradeFlow(t *testing.T) {
 	}
 
 	for _, forbidden := range []string{
-		"'--upgrade'",
-		"this.execText([ '--upgrade' ])",
+		"/usr/libexec/routeflux-self-update",
+		"function extractSelfUpdateStatus(output)",
+		"status !== 'up-to-date'",
 		"fs.exec('/bin/sh'",
 	} {
 		if strings.Contains(source, forbidden) {
