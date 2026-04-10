@@ -5,6 +5,7 @@
 'require routeflux.ui as routefluxUI';
 
 var routefluxBinary = '/usr/bin/routeflux';
+var routefluxSelfUpdateHelper = '/usr/libexec/routeflux-self-update';
 var whatsNewEntries = [
 	{
 		kind: _('New'),
@@ -22,6 +23,15 @@ function trim(value) {
 
 function notificationParagraph(message) {
 	return E('p', {}, [ message ]);
+}
+
+function extractSelfUpdateStatus(output) {
+	var match = String(output || '').match(/ROUTEFLUX_SELF_UPDATE_STATUS=([^\n]+)/);
+	return match ? trim(match[1]) : '';
+}
+
+function stripSelfUpdateStatus(output) {
+	return trim(String(output || '').replace(/ROUTEFLUX_SELF_UPDATE_STATUS=[^\n]*\n?/, ''));
 }
 
 function padNumber(value) {
@@ -110,13 +120,16 @@ return view.extend({
 		if (!window.confirm(_('Download the latest RouteFlux release and install it over the current router version? Existing /etc/routeflux state is preserved by the installer.')))
 			return Promise.resolve();
 
-		return this.execHelper(routefluxBinary, [ '--upgrade' ]).then(function(res) {
-			var message = trim(res.stdout) || _('Upgrade completed. Reloading the page...');
+		return this.execHelper(routefluxSelfUpdateHelper).then(function(res) {
+			var status = extractSelfUpdateStatus(res.stdout);
+			var message = stripSelfUpdateStatus(res.stdout);
 
-			ui.addNotification(null, notificationParagraph(message), 'info');
-			window.setTimeout(function() {
-				window.location.reload();
-			}, 1500);
+			ui.addNotification(null, notificationParagraph(message || _('Upgrade completed. Reloading the page...')), 'info');
+			if (status !== 'up-to-date') {
+				window.setTimeout(function() {
+					window.location.reload();
+				}, 1500);
+			}
 		}).catch(function(err) {
 			ui.addNotification(null, notificationParagraph(err.message || String(err)));
 			throw err;
