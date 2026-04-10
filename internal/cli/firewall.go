@@ -15,29 +15,19 @@ func newFirewallCmd(opts *rootOptions) *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "firewall",
 		Short: "Easy firewall routing settings for RouteFlux",
+		CompletionOptions: cobra.CompletionOptions{
+			DisableDefaultCmd: true,
+		},
 		Long: strings.TrimSpace(`
 Firewall controls which traffic RouteFlux redirects into the transparent proxy.
-
-Think of it like this:
-- mode answers "what do you want to match?"
-- targets means selected services, domains, or destination IPv4 targets go through RouteFlux
-- bypass means everything goes through RouteFlux except selected direct resources and excluded LAN devices
-- hosts means all traffic from selected LAN clients goes through RouteFlux
+Common choices: hosts, targets, or bypass.
+For mode-by-mode guidance, use routeflux firewall explain.
 `),
 		Example: strings.TrimSpace(`
 routeflux firewall get
-routeflux firewall explain
 routeflux firewall set hosts 192.168.1.150
-routeflux firewall set hosts 192.168.1.0/24
-routeflux firewall set hosts all
-routeflux firewall set targets youtube instagram 1.1.1.1
+routeflux firewall set targets youtube instagram
 routeflux firewall set bypass gosuslugi.ru --exclude-host 192.168.1.50
-routeflux firewall set split --proxy youtube --bypass gosuslugi.ru --exclude-host 192.168.1.50
-routeflux firewall set port 12345
-routeflux firewall set block-quic true
-routeflux firewall draft targets youtube instagram
-routeflux firewall draft bypass gosuslugi.ru --exclude-host 192.168.1.50
-routeflux firewall draft hosts all
 routeflux firewall disable
 `),
 	}
@@ -79,32 +69,20 @@ func newFirewallExplainCmd(opts *rootOptions) *cobra.Command {
 		Use:   "explain",
 		Short: "Explain firewall routing settings in plain language",
 		RunE: func(cmd *cobra.Command, args []string) error {
-			return printOutput(cmd, false, nil, strings.TrimSpace(fmt.Sprintf(`
+			return printOutput(cmd, false, nil, strings.TrimSpace(`
 Firewall modes:
 - disabled: Do not redirect router traffic through RouteFlux.
   Example: the proxy is installed, but no device or destination is forced through it.
   Command: routeflux firewall disable
 - targets: Send traffic through RouteFlux only when the destination matches selected services, domains, or IPv4 targets.
-  Example: routeflux firewall set targets youtube telegram discord means "those services only".
-  Service presets: %s.
-  Create your own aliases with routeflux services set openai openai.com chatgpt.com.
-  Popular root domains like youtube.com, instagram.com, netflix.com, x.com, gemini.google.com, and notebooklm.google.com still auto-expand to the domain families they need.
-  Use gemini-mobile or notebooklm-mobile for the Android or iOS apps when the web preset is too narrow.
-  Gemini and NotebookLM mobile presets are broader and still best-effort because Google apps can use extra shared infrastructure and direct IPv4 endpoints.
-  Command: routeflux firewall set targets youtube telegram discord 1.1.1.1
+  Example: only traffic to selected services or domains should go through the proxy.
+  Command: routeflux firewall set targets youtube instagram
 - bypass: Send all other traffic through RouteFlux while keeping selected resources direct and optionally excluding whole LAN devices.
-  Example: routeflux firewall set bypass gosuslugi.ru vk.com --exclude-host 192.168.1.50.
-  Bypass selectors use the same parser as targets. Excluded devices accept IPv4, CIDR, ranges, or all.
-  Command: routeflux firewall set bypass gosuslugi.ru vk.com --exclude-host 192.168.1.50
+  Example: proxy most traffic, but keep selected resources or devices direct.
+  Command: routeflux firewall set bypass gosuslugi.ru --exclude-host 192.168.1.50
 - hosts: Send all traffic from selected LAN devices through RouteFlux.
   Example: route one TV, phone, or laptop through the proxy.
   Command: routeflux firewall set hosts 192.168.1.150
-
-Legacy compatibility:
-- anti-target: deprecated alias for bypass.
-  Command: routeflux firewall set anti-target gosuslugi.ru sberbank.ru
-- split: advanced CLI-only mode for explicit proxy, bypass, and excluded-device lists.
-  Command: routeflux firewall set split --proxy youtube --bypass gosuslugi.ru --exclude-host 192.168.1.50
 
 Hosts selectors:
 - one device: 192.168.1.150
@@ -116,7 +94,9 @@ Other options:
 - port: port used for transparent redirect
 - block-quic: when true, RouteFlux blocks proxied QUIC/UDP traffic so clients fall back to TCP; when false, QUIC is proxied normally
 - ipv6: when disabled in RouteFlux, the router turns off IPv6 because transparent routing is IPv4-only and otherwise IPv6 can bypass the proxy
-`, firewallPresetSummary())))
+
+Advanced presets, split mode, and legacy compatibility are documented in README.
+`))
 		},
 	}
 }
@@ -135,29 +115,24 @@ func newFirewallSetCmd(opts *rootOptions) *cobra.Command {
 		Use:   "set <option> <value...>",
 		Short: "Change firewall routing settings",
 		Long: strings.TrimSpace(`
-Firewall options:
+Common firewall options:
 - targets: selected service presets, domains, IPv4 addresses, CIDRs, or ranges
 - bypass: proxy everything except selected direct resources and excluded devices
-- split: advanced CLI-only explicit proxy, bypass, and excluded-device lists
-- anti-target: deprecated alias for bypass
 - hosts: LAN clients whose traffic should go through RouteFlux
 - port: transparent redirect port
 - block-quic: true or false
 - ipv6: disable or enable router IPv6 handling managed by RouteFlux
+
+Advanced routing combinations are documented in README.
 `),
 		Example: strings.TrimSpace(`
 routeflux firewall set hosts 192.168.1.150
 routeflux firewall set hosts 192.168.1.0/24
-routeflux firewall set hosts 192.168.1.150-192.168.1.159
-routeflux firewall set hosts all
 routeflux firewall set targets youtube instagram 1.1.1.1
 routeflux firewall set bypass gosuslugi.ru --exclude-host 192.168.1.50
-routeflux firewall set split --proxy youtube --bypass gosuslugi.ru --exclude-host 192.168.1.50
-routeflux firewall set anti-target gosuslugi.ru sberbank.ru
 routeflux firewall set port 12345
 routeflux firewall set block-quic true
 routeflux firewall set ipv6 disable
-routeflux firewall set youtube.com 1.1.1.1
 `),
 		Args: cobra.MinimumNArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
@@ -311,8 +286,9 @@ func newFirewallDraftCmd(opts *rootOptions) *cobra.Command {
 	var splitExcludedHosts []string
 
 	cmd := &cobra.Command{
-		Use:   "draft <hosts|targets|bypass|split> [selector...]",
-		Short: "Store or clear saved LuCI selectors for one firewall mode",
+		Use:    "draft <hosts|targets|bypass|split> [selector...]",
+		Short:  "Store or clear saved LuCI selectors for one firewall mode",
+		Hidden: true,
 		Long: strings.TrimSpace(`
 Draft slots are saved selector sets for the LuCI Firewall page.
 
@@ -377,8 +353,9 @@ func newFirewallHostCmd(opts *rootOptions) *cobra.Command {
 	var port int
 
 	cmd := &cobra.Command{
-		Use:   "host <ipv4-or-cidr-or-range|all|*> [more ...]",
-		Short: "Legacy alias for routeflux firewall set hosts ...",
+		Use:    "host <ipv4-or-cidr-or-range|all|*> [more ...]",
+		Short:  "Legacy alias for routeflux firewall set hosts ...",
+		Hidden: true,
 		Long: strings.TrimSpace(`
 Choose which LAN clients should send all traffic through RouteFlux.
 

@@ -8,15 +8,16 @@
 				"/usr/bin/routeflux --json list subscriptions": [ "exec" ],
 				"/usr/bin/routeflux --json dns get": [ "exec" ],
 				"/usr/bin/routeflux --json firewall get": [ "exec" ],
-				"/usr/bin/routeflux --json services list": [ "exec" ],
 				"/usr/bin/routeflux --json zapret get": [ "exec" ],
-				"/usr/bin/routeflux --json zapret status": [ "exec" ]
+				"/usr/bin/routeflux --json zapret status": [ "exec" ],
+				"/usr/bin/routeflux --json services list": [ "exec" ]
 			}
 		},
 		"write": {
 			"file": {
 				"/usr/bin/routeflux *": [ "exec" ],
-				"/usr/libexec/routeflux-self-update": [ "exec" ]
+				"/usr/libexec/routeflux-self-update": [ "exec" ],
+				"/usr/libexec/routeflux-xray-update": [ "exec" ]
 			}
 		}
 	}

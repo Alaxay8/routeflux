@@ -207,20 +207,140 @@ func TestFirewallExplainOutputsFriendlyGuide(t *testing.T) {
 		"disabled: Do not redirect router traffic through RouteFlux.",
 		"targets: Send traffic through RouteFlux only when the destination matches selected services, domains, or IPv4 targets.",
 		"bypass: Send all other traffic through RouteFlux while keeping selected resources direct and optionally excluding whole LAN devices.",
-		"anti-target: deprecated alias for bypass.",
-		"split: advanced CLI-only mode for explicit proxy, bypass, and excluded-device lists.",
-		"Service presets: discord, facetime, gemini, gemini-mobile, instagram, netflix, notebooklm, notebooklm-mobile, telegram, twitter, whatsapp, youtube.",
-		"Popular root domains like youtube.com, instagram.com, netflix.com, x.com, gemini.google.com, and notebooklm.google.com still auto-expand to the domain families they need.",
-		"Gemini and NotebookLM mobile presets are broader and still best-effort because Google apps can use extra shared infrastructure and direct IPv4 endpoints.",
 		"hosts: Send all traffic from selected LAN devices through RouteFlux.",
 		"block-quic: when true, RouteFlux blocks proxied QUIC/UDP traffic so clients fall back to TCP; when false, QUIC is proxied normally",
 		"all or *: all common private LAN ranges",
 		"routeflux firewall set hosts 192.168.1.150",
+		"Advanced presets, split mode, and legacy compatibility are documented in README.",
 	}
 	for _, want := range wants {
 		if !strings.Contains(output, want) {
 			t.Fatalf("firewall explain missing %q\n%s", want, output)
 		}
+	}
+	unwanted := []string{
+		"anti-target: deprecated alias for bypass.",
+		"split: advanced CLI-only mode for explicit proxy, bypass, and excluded-device lists.",
+		"Service presets:",
+		"Popular root domains like youtube.com",
+		"Gemini and NotebookLM mobile presets are broader",
+	}
+	for _, item := range unwanted {
+		if strings.Contains(output, item) {
+			t.Fatalf("firewall explain unexpectedly contains %q\n%s", item, output)
+		}
+	}
+}
+
+func TestFirewallHelpShowsCommonPathOnly(t *testing.T) {
+	t.Parallel()
+
+	cmd := newFirewallCmd(&rootOptions{service: app.NewService(app.Dependencies{Store: &cliMemoryStore{
+		settings: domain.DefaultSettings(),
+		state:    domain.DefaultRuntimeState(),
+	}})})
+	var stdout bytes.Buffer
+	cmd.SetOut(&stdout)
+	cmd.SetErr(new(bytes.Buffer))
+	cmd.SetArgs([]string{"--help"})
+
+	if err := cmd.Execute(); err != nil {
+		t.Fatalf("execute firewall help: %v", err)
+	}
+
+	output := stdout.String()
+	wants := []string{
+		"routeflux firewall set hosts 192.168.1.150",
+		"routeflux firewall set targets youtube instagram",
+		"routeflux firewall set bypass gosuslugi.ru --exclude-host 192.168.1.50",
+		"disable     Disable firewall routing",
+	}
+	for _, want := range wants {
+		if !strings.Contains(output, want) {
+			t.Fatalf("firewall help missing %q\n%s", want, output)
+		}
+	}
+	unwanted := []string{
+		"draft       Store or clear saved LuCI selectors for one firewall mode",
+		"host        Legacy alias for routeflux firewall set hosts ...",
+		"routeflux firewall set split",
+		"routeflux firewall draft",
+		"anti-target",
+	}
+	for _, item := range unwanted {
+		if strings.Contains(output, item) {
+			t.Fatalf("firewall help unexpectedly contains %q\n%s", item, output)
+		}
+	}
+}
+
+func TestFirewallSetHelpFocusesOnCommonOptions(t *testing.T) {
+	t.Parallel()
+
+	cmd := newFirewallCmd(&rootOptions{service: app.NewService(app.Dependencies{Store: &cliMemoryStore{
+		settings: domain.DefaultSettings(),
+		state:    domain.DefaultRuntimeState(),
+	}})})
+	var stdout bytes.Buffer
+	cmd.SetOut(&stdout)
+	cmd.SetErr(new(bytes.Buffer))
+	cmd.SetArgs([]string{"set", "--help"})
+
+	if err := cmd.Execute(); err != nil {
+		t.Fatalf("execute firewall set help: %v", err)
+	}
+
+	output := stdout.String()
+	wants := []string{
+		"targets: selected service presets, domains, IPv4 addresses, CIDRs, or ranges",
+		"bypass: proxy everything except selected direct resources and excluded devices",
+		"hosts: LAN clients whose traffic should go through RouteFlux",
+		"Advanced routing combinations are documented in README.",
+	}
+	for _, want := range wants {
+		if !strings.Contains(output, want) {
+			t.Fatalf("firewall set help missing %q\n%s", want, output)
+		}
+	}
+	unwanted := []string{
+		"split: advanced CLI-only explicit proxy, bypass, and excluded-device lists",
+		"anti-target: deprecated alias for bypass",
+		"routeflux firewall set split",
+		"routeflux firewall set anti-target",
+	}
+	for _, item := range unwanted {
+		if strings.Contains(output, item) {
+			t.Fatalf("firewall set help unexpectedly contains %q\n%s", item, output)
+		}
+	}
+}
+
+func TestFirewallDraftAndHostHelpRemainAvailableDirectly(t *testing.T) {
+	t.Parallel()
+
+	cmd := newFirewallCmd(&rootOptions{service: app.NewService(app.Dependencies{Store: &cliMemoryStore{
+		settings: domain.DefaultSettings(),
+		state:    domain.DefaultRuntimeState(),
+	}})})
+	var stdout bytes.Buffer
+	cmd.SetOut(&stdout)
+	cmd.SetErr(new(bytes.Buffer))
+
+	cmd.SetArgs([]string{"draft", "--help"})
+	if err := cmd.Execute(); err != nil {
+		t.Fatalf("execute firewall draft help: %v", err)
+	}
+	if !strings.Contains(stdout.String(), "Draft slots are saved selector sets for the LuCI Firewall page.") {
+		t.Fatalf("firewall draft help missing summary\n%s", stdout.String())
+	}
+
+	stdout.Reset()
+	cmd.SetArgs([]string{"host", "--help"})
+	if err := cmd.Execute(); err != nil {
+		t.Fatalf("execute firewall host help: %v", err)
+	}
+	if !strings.Contains(stdout.String(), "Choose which LAN clients should send all traffic through RouteFlux.") {
+		t.Fatalf("firewall host help missing summary\n%s", stdout.String())
 	}
 }
 

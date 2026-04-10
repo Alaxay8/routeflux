@@ -897,7 +897,7 @@ func (s *Service) GetZapretSettings() (domain.ZapretSettings, error) {
 		return domain.ZapretSettings{}, fmt.Errorf("load settings: %w", err)
 	}
 
-	return domain.CanonicalZapretSettings(settings.Zapret), nil
+	return domain.CanonicalZapretSettingsWithCatalog(settings.Zapret, settings.Firewall.TargetServiceCatalog), nil
 }
 
 // GetZapretStatus returns the observed Zapret runtime status.
@@ -1072,7 +1072,7 @@ func (s *Service) SetZapretEnabled(ctx context.Context, enabled bool) (domain.Za
 			return domain.ZapretSettings{}, fmt.Errorf("load settings: %w", err)
 		}
 
-		settings.Zapret = domain.CanonicalZapretSettings(settings.Zapret)
+		settings.Zapret = domain.CanonicalZapretSettingsWithCatalog(settings.Zapret, settings.Firewall.TargetServiceCatalog)
 		settings.Zapret.Enabled = enabled
 		if err := s.store.SaveSettings(settings); err != nil {
 			return domain.ZapretSettings{}, fmt.Errorf("save settings: %w", err)
@@ -1118,7 +1118,7 @@ func (s *Service) SetZapretSelectors(ctx context.Context, selectors []string) (d
 			return domain.ZapretSettings{}, err
 		}
 
-		settings.Zapret = domain.CanonicalZapretSettings(settings.Zapret)
+		settings.Zapret = domain.CanonicalZapretSettingsWithCatalog(settings.Zapret, settings.Firewall.TargetServiceCatalog)
 		settings.Zapret.Selectors = parsed
 		if err := s.store.SaveSettings(settings); err != nil {
 			return domain.ZapretSettings{}, fmt.Errorf("save settings: %w", err)
@@ -1157,7 +1157,7 @@ func (s *Service) SetZapretFailbackSuccessThreshold(threshold int) (domain.Zapre
 			return domain.ZapretSettings{}, fmt.Errorf("load settings: %w", err)
 		}
 
-		settings.Zapret = domain.CanonicalZapretSettings(settings.Zapret)
+		settings.Zapret = domain.CanonicalZapretSettingsWithCatalog(settings.Zapret, settings.Firewall.TargetServiceCatalog)
 		settings.Zapret.FailbackSuccessThreshold = threshold
 		if err := s.store.SaveSettings(settings); err != nil {
 			return domain.ZapretSettings{}, fmt.Errorf("save settings: %w", err)
@@ -2558,10 +2558,29 @@ func (s *Service) subscriptionByID(id string) (domain.Subscription, error) {
 		return domain.Subscription{}, fmt.Errorf("load subscriptions: %w", err)
 	}
 
+	id = strings.TrimSpace(id)
 	for _, sub := range subscriptions {
 		if sub.ID == id {
 			return sub, nil
 		}
+	}
+
+	var matches []domain.Subscription
+	for _, sub := range subscriptions {
+		if strings.HasPrefix(sub.ID, id) {
+			matches = append(matches, sub)
+		}
+	}
+
+	if len(matches) == 1 {
+		return matches[0], nil
+	}
+	if len(matches) > 1 {
+		ids := make([]string, 0, len(matches))
+		for _, sub := range matches {
+			ids = append(ids, sub.ID)
+		}
+		return domain.Subscription{}, fmt.Errorf(`subscription %q is ambiguous: matches %s`, id, strings.Join(ids, ", "))
 	}
 
 	return domain.Subscription{}, fmt.Errorf("subscription %q not found", id)
@@ -3389,20 +3408,13 @@ func (s *Service) stopProxyTransport(ctx context.Context) error {
 }
 
 func (s *Service) zapretExpandedTargets(settings domain.Settings) ([]string, []string, error) {
-	selectors := domain.CanonicalZapretSettings(settings.Zapret).Selectors
-	domains := domain.NormalizeZapretDomainList(domain.ExpandZapretSelectorDomains(
-		settings.Firewall.TargetServiceCatalog,
-		selectors,
-	))
-	cidrs := domain.NormalizeZapretCIDRList(domain.ExpandZapretSelectorCIDRs(
-		settings.Firewall.TargetServiceCatalog,
-		selectors,
-	))
-	if len(domains) == 0 && len(cidrs) == 0 {
+	normalized := domain.CanonicalZapretSettingsWithCatalog(settings.Zapret, settings.Firewall.TargetServiceCatalog)
+	domains := normalized.Selectors.Domains
+	if len(domains) == 0 {
 		return nil, nil, fmt.Errorf("zapret selectors are empty")
 	}
 
-	return domains, cidrs, nil
+	return domains, nil, nil
 }
 
 func (s *Service) activateZapretFallback(ctx context.Context, sub domain.Subscription, state domain.RuntimeState, settings domain.Settings, reason string) error {

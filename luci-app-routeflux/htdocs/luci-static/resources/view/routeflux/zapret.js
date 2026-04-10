@@ -46,33 +46,16 @@ function cleanList(values) {
 	return out;
 }
 
-function cloneSelectors(value) {
-	var selectors = value || {};
-
-	return {
-		'services': cleanList(selectors.services || []),
-		'domains': cleanList(selectors.domains || [])
-	};
+function cloneDomains(values) {
+	return cleanList(values || []);
 }
 
 function selectorHasEntries(value) {
-	var selectors = cloneSelectors(value);
-
-	return selectors.services.length > 0 || selectors.domains.length > 0;
-}
-
-function selectorCount(value) {
-	var selectors = cloneSelectors(value);
-
-	return selectors.services.length + selectors.domains.length;
-}
-
-function normalizedDomain(value) {
-	return trim(value).toLowerCase();
+	return cloneDomains(value && value.domains).length > 0 || cleanList(value && value.cidrs).length > 0;
 }
 
 function domainLooksValid(value) {
-	var candidate = normalizedDomain(value);
+	var candidate = trim(value).toLowerCase();
 
 	return candidate !== '' &&
 		candidate.indexOf('://') < 0 &&
@@ -80,35 +63,113 @@ function domainLooksValid(value) {
 		candidate.indexOf('.') > 0;
 }
 
-function choiceClass(selected) {
-	return selected === true
-		? 'routeflux-zapret-choice routeflux-zapret-choice-selected'
-		: 'routeflux-zapret-choice';
-}
+function ipv4SelectorLooksValid(value) {
+	var candidate = trim(value).toLowerCase();
+	var ipv4 = /^(?:25[0-5]|2[0-4]\d|1?\d?\d)(?:\.(?:25[0-5]|2[0-4]\d|1?\d?\d)){3}$/;
 
-function serviceNames(services) {
-	var list = Array.isArray(services) ? services : [];
-	var out = [];
+	if (candidate === '')
+		return false;
 
-	for (var i = 0; i < list.length; i++) {
-		var name = trim(list[i] && list[i].name);
-		if (name !== '')
-			out.push(name);
+	if (ipv4.test(candidate))
+		return true;
+
+	if (/\/(?:[0-9]|[12][0-9]|3[0-2])$/.test(candidate))
+		return ipv4.test(candidate.split('/')[0]);
+
+	if (candidate.indexOf('-') > 0) {
+		var parts = candidate.split('-');
+		return parts.length === 2 && ipv4.test(parts[0]) && ipv4.test(parts[1]);
 	}
 
-	return cleanList(out);
+	return false;
+}
+
+function selectorLooksValid(value) {
+	return domainLooksValid(value) || ipv4SelectorLooksValid(value);
+}
+
+function parseSelectorInput(raw) {
+	var chunks = String(raw || '').split(/[\s,]+/);
+	var values = [];
+	var invalid = [];
+
+	for (var i = 0; i < chunks.length; i++) {
+		var value = trim(chunks[i]).toLowerCase();
+		if (value === '')
+			continue;
+		if (!selectorLooksValid(value)) {
+			invalid.push(value);
+			continue;
+		}
+		values.push(value);
+	}
+
+	return {
+		'values': cleanList(values),
+		'invalid': invalid
+	};
+}
+
+function serviceSelectors(service) {
+	return cleanList([].concat(service && service.domains || [], service && service.cidrs || []));
+}
+
+function isCustomService(service) {
+	return trim(service && service.source) === 'custom' && service && service.readonly !== true;
+}
+
+function availableZapretServices(services) {
+	return (Array.isArray(services) ? services.slice() : []).filter(function(service) {
+		return isCustomService(service) && serviceSelectors(service).length > 0;
+	}).sort(function(left, right) {
+		return trim(left.name).localeCompare(trim(right.name));
+	});
 }
 
 function buildFormState(settings, services) {
-	var names = serviceNames(services);
+	var selectors = settings && settings.selectors ? settings.selectors : {};
+	var activeSelectors = cleanList([].concat(selectors.domains || [], selectors.cidrs || []));
+	var selectedPresets = {};
+	var remaining = activeSelectors.slice();
+	var entries = availableZapretServices(services).slice().sort(function(left, right) {
+		return serviceSelectors(right).length - serviceSelectors(left).length;
+	});
+
+	for (var i = 0; i < entries.length; i++) {
+		var presetSelectors = serviceSelectors(entries[i]);
+		var matched = presetSelectors.length > 0;
+
+		for (var j = 0; j < presetSelectors.length; j++) {
+			if (remaining.indexOf(presetSelectors[j]) < 0) {
+				matched = false;
+				break;
+			}
+		}
+
+		if (!matched)
+			continue;
+
+		selectedPresets[trim(entries[i].name)] = true;
+		remaining = remaining.filter(function(value) {
+			return presetSelectors.indexOf(value) < 0;
+		});
+	}
 
 	return {
 		'enabled': settings && settings.enabled === true,
 		'threshold': String((settings && settings.failback_success_threshold) || 3),
-		'selectors': cloneSelectors(settings && settings.selectors),
-		'serviceChoice': names.length > 0 ? names[0] : '',
-		'domainInput': ''
+		'unmanagedSelectors': remaining,
+		'selectedPresets': selectedPresets,
+		'presetDraftName': '',
+		'presetDraftSelectors': '',
+		'editingPresetName': ''
 	};
+}
+
+function choiceClass(selected) {
+	return selected === true
+		? 'routeflux-zapret-choice routeflux-zapret-choice-selected'
+		: 'routeflux-zapret-choice';
 }
 
 return view.extend({
@@ -184,6 +245,22 @@ return view.extend({
 		}, this));
 	},
 
+	findServiceByName: function(name) {
+		var services = this.pageData.services || [];
+		var target = trim(name);
+
+		for (var i = 0; i < services.length; i++) {
+			if (trim(services[i].name) === target)
+				return services[i];
+		}
+
+		return null;
+	},
+
+	availableServices: function() {
+		return availableZapretServices(this.pageData.services || []);
+	},
+
 	runCommands: function(commands, successMessage) {
 		var self = this;
 		var outputs = [];
@@ -218,12 +295,11 @@ return view.extend({
 	},
 
 	handleSave: function() {
-		var selectors = this.formState && this.formState.selectors ? this.formState.selectors : {};
-		var values = cleanList((selectors.services || []).concat(selectors.domains || []));
+		var selectors = this.expandedSelectors();
 
 		return this.runCommands([
 			[ 'zapret', 'set', 'enabled', this.formState.enabled === true ? 'true' : 'false' ],
-			[ 'zapret', 'set', 'selectors' ].concat(values),
+			[ 'zapret', 'set', 'selectors' ].concat(selectors),
 			[ 'zapret', 'set', 'failback-success-threshold', firstNonEmpty([ this.formState.threshold ], '3') ]
 		], _('Zapret fallback settings saved.'));
 	},
@@ -259,57 +335,151 @@ return view.extend({
 		this.formState.threshold = trim(ev && ev.currentTarget && ev.currentTarget.value);
 	},
 
-	handleServiceChoice: function(ev) {
-		this.formState.serviceChoice = trim(ev && ev.currentTarget && ev.currentTarget.value);
-	},
-
-	handleDomainInput: function(ev) {
-		this.formState.domainInput = trim(ev && ev.currentTarget && ev.currentTarget.value);
-	},
-
-	handleAddService: function(ev) {
-		var value = trim(this.formState.serviceChoice);
-		var entries = cloneSelectors(this.formState.selectors);
-
+	handleStartNewPreset: function(ev) {
 		if (ev && typeof ev.preventDefault === 'function')
 			ev.preventDefault();
 
-		if (value === '')
-			return;
-
-		entries.services = cleanList(entries.services.concat([ value ]));
-		this.formState.selectors = entries;
+		this.formState.editingPresetName = '';
+		this.formState.presetDraftName = '';
+		this.formState.presetDraftSelectors = '';
 		this.renderIntoRoot();
 	},
 
-	handleAddDomain: function(ev) {
-		var value = trim(this.formState.domainInput);
-		var entries = cloneSelectors(this.formState.selectors);
+	handleEditPreset: function(name, ev) {
+		var service = this.findServiceByName(name);
 
 		if (ev && typeof ev.preventDefault === 'function')
 			ev.preventDefault();
 
-		if (!domainLooksValid(value)) {
-			ui.addNotification(null, notificationParagraph(_('Enter a fully qualified domain like youtube.com.')));
+		if (!service || !isCustomService(service))
 			return;
+
+		this.formState.editingPresetName = trim(service.name);
+		this.formState.presetDraftName = trim(service.name);
+		this.formState.presetDraftSelectors = serviceSelectors(service).join('\n');
+		this.renderIntoRoot();
+	},
+
+	handleCancelPresetEditor: function(ev) {
+		if (ev && typeof ev.preventDefault === 'function')
+			ev.preventDefault();
+
+		this.formState.editingPresetName = '';
+		this.formState.presetDraftName = '';
+		this.formState.presetDraftSelectors = '';
+		this.renderIntoRoot();
+	},
+
+	handlePresetDraftNameInput: function(ev) {
+		this.formState.presetDraftName = String(ev && ev.currentTarget && ev.currentTarget.value || '');
+	},
+
+	handlePresetDraftSelectorsInput: function(ev) {
+		this.formState.presetDraftSelectors = String(ev && ev.currentTarget && ev.currentTarget.value || '');
+	},
+
+	persistPresetSelectors: function(successMessage) {
+		var self = this;
+		var selectors = this.expandedSelectors();
+
+		return this.execText([ 'zapret', 'set', 'selectors' ].concat(selectors)).then(function(stdout) {
+			ui.addNotification(null, notificationParagraph(trim(stdout) || successMessage), 'info');
+		}).catch(function(err) {
+			ui.addNotification(null, notificationParagraph(err.message || String(err)));
+			throw err;
+		});
+	},
+
+	handleSavePreset: function(ev) {
+		var editingName = trim(this.formState.editingPresetName);
+		var name = trim(this.formState.presetDraftName).toLowerCase();
+		var parsed = parseSelectorInput(this.formState.presetDraftSelectors);
+		var self = this;
+
+		if (ev && typeof ev.preventDefault === 'function')
+			ev.preventDefault();
+
+		if (!/^[a-z0-9][a-z0-9-]*$/.test(name)) {
+			ui.addNotification(null, notificationParagraph(_('Preset name must use lowercase letters, digits, and hyphens only.')));
+			return Promise.resolve();
 		}
 
-		entries.domains = cleanList(entries.domains.concat([ value ]));
-		this.formState.selectors = entries;
-		this.formState.domainInput = '';
-		this.renderIntoRoot();
+		if (parsed.invalid.length > 0) {
+			ui.addNotification(null, notificationParagraph(_('Use fully qualified domains or IPv4 selectors only. Invalid value: %s').format(parsed.invalid[0])));
+			return Promise.resolve();
+		}
+
+		if (parsed.values.length === 0) {
+			ui.addNotification(null, notificationParagraph(_('Add at least one domain or IPv4 selector to the preset.')));
+			return Promise.resolve();
+		}
+
+		return this.execText([ 'services', 'set', name ].concat(parsed.values)).then(function(stdout) {
+			if (editingName !== '' && editingName !== name)
+				return self.execText([ 'services', 'delete', editingName ]).then(function() {
+					return stdout;
+				});
+			return stdout;
+		}).then(function(stdout) {
+			return self.execJSON([ '--json', 'services', 'list' ]).then(function(services) {
+				var selected = Object.assign({}, self.formState.selectedPresets || {});
+				self.pageData.services = Array.isArray(services) ? services : [];
+				if (editingName !== '' && editingName !== name)
+					delete selected[editingName];
+				selected[name] = true;
+				self.formState.selectedPresets = selected;
+				self.formState.unmanagedSelectors = [];
+				self.formState.editingPresetName = '';
+				self.formState.presetDraftName = '';
+				self.formState.presetDraftSelectors = '';
+				self.renderIntoRoot();
+				return self.persistPresetSelectors(trim(stdout) || _('Zapret preset saved.'));
+			});
+		}).catch(function(err) {
+			ui.addNotification(null, notificationParagraph(err.message || String(err)));
+			throw err;
+		});
 	},
 
-	handleRemoveSelector: function(kind, index, ev) {
-		var entries = cloneSelectors(this.formState.selectors);
-		var key = kind === 'services' ? 'services' : 'domains';
+	handleDeletePreset: function(name, ev) {
+		var self = this;
+		var selected = Object.assign({}, this.formState.selectedPresets || {});
 
 		if (ev && typeof ev.preventDefault === 'function')
 			ev.preventDefault();
 
-		entries[key].splice(index, 1);
-		this.formState.selectors = entries;
-		this.renderIntoRoot();
+		return this.execText([ 'services', 'delete', trim(name) ]).then(function(stdout) {
+			return self.execJSON([ '--json', 'services', 'list' ]).then(function(services) {
+				delete selected[trim(name)];
+				self.pageData.services = Array.isArray(services) ? services : [];
+				self.formState.selectedPresets = selected;
+				self.formState.unmanagedSelectors = [];
+				if (trim(self.formState.editingPresetName) === trim(name)) {
+					self.formState.editingPresetName = '';
+					self.formState.presetDraftName = '';
+					self.formState.presetDraftSelectors = '';
+				}
+				self.renderIntoRoot();
+				return self.persistPresetSelectors(trim(stdout) || _('Zapret preset deleted.'));
+			});
+		}).catch(function(err) {
+			ui.addNotification(null, notificationParagraph(err.message || String(err)));
+			throw err;
+		});
+	},
+
+	expandedSelectors: function() {
+		var values = [];
+		var selected = this.formState.selectedPresets || {};
+		var services = this.availableServices();
+
+		for (var i = 0; i < services.length; i++) {
+			if (selected[trim(services[i].name)] !== true)
+				continue;
+			values = cleanList(values.concat(serviceSelectors(services[i])));
+		}
+
+		return values;
 	},
 
 	renderCard: function(label, value, options) {
@@ -327,7 +497,10 @@ return view.extend({
 			warnings.push(_('A Zapret service is already running outside RouteFlux. RouteFlux can take over that service the next time fallback or test mode starts.'));
 
 		if (!selectorHasEntries(selectors))
-			warnings.push(_('Zapret selectors are empty. Add service aliases or fully qualified domains before enabling fallback.'));
+			warnings.push(_('Zapret selectors are empty. Add domains or IPv4 selectors before enabling fallback.'));
+
+		if ((this.formState.unmanagedSelectors || []).length > 0)
+			warnings.push(_('Some existing Zapret selectors do not match a saved custom preset. Save from LuCI keeps only the custom presets listed on this page.'));
 
 		if (warnings.length === 0)
 			return '';
@@ -339,63 +512,57 @@ return view.extend({
 		]);
 	},
 
-	renderSelectorRows: function(selectors) {
+	renderPresetRows: function() {
+		var services = this.availableServices();
 		var rows = [];
-		var services = cleanList(selectors && selectors.services);
-		var domains = cleanList(selectors && selectors.domains);
 		var self = this;
-		var i;
 
-		for (i = 0; i < services.length; i++) {
-			rows.push(E('div', { 'class': 'routeflux-zapret-item' }, [
-				E('span', { 'class': 'routeflux-zapret-badge' }, [ _('Preset') ]),
-				E('span', { 'class': 'routeflux-zapret-item-value' }, [ services[i] ]),
-				E('button', {
+		for (var i = 0; i < services.length; i++) {
+			var service = services[i];
+			var details = [];
+			var selected = this.formState.selectedPresets[trim(service.name)] === true;
+
+			if (!selected)
+				continue;
+
+			if (cleanList(service.domains || []).length > 0)
+				details.push(_('Domains: %d').format(cleanList(service.domains || []).length));
+			if (cleanList(service.cidrs || []).length > 0)
+				details.push(_('IPv4: %d').format(cleanList(service.cidrs || []).length));
+			details.unshift(_('Added to Zapret'));
+
+			rows.push(E('div', { 'class': 'routeflux-zapret-item routeflux-zapret-item-preset' }, [
+				E('span', { 'class': 'routeflux-zapret-badge routeflux-zapret-badge-preset' }, [ _('Preset') ]),
+				E('div', { 'class': 'routeflux-zapret-item-value' }, [
+					E('strong', {}, [ trim(service.name) ]),
+					E('div', { 'class': 'routeflux-zapret-item-meta' }, [ details.join(' · ') || _('Ready to use in Zapret.') ])
+				]),
+				isCustomService(service) ? E('button', {
+					'class': 'cbi-button cbi-button-action',
+					'type': 'button',
+					'click': ui.createHandlerFn(self, 'handleEditPreset', service.name)
+				}, [ _('Change') ]) : '',
+				isCustomService(service) ? E('button', {
 					'class': 'cbi-button cbi-button-negative',
 					'type': 'button',
-					'click': ui.createHandlerFn(self, 'handleRemoveSelector', 'services', i)
-				}, [ _('Remove') ])
-			]));
-		}
-
-		for (i = 0; i < domains.length; i++) {
-			rows.push(E('div', { 'class': 'routeflux-zapret-item' }, [
-				E('span', { 'class': 'routeflux-zapret-badge routeflux-zapret-badge-domain' }, [ _('Domain') ]),
-				E('span', { 'class': 'routeflux-zapret-item-value' }, [ domains[i] ]),
-				E('button', {
-					'class': 'cbi-button cbi-button-negative',
-					'type': 'button',
-					'click': ui.createHandlerFn(self, 'handleRemoveSelector', 'domains', i)
-				}, [ _('Remove') ])
+					'click': ui.createHandlerFn(self, 'handleDeletePreset', service.name)
+				}, [ _('Delete') ]) : ''
 			]));
 		}
 
 		if (rows.length === 0)
-			return E('div', { 'class': 'routeflux-zapret-empty' }, [ _('Nothing added yet.') ]);
+			return E('div', { 'class': 'routeflux-zapret-empty' }, [ _('No custom presets added to Zapret yet.') ]);
 
 		return E('div', { 'class': 'routeflux-zapret-list' }, rows);
-	},
-
-	renderServiceOptions: function(services) {
-		var names = serviceNames(services);
-		var options = [ E('option', { 'value': '' }, [ _('Choose preset') ]) ];
-
-		for (var i = 0; i < names.length; i++) {
-			options.push(E('option', {
-				'value': names[i],
-				'selected': this.formState.serviceChoice === names[i] ? 'selected' : null
-			}, [ names[i] ]));
-		}
-
-		return options;
 	},
 
 	renderPageContent: function() {
 		var runtime = this.pageData.runtime || {};
 		var settings = this.pageData.settings || {};
 		var status = this.pageData.status || {};
-		var services = this.pageData.services || [];
-		var selectors = this.formState.selectors || {};
+		var services = this.availableServices();
+		var selectors = this.expandedSelectors();
+		var selectedPresetCount = Object.keys(this.formState.selectedPresets || {}).length;
 		var transport = firstNonEmpty([
 			runtime.active_transport,
 			runtime.state && runtime.state.active_transport
@@ -425,12 +592,12 @@ return view.extend({
 		return [
 			routefluxUI.renderSharedStyles(),
 			E('style', { 'type': 'text/css' }, [
-				'#routeflux-zapret-root { --routeflux-zapret-ink:#102234; --routeflux-zapret-ink-muted:#3e5368; --routeflux-zapret-ink-soft:#5c7085; --routeflux-zapret-panel-bg:linear-gradient(160deg, rgba(248, 250, 253, 0.98) 0%, rgba(239, 244, 249, 0.98) 56%, rgba(231, 239, 246, 0.98) 100%); --routeflux-zapret-surface-bg:linear-gradient(180deg, rgba(251, 252, 254, 0.97) 0%, rgba(244, 248, 252, 0.97) 100%); --routeflux-zapret-surface-strong:linear-gradient(180deg, rgba(243, 248, 253, 0.98) 0%, rgba(232, 240, 248, 0.98) 100%); }',
-				'#routeflux-zapret-root.routeflux-theme-dark { --routeflux-zapret-ink:#eef4ff; --routeflux-zapret-ink-muted:#a8b8ce; --routeflux-zapret-ink-soft:#8ea0b8; --routeflux-zapret-panel-bg:linear-gradient(160deg, rgba(15, 23, 37, 0.96) 0%, rgba(10, 17, 29, 0.98) 56%, rgba(8, 13, 24, 0.99) 100%); --routeflux-zapret-surface-bg:linear-gradient(180deg, rgba(11, 18, 30, 0.94) 0%, rgba(8, 14, 24, 0.98) 100%); --routeflux-zapret-surface-strong:linear-gradient(180deg, rgba(52, 147, 235, 0.92) 0%, rgba(30, 116, 211, 0.94) 100%); }',
+				'#routeflux-zapret-root { --routeflux-zapret-ink:#102234; --routeflux-zapret-ink-muted:#3e5368; --routeflux-zapret-ink-soft:#5c7085; --routeflux-zapret-panel-bg:linear-gradient(160deg, rgba(248, 250, 253, 0.98) 0%, rgba(239, 244, 249, 0.98) 56%, rgba(231, 239, 246, 0.98) 100%); --routeflux-zapret-surface-bg:linear-gradient(180deg, rgba(251, 252, 254, 0.97) 0%, rgba(244, 248, 252, 0.97) 100%); }',
+				'#routeflux-zapret-root.routeflux-theme-dark { --routeflux-zapret-ink:#eef4ff; --routeflux-zapret-ink-muted:#a8b8ce; --routeflux-zapret-ink-soft:#8ea0b8; --routeflux-zapret-panel-bg:linear-gradient(160deg, rgba(15, 23, 37, 0.96) 0%, rgba(10, 17, 29, 0.98) 56%, rgba(8, 13, 24, 0.99) 100%); --routeflux-zapret-surface-bg:linear-gradient(180deg, rgba(11, 18, 30, 0.94) 0%, rgba(8, 14, 24, 0.98) 100%); }',
 				'#routeflux-zapret-root.routeflux-theme-dark::before, #routeflux-zapret-root.routeflux-theme-dark::after { display:none; }',
 				'#routeflux-zapret-root .routeflux-zapret-layout { display:grid; gap:14px; padding:0; border:0; background:transparent; box-shadow:none; color:var(--routeflux-zapret-ink); overflow:visible; }',
 				'#routeflux-zapret-root .routeflux-zapret-layout::before { display:none; }',
-				'.routeflux-zapret-grid { display:grid; grid-template-columns:repeat(auto-fit, minmax(240px, 1fr)); gap:12px; }',
+				'.routeflux-zapret-grid { display:grid; grid-template-columns:repeat(auto-fit, minmax(240px, 1fr)); gap:14px; }',
 				'.routeflux-zapret-panel { position:relative; overflow:hidden; isolation:isolate; border:1px solid rgba(120, 141, 167, 0.42); border-radius:22px; padding:20px; background:var(--routeflux-zapret-panel-bg); box-shadow:0 20px 44px rgba(3, 15, 32, 0.22), inset 0 1px 0 rgba(255, 255, 255, 0.78); }',
 				'.routeflux-zapret-panel::before { content:""; position:absolute; inset:0; background:radial-gradient(circle at top left, rgba(125, 211, 252, 0.22), transparent 34%), radial-gradient(circle at bottom right, rgba(59, 130, 246, 0.12), transparent 40%); pointer-events:none; }',
 				'.routeflux-zapret-panel > * { position:relative; z-index:1; }',
@@ -448,34 +615,33 @@ return view.extend({
 				'.routeflux-zapret-choice-copy { flex:1 1 auto; min-width:0; }',
 				'.routeflux-zapret-choice-title { display:block; font-weight:800; font-size:clamp(18px, 0.55vw + 15px, 24px); color:var(--routeflux-zapret-ink); letter-spacing:-0.02em; }',
 				'.routeflux-zapret-choice-description { display:block; margin-top:6px; color:var(--routeflux-zapret-ink-muted); line-height:1.62; font-size:15px; font-weight:500; }',
-				'.routeflux-theme-dark .routeflux-zapret-panel { border-color:rgba(145, 175, 220, 0.16); background:var(--routeflux-zapret-panel-bg); box-shadow:0 24px 42px rgba(0, 0, 0, 0.28), inset 0 1px 0 rgba(255, 255, 255, 0.04); }',
-				'.routeflux-theme-dark .routeflux-zapret-panel::before { background:radial-gradient(circle at top left, rgba(88, 196, 255, 0.14), transparent 34%), radial-gradient(circle at bottom right, rgba(52, 147, 235, 0.08), transparent 40%); }',
-				'.routeflux-theme-dark .routeflux-zapret-choice { border-color:rgba(145, 175, 220, 0.16); background:linear-gradient(180deg, rgba(11, 18, 30, 0.94) 0%, rgba(8, 14, 24, 0.98) 100%); box-shadow:0 18px 32px rgba(0, 0, 0, 0.24), inset 0 1px 0 rgba(255, 255, 255, 0.04); }',
-				'.routeflux-theme-dark .routeflux-zapret-choice:hover { border-color:rgba(34, 197, 94, 0.28); box-shadow:0 20px 34px rgba(0, 0, 0, 0.28), inset 0 1px 0 rgba(255, 255, 255, 0.05); }',
-				'.routeflux-theme-dark .routeflux-zapret-choice-selected { border-color:rgba(34, 197, 94, 0.42); background:linear-gradient(180deg, rgba(13, 35, 28, 0.96) 0%, rgba(10, 24, 21, 1) 100%); box-shadow:0 22px 38px rgba(8, 23, 19, 0.32), 0 0 0 1px rgba(34, 197, 94, 0.08), inset 0 1px 0 rgba(255, 255, 255, 0.06); }',
-				'.routeflux-theme-dark .routeflux-zapret-choice-indicator { border-color:rgba(145, 162, 189, 0.42); background:linear-gradient(180deg, rgba(22, 31, 45, 0.96) 0%, rgba(14, 22, 34, 1) 100%); box-shadow:inset 0 1px 0 rgba(255, 255, 255, 0.05), 0 10px 18px rgba(0, 0, 0, 0.22); }',
 				'.routeflux-zapret-editor-head { display:grid; gap:10px; margin-bottom:16px; }',
 				'.routeflux-zapret-panel .cbi-section-descr { color:var(--routeflux-zapret-ink-muted); font-size:15px; font-weight:500; line-height:1.66; max-width:72ch; }',
 				'.routeflux-zapret-editor-head .cbi-section-descr { margin:0; }',
 				'.routeflux-zapret-editor-kicker { display:inline-flex; align-items:center; width:max-content; max-width:100%; padding:5px 11px; border-radius:999px; background:rgba(14, 165, 233, 0.14); color:#075985; font-size:12px; font-weight:800; letter-spacing:.08em; text-transform:uppercase; }',
 				'.routeflux-zapret-inline { display:flex; gap:10px; align-items:stretch; }',
-				'.routeflux-zapret-inline > .cbi-input-text, .routeflux-zapret-inline > .cbi-input-select { flex:1 1 auto; min-width:0; min-height:52px; padding:0 14px; border:1px solid rgba(71, 85, 105, 0.38); border-radius:15px; background:linear-gradient(180deg, rgba(255, 255, 255, 0.99) 0%, rgba(244, 248, 252, 0.99) 100%); color:var(--routeflux-zapret-ink); box-shadow:inset 0 1px 0 rgba(255, 255, 255, 0.92), 0 10px 24px rgba(15, 23, 42, 0.08); }',
-				'.routeflux-zapret-inline > .cbi-input-select { padding-right:44px; }',
-				'.routeflux-zapret-inline > .cbi-input-text:focus, .routeflux-zapret-inline > .cbi-input-select:focus { border-color:rgba(14, 165, 233, 0.72); box-shadow:0 0 0 1px rgba(14, 165, 233, 0.24), 0 16px 30px rgba(14, 165, 233, 0.16); }',
-				'.routeflux-theme-dark .routeflux-zapret-inline > .cbi-input-text, .routeflux-theme-dark .routeflux-zapret-inline > .cbi-input-select { border-color:rgba(145, 175, 220, 0.16); background:rgba(6, 12, 22, 0.72); color:#eef4ff; box-shadow:inset 0 1px 0 rgba(255, 255, 255, 0.03); }',
-				'.routeflux-theme-dark .routeflux-zapret-inline > .cbi-input-text::placeholder { color:#91a2bd; opacity:0.84; }',
-				'.routeflux-theme-dark .routeflux-zapret-inline > .cbi-input-text:focus, .routeflux-theme-dark .routeflux-zapret-inline > .cbi-input-select:focus { border-color:rgba(88, 196, 255, 0.54); box-shadow:0 0 0 1px rgba(88, 196, 255, 0.18), 0 0 0 8px rgba(88, 196, 255, 0.05); }',
-				'.routeflux-theme-light .routeflux-zapret-inline > .cbi-input-text, .routeflux-theme-light .routeflux-zapret-inline > .cbi-input-select { border-color:rgba(125, 146, 170, 0.2); background:linear-gradient(180deg, rgba(251, 252, 254, 0.99) 0%, rgba(244, 248, 252, 0.99) 100%); color:#162638; box-shadow:inset 0 1px 0 rgba(255, 255, 255, 0.9), 0 8px 18px rgba(63, 87, 118, 0.06); }',
+				'.routeflux-zapret-inline > .cbi-input-text { flex:1 1 auto; min-width:0; min-height:52px; padding:0 14px; border:1px solid rgba(71, 85, 105, 0.38); border-radius:15px; background:linear-gradient(180deg, rgba(255, 255, 255, 0.99) 0%, rgba(244, 248, 252, 0.99) 100%); color:var(--routeflux-zapret-ink); box-shadow:inset 0 1px 0 rgba(255, 255, 255, 0.92), 0 10px 24px rgba(15, 23, 42, 0.08); }',
+				'.routeflux-zapret-inline > .cbi-input-textarea { flex:1 1 auto; min-width:0; min-height:124px; padding:14px; border:1px solid rgba(71, 85, 105, 0.38); border-radius:15px; background:linear-gradient(180deg, rgba(255, 255, 255, 0.99) 0%, rgba(244, 248, 252, 0.99) 100%); color:var(--routeflux-zapret-ink); box-shadow:inset 0 1px 0 rgba(255, 255, 255, 0.92), 0 10px 24px rgba(15, 23, 42, 0.08); resize:vertical; }',
+				'.routeflux-zapret-inline > .cbi-input-text:focus { border-color:rgba(14, 165, 233, 0.72); box-shadow:0 0 0 1px rgba(14, 165, 233, 0.24), 0 16px 30px rgba(14, 165, 233, 0.16); }',
+				'.routeflux-zapret-inline > .cbi-input-textarea:focus { border-color:rgba(14, 165, 233, 0.72); box-shadow:0 0 0 1px rgba(14, 165, 233, 0.24), 0 16px 30px rgba(14, 165, 233, 0.16); }',
+				'.routeflux-theme-light .routeflux-zapret-inline > .cbi-input-text { border-color:rgba(125, 146, 170, 0.2); background:linear-gradient(180deg, rgba(251, 252, 254, 0.99) 0%, rgba(244, 248, 252, 0.99) 100%); color:#162638; box-shadow:inset 0 1px 0 rgba(255, 255, 255, 0.9), 0 8px 18px rgba(63, 87, 118, 0.06); }',
+				'.routeflux-theme-light .routeflux-zapret-inline > .cbi-input-textarea { border-color:rgba(125, 146, 170, 0.2); background:linear-gradient(180deg, rgba(251, 252, 254, 0.99) 0%, rgba(244, 248, 252, 0.99) 100%); color:#162638; box-shadow:inset 0 1px 0 rgba(255, 255, 255, 0.9), 0 8px 18px rgba(63, 87, 118, 0.06); }',
 				'.routeflux-theme-light .routeflux-zapret-inline > .cbi-input-text::placeholder { color:#63768c; opacity:1; }',
-				'.routeflux-theme-light .routeflux-zapret-inline > .cbi-input-text:focus, .routeflux-theme-light .routeflux-zapret-inline > .cbi-input-select:focus { border-color:rgba(37, 99, 235, 0.36); box-shadow:0 0 0 1px rgba(37, 99, 235, 0.12), 0 0 0 6px rgba(37, 99, 235, 0.04); }',
+				'.routeflux-theme-light .routeflux-zapret-inline > .cbi-input-textarea::placeholder { color:#63768c; opacity:1; }',
+				'.routeflux-theme-dark .routeflux-zapret-inline > .cbi-input-text { border-color:rgba(145, 175, 220, 0.16); background:rgba(6, 12, 22, 0.72); color:#eef4ff; box-shadow:inset 0 1px 0 rgba(255, 255, 255, 0.03); }',
+				'.routeflux-theme-dark .routeflux-zapret-inline > .cbi-input-textarea { border-color:rgba(145, 175, 220, 0.16); background:rgba(6, 12, 22, 0.72); color:#eef4ff; box-shadow:inset 0 1px 0 rgba(255, 255, 255, 0.03); }',
+				'.routeflux-theme-dark .routeflux-zapret-inline > .cbi-input-text::placeholder { color:#91a2bd; opacity:0.84; }',
+				'.routeflux-theme-dark .routeflux-zapret-inline > .cbi-input-textarea::placeholder { color:#91a2bd; opacity:0.84; }',
 				'.routeflux-zapret-inline > .cbi-button-action, .routeflux-zapret-actions .cbi-button { min-height:52px; padding:0 18px; border:1px solid rgba(37, 99, 235, 0.18); border-radius:15px; background:linear-gradient(180deg, rgba(243, 248, 253, 0.98) 0%, rgba(232, 240, 248, 0.98) 100%); color:#17324b; font-weight:800; box-shadow:0 12px 22px rgba(63, 87, 118, 0.08), inset 0 1px 0 rgba(255, 255, 255, 0.84); }',
 				'.routeflux-zapret-inline > .cbi-button-action:hover, .routeflux-zapret-actions .cbi-button:hover { border-color:rgba(37, 99, 235, 0.28); background:linear-gradient(180deg, rgba(236, 244, 251, 0.99) 0%, rgba(225, 236, 247, 0.99) 100%); color:#102f4c; }',
 				'.routeflux-zapret-list { display:grid; gap:8px; }',
 				'.routeflux-zapret-item { display:flex; gap:12px; align-items:center; padding:12px 14px; border-radius:15px; background:rgba(255, 255, 255, 0.93); border:1px solid rgba(125, 145, 168, 0.28); box-shadow:0 10px 22px rgba(15, 23, 42, 0.08); }',
+				'.routeflux-zapret-item-meta { margin-top:4px; color:var(--routeflux-zapret-ink-muted); font-size:13px; font-weight:600; }',
+				'.routeflux-zapret-item .cbi-button-action { min-width:92px; border-radius:12px; }',
 				'.routeflux-zapret-item .cbi-button-negative { min-width:92px; border-radius:12px; }',
 				'.routeflux-zapret-item-value { flex:1 1 auto; min-width:0; word-break:break-word; font-weight:700; color:var(--routeflux-zapret-ink); }',
-				'.routeflux-zapret-badge { display:inline-flex; align-items:center; justify-content:center; min-width:58px; padding:4px 8px; border-radius:999px; background:rgba(37, 99, 235, 0.13); color:#1d4ed8; font-size:11px; font-weight:800; letter-spacing:.05em; text-transform:uppercase; }',
-				'.routeflux-zapret-badge-domain { background:rgba(16, 185, 129, 0.14); color:#047857; }',
+				'.routeflux-zapret-badge { display:inline-flex; align-items:center; justify-content:center; min-width:58px; padding:4px 8px; border-radius:999px; background:rgba(16, 185, 129, 0.14); color:#047857; font-size:11px; font-weight:800; letter-spacing:.05em; text-transform:uppercase; }',
+				'.routeflux-zapret-badge-preset { background:rgba(37, 99, 235, 0.14); color:#1d4ed8; }',
 				'.routeflux-zapret-empty { padding:14px; border-radius:14px; background:rgba(255, 255, 255, 0.82); border:1px dashed rgba(125, 145, 168, 0.42); color:var(--routeflux-zapret-ink-muted); font-size:15px; font-weight:500; }',
 				'.routeflux-zapret-summary-shell { padding:16px 18px; border:1px solid rgba(125, 145, 168, 0.34); border-radius:16px; background:rgba(255, 255, 255, 0.84); box-shadow:0 10px 22px rgba(15, 23, 42, 0.08); }',
 				'.routeflux-zapret-summary-shell h3 { margin-top:0; margin-bottom:10px; color:var(--routeflux-zapret-ink); font-size:20px; letter-spacing:-0.02em; }',
@@ -483,18 +649,18 @@ return view.extend({
 				'.routeflux-zapret-summary-list li { color:var(--routeflux-zapret-ink); font-weight:500; }',
 				'.routeflux-zapret-summary-list li + li { margin-top:6px; }',
 				'.routeflux-zapret-actions { display:flex; flex-wrap:wrap; gap:10px; }',
+				'.routeflux-theme-dark .routeflux-zapret-panel { border-color:rgba(145, 175, 220, 0.16); background:var(--routeflux-zapret-panel-bg); box-shadow:0 24px 42px rgba(0, 0, 0, 0.28), inset 0 1px 0 rgba(255, 255, 255, 0.04); }',
+				'.routeflux-theme-dark .routeflux-zapret-panel::before { background:radial-gradient(circle at top left, rgba(88, 196, 255, 0.14), transparent 34%), radial-gradient(circle at bottom right, rgba(52, 147, 235, 0.08), transparent 40%); }',
+				'.routeflux-theme-dark .routeflux-zapret-choice { border-color:rgba(145, 175, 220, 0.16); background:linear-gradient(180deg, rgba(11, 18, 30, 0.94) 0%, rgba(8, 14, 24, 0.98) 100%); box-shadow:0 18px 32px rgba(0, 0, 0, 0.24), inset 0 1px 0 rgba(255, 255, 255, 0.04); }',
+				'.routeflux-theme-dark .routeflux-zapret-choice-selected { border-color:rgba(34, 197, 94, 0.42); background:linear-gradient(180deg, rgba(13, 35, 28, 0.96) 0%, rgba(10, 24, 21, 1) 100%); box-shadow:0 22px 38px rgba(8, 23, 19, 0.32), 0 0 0 1px rgba(34, 197, 94, 0.08), inset 0 1px 0 rgba(255, 255, 255, 0.06); }',
+				'.routeflux-theme-dark .routeflux-zapret-choice-indicator { border-color:rgba(145, 162, 189, 0.42); background:linear-gradient(180deg, rgba(22, 31, 45, 0.96) 0%, rgba(14, 22, 34, 1) 100%); box-shadow:inset 0 1px 0 rgba(255, 255, 255, 0.05), 0 10px 18px rgba(0, 0, 0, 0.22); }',
 				'.routeflux-theme-dark .routeflux-zapret-inline > .cbi-button-action, .routeflux-theme-dark .routeflux-zapret-actions .cbi-button-action { border-color:rgba(120, 160, 214, 0.2); background:rgba(12, 20, 34, 0.82); color:#a8d7ff; box-shadow:0 12px 24px rgba(0, 0, 0, 0.18), inset 0 1px 0 rgba(255, 255, 255, 0.03); }',
-				'.routeflux-theme-dark .routeflux-zapret-inline > .cbi-button-action:hover, .routeflux-theme-dark .routeflux-zapret-actions .cbi-button-action:hover { border-color:rgba(145, 190, 246, 0.28); background:rgba(14, 24, 40, 0.9); color:#c6e6ff; box-shadow:0 16px 26px rgba(0, 0, 0, 0.22), inset 0 1px 0 rgba(255, 255, 255, 0.04); }',
 				'.routeflux-theme-dark .routeflux-zapret-actions .cbi-button-apply { border-color:rgba(88, 196, 255, 0.34); background:linear-gradient(180deg, rgba(52, 147, 235, 0.92) 0%, rgba(30, 116, 211, 0.94) 100%); color:#f4fbff; box-shadow:0 18px 32px rgba(30, 116, 211, 0.24), inset 0 1px 0 rgba(255, 255, 255, 0.14); }',
-				'.routeflux-theme-dark .routeflux-zapret-actions .cbi-button-apply:hover { border-color:rgba(88, 196, 255, 0.42); background:linear-gradient(180deg, rgba(44, 132, 221, 0.96) 0%, rgba(26, 101, 192, 0.98) 100%); color:#ffffff; box-shadow:0 20px 34px rgba(30, 116, 211, 0.28), inset 0 1px 0 rgba(255, 255, 255, 0.16); }',
 				'.routeflux-theme-dark .routeflux-zapret-actions .cbi-button-reset, .routeflux-theme-dark .routeflux-zapret-item .cbi-button-negative { border-color:rgba(255, 123, 140, 0.28); background:rgba(52, 16, 26, 0.82); color:#ffb7c0; box-shadow:0 16px 28px rgba(52, 16, 26, 0.24), inset 0 1px 0 rgba(255, 255, 255, 0.05); }',
-				'.routeflux-theme-dark .routeflux-zapret-actions .cbi-button-reset:hover, .routeflux-theme-dark .routeflux-zapret-item .cbi-button-negative:hover { border-color:rgba(255, 146, 160, 0.34); background:rgba(64, 18, 30, 0.9); color:#ffd0d6; box-shadow:0 18px 30px rgba(52, 16, 26, 0.28), inset 0 1px 0 rgba(255, 255, 255, 0.06); }',
 				'.routeflux-theme-dark .routeflux-zapret-item { background:linear-gradient(180deg, rgba(11, 18, 30, 0.94) 0%, rgba(8, 14, 24, 0.98) 100%); border-color:rgba(145, 175, 220, 0.14); box-shadow:0 12px 24px rgba(0, 0, 0, 0.18), inset 0 1px 0 rgba(255, 255, 255, 0.03); }',
-				'.routeflux-theme-dark .routeflux-zapret-badge { background:rgba(37, 99, 235, 0.18); color:#a8d7ff; }',
-				'.routeflux-theme-dark .routeflux-zapret-badge-domain { background:rgba(46, 216, 170, 0.14); color:#9bf5d8; }',
 				'.routeflux-theme-dark .routeflux-zapret-empty { background:rgba(8, 15, 26, 0.5); border-color:rgba(145, 175, 220, 0.24); color:#a8b8ce; }',
 				'.routeflux-theme-dark .routeflux-zapret-summary-shell { background:rgba(8, 15, 26, 0.58); border-color:rgba(145, 175, 220, 0.16); box-shadow:0 12px 24px rgba(0, 0, 0, 0.2), inset 0 1px 0 rgba(255, 255, 255, 0.03); }',
-				'@media (max-width: 720px) { .routeflux-zapret-inline { flex-direction:column; } .routeflux-zapret-inline > .cbi-button-action, .routeflux-zapret-actions .cbi-button { width:100%; } .routeflux-zapret-item { align-items:flex-start; flex-direction:column; } .routeflux-zapret-item .cbi-button-negative { width:100%; } }'
+				'@media (max-width: 720px) { .routeflux-zapret-inline { flex-direction:column; } .routeflux-zapret-inline > .cbi-button-action, .routeflux-zapret-actions .cbi-button { width:100%; } .routeflux-zapret-item { align-items:flex-start; flex-direction:column; } .routeflux-zapret-item .cbi-button-negative, .routeflux-zapret-item .cbi-button-action { width:100%; } }'
 			]),
 			E('h2', {}, [ _('RouteFlux - Zapret') ]),
 			E('p', { 'class': 'cbi-section-descr' }, [
@@ -588,53 +754,59 @@ return view.extend({
 						E('span', { 'class': 'routeflux-zapret-editor-kicker' }, [ _('Selectors') ]),
 						E('h3', {}, [ _('Choose what Zapret should cover') ]),
 						E('p', { 'class': 'cbi-section-descr' }, [
-							_('Keep this list focused. RouteFlux expands service aliases like youtube to the domains Zapret should manage, and it also accepts your own fully qualified domains.')
+							_('Create named custom presets from domains and IPv4 selectors. Each saved preset is added to Zapret immediately.')
 						])
 					]),
-					E('div', { 'class': 'routeflux-zapret-editor-grid' }, [
-						E('div', {}, [
-							E('label', { 'class': 'cbi-value-title', 'for': 'routeflux-zapret-service-choice' }, [ _('Available presets') ]),
-							E('div', { 'class': 'routeflux-zapret-inline' }, [
-								E('select', {
-									'id': 'routeflux-zapret-service-choice',
-									'class': 'cbi-input-select',
-									'change': ui.createHandlerFn(this, 'handleServiceChoice')
-								}, this.renderServiceOptions(services)),
-								E('button', {
-									'class': 'cbi-button cbi-button-action',
-									'type': 'button',
-									'click': ui.createHandlerFn(this, 'handleAddService')
-								}, [ _('Add preset') ])
-							])
-						]),
-						E('div', {}, [
-							E('label', { 'class': 'cbi-value-title', 'for': 'routeflux-zapret-domain-input' }, [ _('Custom domain') ]),
-							E('div', { 'class': 'routeflux-zapret-inline' }, [
-								E('input', {
-									'id': 'routeflux-zapret-domain-input',
-									'class': 'cbi-input-text',
-									'type': 'text',
-									'placeholder': 'youtube.com',
-									'value': this.formState.domainInput,
-									'input': ui.createHandlerFn(this, 'handleDomainInput')
-								}),
-								E('button', {
-									'class': 'cbi-button cbi-button-action',
-									'type': 'button',
-									'click': ui.createHandlerFn(this, 'handleAddDomain')
-								}, [ _('Add domain') ])
-							])
+					E('div', { 'class': 'routeflux-zapret-summary-shell' }, [
+						E('h3', {}, [ _('Custom presets') ]),
+						E('ul', { 'class': 'routeflux-zapret-summary-list' }, [
+							E('li', {}, [ _('Custom presets in Zapret: %d').format(selectedPresetCount) ]),
+							E('li', {}, [ _('Expanded selectors currently stored in Zapret: %d').format(selectors.length) ]),
+							E('li', {}, [ _('Use Change to rename or update a preset, or Delete to remove it from both the preset list and Zapret.') ])
 						])
 					]),
 					E('div', { 'class': 'routeflux-zapret-summary-shell', 'style': 'margin-top:16px;' }, [
-						E('h3', {}, [ _('Current selector set') ]),
-						E('ul', { 'class': 'routeflux-zapret-summary-list' }, [
-							E('li', {}, [ _('Presets and domains currently selected: %d').format(selectorCount(selectors)) ]),
-							E('li', {}, [ _('Zapret accepts only service aliases and fully qualified domains. IPv4 addresses, CIDRs, and host-wide selectors are not supported.') ])
+						E('h3', {}, [ trim(this.formState.editingPresetName) !== '' ? _('Edit custom preset') : _('Create custom preset') ]),
+						E('div', { 'class': 'routeflux-zapret-editor-grid', 'style': 'margin-top:12px;' }, [
+							E('div', {}, [
+								E('label', { 'class': 'cbi-value-title', 'for': 'routeflux-zapret-preset-name' }, [ _('Preset name') ]),
+								E('input', {
+									'id': 'routeflux-zapret-preset-name',
+									'class': 'cbi-input-text',
+									'type': 'text',
+									'placeholder': 'youtube-home',
+									'value': this.formState.presetDraftName,
+									'input': ui.createHandlerFn(this, 'handlePresetDraftNameInput')
+								})
+							]),
+							E('div', {}, [
+								E('label', { 'class': 'cbi-value-title', 'for': 'routeflux-zapret-preset-selectors' }, [ _('Preset domains and IPv4') ]),
+								E('textarea', {
+									'id': 'routeflux-zapret-preset-selectors',
+									'class': 'cbi-input-textarea',
+									'placeholder': _('Examples: youtube.com\\ngooglevideo.com\\n203.0.113.0/24'),
+									'spellcheck': 'false',
+									'autocapitalize': 'off',
+									'autocomplete': 'off',
+									'input': ui.createHandlerFn(this, 'handlePresetDraftSelectorsInput')
+								}, [ this.formState.presetDraftSelectors ])
+							]),
+							E('div', { 'class': 'routeflux-zapret-actions' }, [
+								E('button', {
+									'class': 'cbi-button cbi-button-apply',
+									'type': 'button',
+									'click': ui.createHandlerFn(this, 'handleSavePreset')
+								}, [ _('Save preset') ]),
+								trim(this.formState.editingPresetName) !== '' || trim(this.formState.presetDraftName) !== '' || trim(this.formState.presetDraftSelectors) !== '' ? E('button', {
+									'class': 'cbi-button cbi-button-action',
+									'type': 'button',
+									'click': ui.createHandlerFn(this, 'handleCancelPresetEditor')
+								}, [ _('Cancel') ]) : ''
+							])
 						])
 					]),
 					E('div', { 'style': 'margin-top:16px;' }, [
-						this.renderSelectorRows(selectors)
+						this.renderPresetRows()
 					]),
 					E('div', { 'class': 'routeflux-zapret-actions', 'style': 'margin-top:16px;' }, [
 						E('button', {

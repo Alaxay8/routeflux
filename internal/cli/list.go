@@ -80,7 +80,7 @@ func newListNodesCmd(opts *rootOptions) *cobra.Command {
 		},
 	}
 
-	cmd.Flags().StringVar(&subscriptionID, "subscription", "", "Subscription ID")
+	cmd.Flags().StringVar(&subscriptionID, "subscription", "", "Subscription ID or unique prefix")
 	_ = cmd.MarkFlagRequired("subscription")
 	return cmd
 }

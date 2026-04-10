@@ -11,7 +11,7 @@ func newRemoveCmd(opts *rootOptions) *cobra.Command {
 	var removeAll bool
 
 	cmd := &cobra.Command{
-		Use:   "remove <subscription-id>|all",
+		Use:   "remove <subscription-id-or-prefix>|all",
 		Short: "Remove imported subscriptions",
 		Args: func(cmd *cobra.Command, args []string) error {
 			if removeAll {

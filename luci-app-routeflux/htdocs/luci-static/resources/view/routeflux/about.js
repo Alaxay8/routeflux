@@ -6,11 +6,12 @@
 
 var routefluxBinary = '/usr/bin/routeflux';
 var routefluxSelfUpdateHelper = '/usr/libexec/routeflux-self-update';
+var routefluxXrayUpdateHelper = '/usr/libexec/routeflux-xray-update';
 var whatsNewEntries = [
 	{
 		kind: _('New'),
 		title: _('Simplified LuCI interface'),
-		summary: _('LuCI now focuses on the everyday Subscriptions, Routing, and About flow with a cleaner and more compact interface.')
+		summary: _('LuCI now opens on Subscriptions, keeps Routing focused on direct selectors, and keeps Zapret focused on compact custom presets.')
 	}
 ];
 
@@ -32,6 +33,15 @@ function extractSelfUpdateStatus(output) {
 
 function stripSelfUpdateStatus(output) {
 	return trim(String(output || '').replace(/ROUTEFLUX_SELF_UPDATE_STATUS=[^\n]*\n?/, ''));
+}
+
+function extractXrayUpdateStatus(output) {
+	var match = String(output || '').match(/ROUTEFLUX_XRAY_UPDATE_STATUS=([^\n]+)/);
+	return match ? trim(match[1]) : '';
+}
+
+function stripXrayUpdateStatus(output) {
+	return trim(String(output || '').replace(/ROUTEFLUX_XRAY_UPDATE_STATUS=[^\n]*\n?/, ''));
 }
 
 function padNumber(value) {
@@ -136,6 +146,29 @@ return view.extend({
 		});
 	},
 
+	handleXrayUpgrade: function(ev) {
+		if (ev)
+			ev.preventDefault();
+
+		if (!window.confirm(_('Download the latest official Xray release from XTLS/Xray-core and replace the current Xray binary on this router? This restarts the Xray service.')))
+			return Promise.resolve();
+
+		return this.execHelper(routefluxXrayUpdateHelper).then(function(res) {
+			var status = extractXrayUpdateStatus(res.stdout);
+			var message = stripXrayUpdateStatus(res.stdout);
+
+			ui.addNotification(null, notificationParagraph(message || _('Xray update finished. Reloading the page...')), 'info');
+			if (status !== 'up-to-date') {
+				window.setTimeout(function() {
+					window.location.reload();
+				}, 1500);
+			}
+		}).catch(function(err) {
+			ui.addNotification(null, notificationParagraph(err.message || String(err)));
+			throw err;
+		});
+	},
+
 	showWhatsNewModal: function() {
 		var body = [
 			E('p', { 'class': 'routeflux-modal-help' }, [
@@ -223,6 +256,27 @@ return view.extend({
 					'type': 'button',
 					'click': ui.createHandlerFn(this, 'handleUpgrade')
 				}, [ _('Update to new version') ])
+			])
+		]));
+
+		content.push(E('div', { 'class': 'cbi-section' }, [
+			E('h3', {}, [ _('Xray') ]),
+			E('p', { 'class': 'cbi-section-descr' }, [
+				_('Download the latest official Xray release from XTLS/Xray-core and replace the current Xray binary on this router.')
+			]),
+			E('div', { 'class': 'cbi-page-actions' }, [
+				E('button', {
+					'class': 'cbi-button cbi-button-action',
+					'type': 'button',
+					'click': ui.createHandlerFn(this, 'handleXrayUpgrade')
+				}, [ _('Update Xray') ])
+			])
+		]));
+
+		content.push(E('div', { 'class': 'cbi-section' }, [
+			E('h3', {}, [ _('Maintenance') ]),
+			E('p', { 'class': 'cbi-section-descr' }, [
+				_('About intentionally keeps destructive maintenance actions out of LuCI. For full removal over SSH, use the documented uninstall.sh command from README.')
 			])
 		]));
 

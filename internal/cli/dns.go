@@ -14,29 +14,19 @@ func newDNSCmd(opts *rootOptions) *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "dns",
 		Short: "Easy DNS settings for RouteFlux",
+		CompletionOptions: cobra.CompletionOptions{
+			DisableDefaultCmd: true,
+		},
 		Long: strings.TrimSpace(`
 DNS controls how RouteFlux resolves public DNS while the proxy runtime is active.
-
-Think of it like this:
-- mode answers "where should DNS go?"
-- transport answers "how should it travel?"
-
-On OpenWrt, RouteFlux can also point router and LAN DNS at a local Xray DNS runtime while a node is connected.
-
-Use this command if you want DNS help in plain language instead of raw settings keys.
+Real DNS modes: system, remote, split, disabled.
+Recommended DNS preset (not a mode): routeflux dns default.
+For mode-by-mode guidance, use routeflux dns explain.
 `),
 		Example: strings.TrimSpace(`
 routeflux dns get
-routeflux dns explain
 routeflux dns default
-routeflux dns apply --mode split --transport doh --servers "1.1.1.1,1.0.0.1" --bootstrap "" --direct-domains "domain:lan,full:router.lan"
-routeflux dns set default
 routeflux dns set mode system
-routeflux dns set servers "dns.google,1.1.1.1"
-routeflux dns set transport doh
-routeflux dns set bootstrap "9.9.9.9"
-routeflux dns set direct-domains "domain:lan,full:router.lan"
-routeflux dns set mode split
 `),
 	}
 
@@ -73,38 +63,31 @@ func newDNSGetCmd(opts *rootOptions) *cobra.Command {
 func newDNSSetCmd(opts *rootOptions) *cobra.Command {
 	return &cobra.Command{
 		Use:   "set <option> <value>",
-		Short: "Change one DNS setting or apply the default profile",
+		Short: "Change one DNS setting or apply the Recommended DNS preset",
 		Long: strings.TrimSpace(`
 DNS options:
-- default: apply the RouteFlux recommended DNS profile in one step
+- default: apply the Recommended DNS preset (preset, not a mode)
 - mode: system, remote, split, disabled
 - transport: plain, doh
 - servers: main DNS servers, separated by commas
 - bootstrap: fallback DNS servers used to resolve DNS server hostnames
 - direct-domains: domains that stay local in split mode
 
-Simple meaning:
-- default: use the RouteFlux recommended everyday profile
-- system: RouteFlux leaves DNS alone
-- remote: all DNS goes to the DNS servers you chose
-- split: local router/home names stay local, the rest goes to your chosen DNS
-- plain: normal DNS
-- doh: DNS over HTTPS
+Mode quick guide:
+- system: leave DNS as it is
+- remote: send all DNS to the servers you choose
+- split: keep local names local and send internet DNS to the servers you choose
+- disabled: do not write RouteFlux DNS settings into the Xray config
+
+Recommended start: routeflux dns default
 `),
 		Example: strings.TrimSpace(`
 routeflux dns set default
 routeflux dns set mode system
 routeflux dns set mode remote
 routeflux dns set mode split
-routeflux dns set transport plain
 routeflux dns set transport doh
 routeflux dns set servers "dns.google,1.1.1.1"
-routeflux dns set bootstrap "9.9.9.9"
-routeflux dns set direct-domains "domain:lan,full:router.lan"
-
-If you just want the recommended setup, use:
-- routeflux dns default
-- routeflux dns set default
 `),
 		Args: func(cmd *cobra.Command, args []string) error {
 			if len(args) == 1 && strings.EqualFold(args[0], "default") {
@@ -144,8 +127,9 @@ func newDNSApplyCmd(opts *rootOptions) *cobra.Command {
 	var directDomains string
 
 	cmd := &cobra.Command{
-		Use:   "apply",
-		Short: "Replace the full DNS profile in one step",
+		Use:    "apply",
+		Short:  "Replace the full DNS profile in one step",
+		Hidden: true,
 		Long: strings.TrimSpace(`
 Apply a complete DNS profile atomically.
 
@@ -210,9 +194,11 @@ routeflux dns apply --mode system --transport plain --servers "" --bootstrap "" 
 func newDNSDefaultCmd(opts *rootOptions) *cobra.Command {
 	return &cobra.Command{
 		Use:   "default",
-		Short: "Apply the RouteFlux recommended DNS profile",
+		Short: "Apply the Recommended DNS preset",
 		Long: strings.TrimSpace(`
-Apply the recommended RouteFlux DNS profile in one step.
+Apply the Recommended DNS preset in one step.
+
+This is a preset, not a fifth DNS mode.
 
 This sets:
 - mode=split
@@ -259,9 +245,9 @@ Other options:
 - bootstrap: helper DNS servers used when your main DNS server is written as a hostname, such as dns.google.
 - direct-domains: names that should stay on local DNS in split mode.
 
-Easiest starting point:
+Recommended DNS preset:
 - routeflux dns set default
-  Good for most users: local names stay local, public DNS is encrypted, and on OpenWrt the router/LAN DNS follows it while connected.
+  Preset, not a fifth mode. Good for most users: local names stay local, public DNS is encrypted, and on OpenWrt the router and LAN DNS follow it while connected.
 `))
 		},
 	}
@@ -297,8 +283,8 @@ func renderDNSSettingsText(dns domain.DNSSettings) string {
 
 	if isDefaultDNSProfile(dns) {
 		lines = append(lines,
-			"profile=routeflux-default",
-			"profile-help=Encrypted public DNS with local names kept local. On OpenWrt while connected, router and LAN DNS follow this profile.",
+			"profile=Recommended DNS preset",
+			"profile-help=Recommended DNS preset: encrypted public DNS with local names kept local. On OpenWrt while connected, router and LAN DNS follow this profile.",
 		)
 	}
 
@@ -353,15 +339,16 @@ func applyDefaultDNSProfile(cmd *cobra.Command, opts *rootOptions) error {
 	}
 
 	return printOutput(cmd, false, nil, strings.TrimSpace(`
-Applied the RouteFlux default DNS profile.
+Applied the Recommended DNS preset.
 
 What it does:
+- This is a preset, not a fifth DNS mode
 - Uses encrypted DNS over HTTPS
 - Sends public DNS through Cloudflare
 - Keeps home-network names like .lan local
 - On OpenWrt while connected, routes router and LAN public DNS through the local Xray DNS runtime
 
-Profile:
+Preset:
 - mode=split
 - transport=doh
 - servers=1.1.1.1, 1.0.0.1

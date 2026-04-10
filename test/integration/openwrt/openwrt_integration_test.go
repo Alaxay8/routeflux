@@ -70,7 +70,7 @@ func TestOpenWrtEndToEnd(t *testing.T) {
 	if err := harness.AssertLuCISubscriptionsPage(ctx, "RouteFlux - Subscriptions", "Add Subscription", "No subscriptions imported yet."); err != nil {
 		t.Fatalf("browser smoke subscriptions empty state: %v", err)
 	}
-	if err := harness.AssertLuCIRoutingPage(ctx, "RouteFlux - Routing", "System DNS", "RouteFlux Recommended DNS", "Keep Direct"); err != nil {
+	if err := harness.AssertLuCIRoutingPage(ctx, "RouteFlux - Routing", "System DNS", "Recommended DNS preset", "Keep Direct"); err != nil {
 		t.Fatalf("browser smoke routing page: %v", err)
 	}
 

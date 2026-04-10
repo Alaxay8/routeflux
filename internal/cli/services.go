@@ -15,7 +15,8 @@ func newServicesCmd(opts *rootOptions) *cobra.Command {
 		Use:   "services",
 		Short: "Manage target service aliases for firewall targets",
 		Long: strings.TrimSpace(`
-Services are reusable aliases for firewall targets.
+Services are advanced CLI-only reusable aliases for firewall targets.
+Zapret fallback accepts fully qualified domains only.
 
 Built-in presets like youtube or telegram are readonly.
 Custom services let you define your own alias once and then reuse it in:

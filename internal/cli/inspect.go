@@ -53,7 +53,7 @@ func newInspectXrayCmd(opts *rootOptions) *cobra.Command {
 		},
 	}
 
-	cmd.Flags().StringVar(&subscriptionID, "subscription", "", "Subscription ID")
+	cmd.Flags().StringVar(&subscriptionID, "subscription", "", "Subscription ID or unique prefix")
 	cmd.Flags().StringVar(&nodeID, "node", "", "Node ID")
 	_ = cmd.MarkFlagRequired("subscription")
 	_ = cmd.MarkFlagRequired("node")
@@ -94,7 +94,7 @@ func newInspectXraySafeCmd(opts *rootOptions) *cobra.Command {
 		},
 	}
 
-	cmd.Flags().StringVar(&subscriptionID, "subscription", "", "Subscription ID")
+	cmd.Flags().StringVar(&subscriptionID, "subscription", "", "Subscription ID or unique prefix")
 	cmd.Flags().StringVar(&nodeID, "node", "", "Node ID")
 	_ = cmd.MarkFlagRequired("subscription")
 	_ = cmd.MarkFlagRequired("node")
@@ -160,7 +160,7 @@ func newInspectSpeedCmd(opts *rootOptions) *cobra.Command {
 		},
 	}
 
-	cmd.Flags().StringVar(&subscriptionID, "subscription", "", "Subscription ID")
+	cmd.Flags().StringVar(&subscriptionID, "subscription", "", "Subscription ID or unique prefix")
 	cmd.Flags().StringVar(&nodeID, "node", "", "Node ID")
 	_ = cmd.MarkFlagRequired("subscription")
 	_ = cmd.MarkFlagRequired("node")
@@ -205,7 +205,7 @@ func newInspectPingCmd(opts *rootOptions) *cobra.Command {
 		},
 	}
 
-	cmd.Flags().StringVar(&subscriptionID, "subscription", "", "Subscription ID")
+	cmd.Flags().StringVar(&subscriptionID, "subscription", "", "Subscription ID or unique prefix")
 	cmd.Flags().StringVar(&nodeID, "node", "", "Optional node ID")
 	_ = cmd.MarkFlagRequired("subscription")
 	return cmd

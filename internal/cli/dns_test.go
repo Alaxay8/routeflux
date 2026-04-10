@@ -68,6 +68,7 @@ func TestDNSExplainCommandOutputsFriendlyGuide(t *testing.T) {
 		"split: Keep local names on the router",
 		"doh: encrypted DNS over HTTPS.",
 		"routeflux dns set default",
+		"Preset, not a fifth mode.",
 	}
 	for _, want := range wants {
 		if !strings.Contains(output, want) {
@@ -94,14 +95,81 @@ func TestDNSHelpIncludesDefaultCommand(t *testing.T) {
 
 	output := stdout.String()
 	wants := []string{
-		"default     Apply the RouteFlux recommended DNS profile",
+		"default     Apply the Recommended DNS preset",
 		"routeflux dns default",
-		"routeflux dns set default",
+		"routeflux dns set mode system",
+		"Recommended DNS preset (not a mode): routeflux dns default.",
 	}
 	for _, want := range wants {
 		if !strings.Contains(output, want) {
 			t.Fatalf("dns help missing %q\n%s", want, output)
 		}
+	}
+	unwanted := []string{
+		"apply       Replace the full DNS profile in one step",
+		"routeflux dns apply",
+	}
+	for _, item := range unwanted {
+		if strings.Contains(output, item) {
+			t.Fatalf("dns help unexpectedly contains %q\n%s", item, output)
+		}
+	}
+}
+
+func TestDNSSetHelpFocusesOnCommonPath(t *testing.T) {
+	t.Parallel()
+
+	cmd := newDNSCmd(&rootOptions{service: app.NewService(app.Dependencies{Store: &cliMemoryStore{
+		settings: domain.DefaultSettings(),
+		state:    domain.DefaultRuntimeState(),
+	}})})
+	var stdout bytes.Buffer
+	cmd.SetOut(&stdout)
+	cmd.SetErr(new(bytes.Buffer))
+	cmd.SetArgs([]string{"set", "--help"})
+
+	if err := cmd.Execute(); err != nil {
+		t.Fatalf("execute dns set help: %v", err)
+	}
+
+	output := stdout.String()
+	wants := []string{
+		"Recommended start: routeflux dns default",
+		"default: apply the Recommended DNS preset (preset, not a mode)",
+		"system: leave DNS as it is",
+		"remote: send all DNS to the servers you choose",
+		"split: keep local names local and send internet DNS to the servers you choose",
+		"disabled: do not write RouteFlux DNS settings into the Xray config",
+	}
+	for _, want := range wants {
+		if !strings.Contains(output, want) {
+			t.Fatalf("dns set help missing %q\n%s", want, output)
+		}
+	}
+	if strings.Contains(output, "Simple meaning:") {
+		t.Fatalf("dns set help should not repeat the old simple meaning block\n%s", output)
+	}
+}
+
+func TestDNSApplyHelpRemainsAvailableDirectly(t *testing.T) {
+	t.Parallel()
+
+	cmd := newDNSCmd(&rootOptions{service: app.NewService(app.Dependencies{Store: &cliMemoryStore{
+		settings: domain.DefaultSettings(),
+		state:    domain.DefaultRuntimeState(),
+	}})})
+	var stdout bytes.Buffer
+	cmd.SetOut(&stdout)
+	cmd.SetErr(new(bytes.Buffer))
+	cmd.SetArgs([]string{"apply", "--help"})
+
+	if err := cmd.Execute(); err != nil {
+		t.Fatalf("execute dns apply help: %v", err)
+	}
+
+	output := stdout.String()
+	if !strings.Contains(output, "Apply a complete DNS profile atomically.") {
+		t.Fatalf("dns apply help missing command summary\n%s", output)
 	}
 }
 
@@ -132,7 +200,7 @@ func TestDNSSetDefaultAppliesRecommendedProfile(t *testing.T) {
 	if store.settings.DNS.Mode != want.Mode || store.settings.DNS.Transport != want.Transport {
 		t.Fatalf("unexpected dns profile: %+v", store.settings.DNS)
 	}
-	if !strings.Contains(stdout.String(), "Applied the RouteFlux default DNS profile.") {
+	if !strings.Contains(stdout.String(), "Applied the Recommended DNS preset.") {
 		t.Fatalf("unexpected output: %q", stdout.String())
 	}
 }
@@ -203,7 +271,7 @@ func TestDNSDefaultCommandAppliesRecommendedProfile(t *testing.T) {
 	if store.settings.DNS.Mode != want.Mode || store.settings.DNS.Transport != want.Transport {
 		t.Fatalf("unexpected dns profile: %+v", store.settings.DNS)
 	}
-	if !strings.Contains(stdout.String(), "Applied the RouteFlux default DNS profile.") {
+	if !strings.Contains(stdout.String(), "Applied the Recommended DNS preset.") {
 		t.Fatalf("unexpected output: %q", stdout.String())
 	}
 }
@@ -261,7 +329,7 @@ func TestDNSGetShowsCurrentValuesAndMeaning(t *testing.T) {
 		t.Fatalf("execute default dns get: %v", err)
 	}
 
-	if !strings.Contains(stdout.String(), "profile=routeflux-default") {
+	if !strings.Contains(stdout.String(), "profile=Recommended DNS preset") {
 		t.Fatalf("default dns get missing profile label\n%s", stdout.String())
 	}
 }

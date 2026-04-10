@@ -7,7 +7,7 @@ import (
 	"testing"
 )
 
-func TestZapretViewIncludesFallbackControlsAndWarnings(t *testing.T) {
+func TestZapretViewIncludesCompactFallbackAndSelectorEditor(t *testing.T) {
 	t.Parallel()
 
 	source := readZapretViewSource(t)
@@ -19,14 +19,25 @@ func TestZapretViewIncludesFallbackControlsAndWarnings(t *testing.T) {
 		"Zapret Test",
 		"Start ZapretTest",
 		"Return to Previous Route",
-		"Available presets",
-		"Refresh page",
-		"running (external)",
-		"take over that service the next time fallback or test mode starts",
+		"Choose what Zapret should cover",
+		"Create named custom presets from domains and IPv4 selectors. Each saved preset is added to Zapret immediately.",
+		"Custom presets",
+		"Custom presets in Zapret: %d",
+		"Expanded selectors currently stored in Zapret: %d",
 		"switch this router into Zapret even while proxy nodes stay healthy",
 	} {
 		if !strings.Contains(source, want) {
 			t.Fatalf("zapret view missing marker %q", want)
+		}
+	}
+
+	for _, forbidden := range []string{
+		"routeflux-zapret-resource-grid",
+		"Built-in presets are readonly",
+		"Preset aliases",
+	} {
+		if strings.Contains(source, forbidden) {
+			t.Fatalf("zapret view must not contain %q", forbidden)
 		}
 	}
 }
@@ -43,11 +54,21 @@ func TestZapretViewUsesDedicatedCommands(t *testing.T) {
 		"'zapret', 'set', 'enabled'",
 		"'zapret', 'set', 'selectors'",
 		"'zapret', 'set', 'failback-success-threshold'",
+		"'services', 'set'",
+		"'services', 'delete'",
 		"'zapret', 'test', 'start'",
 		"'zapret', 'test', 'stop'",
 	} {
 		if !strings.Contains(source, want) {
 			t.Fatalf("zapret view must contain %q", want)
+		}
+	}
+
+	for _, forbidden := range []string{
+		"'--json', 'zapret', 'resources'",
+	} {
+		if strings.Contains(source, forbidden) {
+			t.Fatalf("zapret view must not contain %q", forbidden)
 		}
 	}
 }
@@ -66,6 +87,45 @@ func TestZapretViewUsesGreenSelectedChoiceState(t *testing.T) {
 	} {
 		if !strings.Contains(source, want) {
 			t.Fatalf("zapret view missing green choice marker %q", want)
+		}
+	}
+}
+
+func TestZapretViewUsesCompactSelectorEditorInsteadOfPresetBlocks(t *testing.T) {
+	t.Parallel()
+
+	source := readZapretViewSource(t)
+
+	for _, want := range []string{
+		"routeflux-zapret-list",
+		"routeflux-zapret-item",
+		"routeflux-zapret-badge-preset",
+		"routeflux-zapret-item-value",
+		"Preset name",
+		"Preset domains and IPv4",
+		"Change",
+		"Delete",
+		"Save preset",
+		"Each saved preset is added to Zapret immediately",
+		"youtube-home",
+		"googlevideo.com",
+	} {
+		if !strings.Contains(source, want) {
+			t.Fatalf("zapret view missing compact selector marker %q", want)
+		}
+	}
+
+	for _, forbidden := range []string{
+		"Guided resources",
+		"routeflux-zapret-resource-grid",
+		"routeflux-zapret-resource",
+		"routeflux-zapret-resource-selected",
+		"routeflux-zapret-alias-select",
+		"Direct selectors",
+		"Add selector",
+	} {
+		if strings.Contains(source, forbidden) {
+			t.Fatalf("zapret view must not keep preset/resource marker %q", forbidden)
 		}
 	}
 }
@@ -119,15 +179,6 @@ func TestZapretViewUsesLightActionButtonsInsteadOfDarkNavy(t *testing.T) {
 			t.Fatalf("zapret view missing light action marker %q", want)
 		}
 	}
-
-	for _, forbidden := range []string{
-		"color:#eef8ff;",
-		"background:var(--routeflux-zapret-surface-strong);",
-	} {
-		if strings.Contains(source, forbidden) {
-			t.Fatalf("zapret view must not keep dark action marker %q", forbidden)
-		}
-	}
 }
 
 func TestZapretViewUsesReadableLightInputsAndPlaceholders(t *testing.T) {
@@ -136,8 +187,9 @@ func TestZapretViewUsesReadableLightInputsAndPlaceholders(t *testing.T) {
 	source := readZapretViewSource(t)
 
 	for _, want := range []string{
-		".routeflux-theme-light .routeflux-zapret-inline > .cbi-input-text, .routeflux-theme-light .routeflux-zapret-inline > .cbi-input-select { border-color:rgba(125, 146, 170, 0.2); background:linear-gradient(180deg, rgba(251, 252, 254, 0.99) 0%, rgba(244, 248, 252, 0.99) 100%); color:#162638;",
-		".routeflux-theme-light .routeflux-zapret-inline > .cbi-input-text::placeholder { color:#63768c; opacity:1; }",
+		".routeflux-theme-light .routeflux-zapret-inline > .cbi-input-text { border-color:rgba(125, 146, 170, 0.2); background:linear-gradient(180deg, rgba(251, 252, 254, 0.99) 0%, rgba(244, 248, 252, 0.99) 100%); color:#162638;",
+		".routeflux-theme-light .routeflux-zapret-inline > .cbi-input-textarea { border-color:rgba(125, 146, 170, 0.2); background:linear-gradient(180deg, rgba(251, 252, 254, 0.99) 0%, rgba(244, 248, 252, 0.99) 100%); color:#162638;",
+		".routeflux-theme-light .routeflux-zapret-inline > .cbi-input-textarea::placeholder { color:#63768c; opacity:1; }",
 	} {
 		if !strings.Contains(source, want) {
 			t.Fatalf("zapret view missing light input marker %q", want)
@@ -154,7 +206,7 @@ func TestZapretViewUsesPremiumDarkThemeChoicesAndEditors(t *testing.T) {
 		"#routeflux-zapret-root.routeflux-theme-dark { --routeflux-zapret-ink:#eef4ff; --routeflux-zapret-ink-muted:#a8b8ce; --routeflux-zapret-ink-soft:#8ea0b8;",
 		".routeflux-theme-dark .routeflux-zapret-choice { border-color:rgba(145, 175, 220, 0.16); background:linear-gradient(180deg, rgba(11, 18, 30, 0.94) 0%, rgba(8, 14, 24, 0.98) 100%);",
 		".routeflux-theme-dark .routeflux-zapret-choice-selected { border-color:rgba(34, 197, 94, 0.42); background:linear-gradient(180deg, rgba(13, 35, 28, 0.96) 0%, rgba(10, 24, 21, 1) 100%);",
-		".routeflux-theme-dark .routeflux-zapret-inline > .cbi-input-text, .routeflux-theme-dark .routeflux-zapret-inline > .cbi-input-select { border-color:rgba(145, 175, 220, 0.16); background:rgba(6, 12, 22, 0.72); color:#eef4ff;",
+		".routeflux-theme-dark .routeflux-zapret-inline > .cbi-input-textarea { border-color:rgba(145, 175, 220, 0.16); background:rgba(6, 12, 22, 0.72); color:#eef4ff;",
 		".routeflux-theme-dark .routeflux-zapret-item { background:linear-gradient(180deg, rgba(11, 18, 30, 0.94) 0%, rgba(8, 14, 24, 0.98) 100%); border-color:rgba(145, 175, 220, 0.14);",
 		".routeflux-theme-dark .routeflux-zapret-empty { background:rgba(8, 15, 26, 0.5); border-color:rgba(145, 175, 220, 0.24); color:#a8b8ce; }",
 		".routeflux-theme-dark .routeflux-zapret-summary-shell { background:rgba(8, 15, 26, 0.58); border-color:rgba(145, 175, 220, 0.16);",

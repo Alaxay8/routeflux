@@ -115,7 +115,7 @@ func newZapretSetEnabledCmd(opts *rootOptions) *cobra.Command {
 func newZapretSetSelectorsCmd(opts *rootOptions) *cobra.Command {
 	return &cobra.Command{
 		Use:   "selectors [selector...]",
-		Short: "Set Zapret selectors to service aliases and FQDN domains",
+		Short: "Set Zapret selectors to domains and IPv4 selectors",
 		Args:  cobra.ArbitraryArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			selectors := args
@@ -149,11 +149,11 @@ func newZapretSetFailbackThresholdCmd(opts *rootOptions) *cobra.Command {
 
 func renderZapretSettings(settings domain.ZapretSettings) string {
 	return fmt.Sprintf(
-		"enabled=%t\nselectors=%s\nservices=%s\ndomains=%s\nfailback-success-threshold=%d",
+		"enabled=%t\nselectors=%s\ndomains=%s\ncidrs=%s\nfailback-success-threshold=%d",
 		settings.Enabled,
 		zapretSelectorSummary(settings.Selectors),
-		strings.Join(settings.Selectors.Services, ", "),
 		strings.Join(settings.Selectors.Domains, ", "),
+		strings.Join(settings.Selectors.CIDRs, ", "),
 		settings.FailbackSuccessThreshold,
 	)
 }
@@ -172,8 +172,8 @@ func renderZapretStatus(status domain.ZapretStatus) string {
 }
 
 func zapretSelectorSummary(selectors domain.FirewallSelectorSet) string {
-	values := make([]string, 0, len(selectors.Services)+len(selectors.Domains))
-	values = append(values, selectors.Services...)
+	values := make([]string, 0, len(selectors.Domains)+len(selectors.CIDRs))
 	values = append(values, selectors.Domains...)
+	values = append(values, selectors.CIDRs...)
 	return strings.Join(values, ", ")
 }

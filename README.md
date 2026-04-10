@@ -45,7 +45,7 @@ routeflux connect --auto --subscription sub-1234567890
 
 After installation you can use:
 
-- LuCI: `Services -> RouteFlux`
+- LuCI: `Services -> RouteFlux` opens `Subscriptions`
 - CLI: over SSH with `routeflux ...`
 - TUI: `routeflux tui`
 
@@ -163,9 +163,17 @@ On OpenWrt, enable the service when you want auto refresh, failover monitoring, 
 /etc/init.d/routeflux start
 ```
 
+### LuCI pages
+
+- `Subscriptions`: import providers, inspect profiles, and connect.
+- `Routing`: the simplified everyday flow for `Off`, `Bypass`, direct domains, direct IPv4 selectors, and the DNS preset choice.
+- `DNS`: full DNS control for `system`, `remote`, `split`, and `disabled`.
+- `Zapret`: fallback domains only. Use fully qualified domains such as `youtube.com` or `googlevideo.com`.
+- `services` in the CLI remain available as advanced reusable aliases for firewall targets.
+
 ### DNS and firewall helpers
 
-On OpenWrt, `routeflux dns set default` or `routeflux dns set mode remote|split` now affects the real router and LAN DNS path while a node is connected. RouteFlux points `dnsmasq` at a local Xray DNS runtime, keeps `.lan` style names local in split mode, and returns to system DNS on disconnect.
+On OpenWrt, `routeflux dns set default` applies the Recommended DNS preset. It is a preset, not a fifth DNS mode. `routeflux dns set mode remote|split` and the other real DNS modes still affect the router and LAN DNS path while a node is connected. RouteFlux points `dnsmasq` at a local Xray DNS runtime, keeps `.lan` style names local in split mode, and returns to system DNS on disconnect.
 
 ```bash
 routeflux dns get
@@ -178,6 +186,8 @@ routeflux firewall set targets youtube instagram 1.1.1.1
 routeflux firewall set split --proxy youtube --bypass gosuslugi.ru --exclude-host 192.168.1.50
 routeflux services set openai openai.com chatgpt.com oaistatic.com
 routeflux services list
+routeflux zapret get
+routeflux zapret set selectors youtube.com googlevideo.com
 routeflux firewall explain
 ```
 
@@ -267,6 +277,8 @@ For guided explanations, prefer the built-in help:
 
 ## DNS Modes
 
+CLI help keeps the common path short. This section is the detailed DNS reference.
+
 If you do not want to think about DNS details, use this:
 
 ```bash
@@ -311,6 +323,8 @@ DNS transports:
 - `doh`: encrypted DNS over HTTPS
 
 ## Firewall Modes
+
+CLI help keeps the common path short. This section is the detailed firewall reference.
 
 - `disabled`: do not redirect router traffic through RouteFlux
   Example: RouteFlux is installed, but no device is forced through the proxy.
