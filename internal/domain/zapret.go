@@ -70,7 +70,7 @@ func CanonicalZapretSettingsWithCatalog(settings ZapretSettings, customCatalog m
 	settings = NormalizeZapretSettings(settings)
 	settings.Selectors.Domains = NormalizeZapretDomainList(ExpandZapretSelectorDomains(customCatalog, settings.Selectors))
 	settings.Selectors.CIDRs = NormalizeZapretCIDRList(ExpandZapretSelectorCIDRs(customCatalog, settings.Selectors))
-	settings.Selectors.Services = nil
+	settings.Selectors.Services = canonicalFirewallTargetServices(settings.Selectors.Services)
 	return settings
 }
 
@@ -78,10 +78,12 @@ func CanonicalZapretSettingsWithCatalog(settings ZapretSettings, customCatalog m
 func ParseZapretSelectors(selectors []string, customCatalog map[string]FirewallTargetDefinition) (FirewallSelectorSet, error) {
 	_ = customCatalog
 	result := FirewallSelectorSet{
-		Domains: make([]string, 0, len(selectors)),
-		CIDRs:   make([]string, 0, len(selectors)),
+		Services: make([]string, 0, len(selectors)),
+		Domains:  make([]string, 0, len(selectors)),
+		CIDRs:    make([]string, 0, len(selectors)),
 	}
 
+	seenServices := make(map[string]struct{}, len(selectors))
 	seenDomains := make(map[string]struct{}, len(selectors))
 	seenCIDRs := make(map[string]struct{}, len(selectors))
 
@@ -99,6 +101,15 @@ func ParseZapretSelectors(selectors []string, customCatalog map[string]FirewallT
 			}
 			seenCIDRs[normalized] = struct{}{}
 			result.CIDRs = append(result.CIDRs, normalized)
+			continue
+		}
+
+		if service, ok := LookupFirewallTargetService(customCatalog, selector); ok {
+			if _, seen := seenServices[service.Name]; seen {
+				continue
+			}
+			seenServices[service.Name] = struct{}{}
+			result.Services = append(result.Services, service.Name)
 			continue
 		}
 

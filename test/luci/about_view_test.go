@@ -20,7 +20,9 @@ func TestAboutViewUsesLatestInstallScriptUpgradeFlow(t *testing.T) {
 		"Existing /etc/routeflux state is preserved by the installer.",
 		"function extractSelfUpdateStatus(output)",
 		"function extractXrayUpdateStatus(output)",
+		"function xrayUpdateNotificationLevel(status)",
 		"status !== 'up-to-date'",
+		"status !== 'unsupported'",
 		"Update Xray",
 	} {
 		if !strings.Contains(source, want) {
@@ -69,6 +71,8 @@ func TestXrayUpdateHelperUsesOfficialUpstreamSource(t *testing.T) {
 		"Xray-linux-64.zip",
 		"Xray-linux-arm64-v8a.zip",
 		"ROUTEFLUX_XRAY_UPDATE_STATUS=",
+		"exit_with_status",
+		"Xray is up to date",
 	} {
 		if !strings.Contains(source, want) {
 			t.Fatalf("xray update helper missing marker %q", want)

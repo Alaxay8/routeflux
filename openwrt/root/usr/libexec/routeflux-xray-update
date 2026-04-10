@@ -11,7 +11,8 @@ ROUTEFLUX_XRAY_RELEASE_BASE_URL="${ROUTEFLUX_XRAY_RELEASE_BASE_URL:-https://gith
 ROUTEFLUX_XRAY_ARCH_OVERRIDE="${ROUTEFLUX_XRAY_ARCH_OVERRIDE:-}"
 ROUTEFLUX_XRAY_ASSET_NAME="${ROUTEFLUX_XRAY_ASSET_NAME:-}"
 ROUTEFLUX_XRAY_WORKDIR="${ROUTEFLUX_XRAY_WORKDIR:-/tmp/routeflux-xray-update}"
-ROUTEFLUX_XRAY_MIN_WORKDIR_KB="${ROUTEFLUX_XRAY_MIN_WORKDIR_KB:-32768}"
+ROUTEFLUX_XRAY_MIN_WORKDIR_KB="${ROUTEFLUX_XRAY_MIN_WORKDIR_KB:-12288}"
+ROUTEFLUX_XRAY_UNSUPPORTED_MIPS_MESSAGE="Official Xray releases do not publish a soft-float MIPS build. This router uses a soft-float Xray runtime, so direct upstream self-update stays disabled to avoid installing an incompatible binary."
 
 trim() {
 	printf '%s' "${1:-}" | sed 's/^[[:space:]]*//; s/[[:space:]]*$//'
@@ -129,8 +130,7 @@ resolve_asset_name() {
 			printf 'Xray-linux-arm32-v5.zip\n'
 			;;
 		mips*|mipsel*)
-			printf 'Official Xray releases do not publish a soft-float MIPS build. This router uses a soft-float Xray runtime, so direct upstream self-update is disabled to avoid replacing it with an incompatible binary.\n' >&2
-			exit 1
+			return 2
 			;;
 		*)
 			printf 'Unsupported router architecture for official Xray updates: %s\n' "${arch}" >&2
@@ -170,17 +170,36 @@ cleanup() {
 	rm -rf "${ROUTEFLUX_XRAY_WORKDIR}"
 }
 
+exit_with_status() {
+	status="$1"
+	message="$2"
+
+	printf 'ROUTEFLUX_XRAY_UPDATE_STATUS=%s\n' "${status}"
+	printf '%s\n' "${message}"
+	exit 0
+}
+
 latest_tag="$(fetch_text "${ROUTEFLUX_XRAY_RELEASES_API}" | json_string_value tag_name)"
 latest_version="${latest_tag#v}"
 current="$(trim "$(current_version)")"
 
 if [ -n "${current}" ] && [ -n "${latest_version}" ] && [ "${current}" = "${latest_version}" ]; then
 	printf '%s\n' 'ROUTEFLUX_XRAY_UPDATE_STATUS=up-to-date'
-	printf 'Xray is already up to date (%s).\n' "${current}"
+	printf 'Xray is up to date (%s).\n' "${current}"
 	exit 0
 fi
 
-asset_name="$(resolve_asset_name)"
+asset_status=0
+asset_name="$(resolve_asset_name)" || asset_status=$?
+
+if [ "${asset_status}" -eq 2 ]; then
+	exit_with_status "unsupported" "${ROUTEFLUX_XRAY_UNSUPPORTED_MIPS_MESSAGE}"
+fi
+
+if [ "${asset_status}" -ne 0 ]; then
+	exit "${asset_status}"
+fi
+
 asset_url="${ROUTEFLUX_XRAY_RELEASE_BASE_URL}/${latest_tag}/${asset_name}"
 
 mkdir -p "${ROUTEFLUX_XRAY_WORKDIR}"
@@ -192,6 +211,7 @@ binary_path="${ROUTEFLUX_XRAY_WORKDIR}/xray"
 
 download_file "${asset_url}" "${archive_path}"
 "${ROUTEFLUX_XRAY_UNZIP}" -p "${archive_path}" xray > "${binary_path}"
+rm -f "${archive_path}"
 chmod 0755 "${binary_path}"
 "${binary_path}" version >/dev/null 2>&1
 

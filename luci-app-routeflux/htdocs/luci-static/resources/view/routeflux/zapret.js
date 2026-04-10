@@ -6,6 +6,10 @@
 'require routeflux.ui as routefluxUI';
 
 var routefluxBinary = '/usr/bin/routeflux';
+var zapretPresetPrefix = 'zapret-';
+var zapretPresetBrandNames = {
+	'youtube': 'YouTube'
+};
 
 function trim(value) {
 	if (value == null)
@@ -22,6 +26,15 @@ function firstNonEmpty(values, fallback) {
 	}
 
 	return fallback || '';
+}
+
+function wordsTitleCase(value) {
+	return String(value || '').split(/\s+/).filter(function(part) {
+		return trim(part) !== '';
+	}).map(function(part) {
+		var lowered = part.toLowerCase();
+		return zapretPresetBrandNames[lowered] || (lowered.charAt(0).toUpperCase() + lowered.slice(1));
+	}).join(' ');
 }
 
 function notificationParagraph(message) {
@@ -114,13 +127,45 @@ function serviceSelectors(service) {
 	return cleanList([].concat(service && service.domains || [], service && service.cidrs || []));
 }
 
+function isZapretPresetName(name) {
+	return trim(name).indexOf(zapretPresetPrefix) === 0;
+}
+
+function slugifyZapretPresetName(value) {
+	var slug = trim(value).toLowerCase()
+		.replace(/[^a-z0-9]+/g, '-')
+		.replace(/^-+/, '')
+		.replace(/-+$/, '');
+
+	if (slug !== '' && !/^[a-z]/.test(slug))
+		slug = 'preset-' + slug;
+
+	return slug;
+}
+
+function zapretPresetStorageName(value) {
+	var slug = slugifyZapretPresetName(value);
+	return slug === '' ? '' : zapretPresetPrefix + slug;
+}
+
+function zapretPresetDisplayName(value) {
+	var normalized = trim(value);
+
+	if (isZapretPresetName(normalized))
+		normalized = normalized.slice(zapretPresetPrefix.length);
+
+	return wordsTitleCase(normalized.replace(/-/g, ' '));
+}
+
 function isCustomService(service) {
 	return trim(service && service.source) === 'custom' && service && service.readonly !== true;
 }
 
 function availableZapretServices(services) {
 	return (Array.isArray(services) ? services.slice() : []).filter(function(service) {
-		return isCustomService(service) && serviceSelectors(service).length > 0;
+		return isCustomService(service) &&
+			isZapretPresetName(service && service.name) &&
+			serviceSelectors(service).length > 0;
 	}).sort(function(left, right) {
 		return trim(left.name).localeCompare(trim(right.name));
 	});
@@ -131,11 +176,38 @@ function buildFormState(settings, services) {
 	var activeSelectors = cleanList([].concat(selectors.domains || [], selectors.cidrs || []));
 	var selectedPresets = {};
 	var remaining = activeSelectors.slice();
+	var persistedPresetNames = cleanList(selectors.services || []);
 	var entries = availableZapretServices(services).slice().sort(function(left, right) {
 		return serviceSelectors(right).length - serviceSelectors(left).length;
 	});
 
+	for (var i = 0; i < persistedPresetNames.length; i++) {
+		if (!isZapretPresetName(persistedPresetNames[i]))
+			continue;
+		selectedPresets[persistedPresetNames[i]] = true;
+	}
+
 	for (var i = 0; i < entries.length; i++) {
+		if (selectedPresets[trim(entries[i].name)] !== true)
+			continue;
+		remaining = remaining.filter(function(value) {
+			return serviceSelectors(entries[i]).indexOf(value) < 0;
+		});
+	}
+
+	if (Object.keys(selectedPresets).length > 0) {
+		return {
+			'enabled': settings && settings.enabled === true,
+			'threshold': String((settings && settings.failback_success_threshold) || 3),
+			'unmanagedSelectors': remaining,
+			'selectedPresets': selectedPresets,
+			'presetDraftName': '',
+			'presetDraftSelectors': '',
+			'editingPresetName': ''
+		};
+	}
+
+	for (i = 0; i < entries.length; i++) {
 		var presetSelectors = serviceSelectors(entries[i]);
 		var matched = presetSelectors.length > 0;
 
@@ -261,10 +333,65 @@ return view.extend({
 		return availableZapretServices(this.pageData.services || []);
 	},
 
-	runCommands: function(commands, successMessage) {
+	upsertLocalService: function(service) {
+		var services = Array.isArray(this.pageData.services) ? this.pageData.services.slice() : [];
+		var target = trim(service && service.name);
+		var updated = false;
+
+		for (var i = 0; i < services.length; i++) {
+			if (trim(services[i].name) !== target)
+				continue;
+			services[i] = service;
+			updated = true;
+			break;
+		}
+
+		if (!updated)
+			services.push(service);
+
+		this.pageData.services = services;
+	},
+
+	removeLocalService: function(name) {
+		var target = trim(name);
+		this.pageData.services = (Array.isArray(this.pageData.services) ? this.pageData.services : []).filter(function(service) {
+			return trim(service && service.name) !== target;
+		});
+	},
+
+	setLocalZapretSelectors: function(selectors) {
+		var selectedPresetNames = this.selectedZapretPresetNames();
+		if (!this.pageData.settings || this.pageData.settings.__error__)
+			this.pageData.settings = {};
+
+		this.pageData.settings.enabled = this.formState.enabled === true;
+		this.pageData.settings.failback_success_threshold = Number(firstNonEmpty([ this.formState.threshold ], '3')) || 3;
+		this.pageData.settings.selectors = {
+			'services': selectedPresetNames.length > 0 ? selectedPresetNames : null,
+			'domains': cleanList(selectors),
+			'cidrs': null
+		};
+	},
+
+	selectedZapretPresetNames: function() {
+		var selected = this.formState.selectedPresets || {};
+		var services = this.availableServices();
+		var names = [];
+
+		for (var i = 0; i < services.length; i++) {
+			if (selected[trim(services[i].name)] !== true)
+				continue;
+			names.push(trim(services[i].name));
+		}
+
+		return cleanList(names);
+	},
+
+	runCommands: function(commands, successMessage, options) {
 		var self = this;
 		var outputs = [];
 		var chain = Promise.resolve();
+		var shouldRefresh = !(options && options.refresh === false);
 
 		for (var i = 0; i < commands.length; i++) {
 			(function(argv) {
@@ -287,7 +414,10 @@ return view.extend({
 			}
 
 			ui.addNotification(null, notificationParagraph(message || successMessage), 'info');
-			return this.refreshPageContent();
+			if (shouldRefresh)
+				return this.refreshPageContent();
+			this.renderIntoRoot();
+			return Promise.resolve();
 		}, this)).catch(function(err) {
 			ui.addNotification(null, notificationParagraph(err.message || String(err)));
 			throw err;
@@ -296,18 +426,28 @@ return view.extend({
 
 	handleSave: function() {
 		var selectors = this.expandedSelectors();
+		var selectorArgs = this.selectedZapretPresetNames();
+
+		if (this.formState.enabled === true && selectorArgs.length === 0) {
+			ui.addNotification(null, notificationParagraph(_('Zapret fallback needs at least one allowed preset.')));
+			return Promise.resolve();
+		}
+
+		this.setLocalZapretSelectors(selectors);
 
 		return this.runCommands([
 			[ 'zapret', 'set', 'enabled', this.formState.enabled === true ? 'true' : 'false' ],
-			[ 'zapret', 'set', 'selectors' ].concat(selectors),
+			[ 'zapret', 'set', 'selectors' ].concat(selectorArgs),
 			[ 'zapret', 'set', 'failback-success-threshold', firstNonEmpty([ this.formState.threshold ], '3') ]
-		], _('Zapret fallback settings saved.'));
+		], _('Zapret fallback settings saved.'), { 'refresh': false });
 	},
 
 	handleDisableFallback: function() {
+		this.formState.enabled = false;
+		this.setLocalZapretSelectors(this.expandedSelectors());
 		return this.runCommands([
 			[ 'zapret', 'set', 'enabled', 'false' ]
-		], _('Zapret fallback disabled.'));
+		], _('Zapret fallback disabled.'), { 'refresh': false });
 	},
 
 	handleRefreshPage: function() {
@@ -355,7 +495,7 @@ return view.extend({
 			return;
 
 		this.formState.editingPresetName = trim(service.name);
-		this.formState.presetDraftName = trim(service.name);
+		this.formState.presetDraftName = zapretPresetDisplayName(service.name);
 		this.formState.presetDraftSelectors = serviceSelectors(service).join('\n');
 		this.renderIntoRoot();
 	},
@@ -370,20 +510,25 @@ return view.extend({
 		this.renderIntoRoot();
 	},
 
-	handlePresetDraftNameInput: function(ev) {
-		this.formState.presetDraftName = String(ev && ev.currentTarget && ev.currentTarget.value || '');
+	readPresetDraftName: function() {
+		var field = document.getElementById('routeflux-zapret-preset-name');
+		return field ? String(field.value || '') : String(this.formState.presetDraftName || '');
 	},
 
-	handlePresetDraftSelectorsInput: function(ev) {
-		this.formState.presetDraftSelectors = String(ev && ev.currentTarget && ev.currentTarget.value || '');
+	readPresetDraftSelectors: function() {
+		var field = document.getElementById('routeflux-zapret-preset-selectors');
+		return field ? String(field.value || '') : String(this.formState.presetDraftSelectors || '');
 	},
 
 	persistPresetSelectors: function(successMessage) {
 		var self = this;
 		var selectors = this.expandedSelectors();
+		var selectorArgs = this.selectedZapretPresetNames();
+		this.setLocalZapretSelectors(selectors);
 
-		return this.execText([ 'zapret', 'set', 'selectors' ].concat(selectors)).then(function(stdout) {
+		return this.execText([ 'zapret', 'set', 'selectors' ].concat(selectorArgs)).then(function(stdout) {
 			ui.addNotification(null, notificationParagraph(trim(stdout) || successMessage), 'info');
+			self.renderIntoRoot();
 		}).catch(function(err) {
 			ui.addNotification(null, notificationParagraph(err.message || String(err)));
 			throw err;
@@ -392,15 +537,21 @@ return view.extend({
 
 	handleSavePreset: function(ev) {
 		var editingName = trim(this.formState.editingPresetName);
-		var name = trim(this.formState.presetDraftName).toLowerCase();
-		var parsed = parseSelectorInput(this.formState.presetDraftSelectors);
+		var draftName = trim(this.readPresetDraftName());
+		var name = zapretPresetStorageName(draftName);
+		var parsed = parseSelectorInput(this.readPresetDraftSelectors());
 		var self = this;
 
 		if (ev && typeof ev.preventDefault === 'function')
 			ev.preventDefault();
 
-		if (!/^[a-z0-9][a-z0-9-]*$/.test(name)) {
-			ui.addNotification(null, notificationParagraph(_('Preset name must use lowercase letters, digits, and hyphens only.')));
+		if (draftName === '') {
+			ui.addNotification(null, notificationParagraph(_('Preset name is required.')));
+			return Promise.resolve();
+		}
+
+		if (name === '') {
+			ui.addNotification(null, notificationParagraph(_('Preset name must include Latin letters or digits.')));
 			return Promise.resolve();
 		}
 
@@ -421,9 +572,11 @@ return view.extend({
 				});
 			return stdout;
 		}).then(function(stdout) {
-			return self.execJSON([ '--json', 'services', 'list' ]).then(function(services) {
+			return self.execJSON([ '--json', 'services', 'get', name ]).then(function(service) {
 				var selected = Object.assign({}, self.formState.selectedPresets || {});
-				self.pageData.services = Array.isArray(services) ? services : [];
+				if (editingName !== '' && editingName !== name)
+					self.removeLocalService(editingName);
+				self.upsertLocalService(service);
 				if (editingName !== '' && editingName !== name)
 					delete selected[editingName];
 				selected[name] = true;
@@ -432,7 +585,6 @@ return view.extend({
 				self.formState.editingPresetName = '';
 				self.formState.presetDraftName = '';
 				self.formState.presetDraftSelectors = '';
-				self.renderIntoRoot();
 				return self.persistPresetSelectors(trim(stdout) || _('Zapret preset saved.'));
 			});
 		}).catch(function(err) {
@@ -449,19 +601,18 @@ return view.extend({
 			ev.preventDefault();
 
 		return this.execText([ 'services', 'delete', trim(name) ]).then(function(stdout) {
-			return self.execJSON([ '--json', 'services', 'list' ]).then(function(services) {
 				delete selected[trim(name)];
-				self.pageData.services = Array.isArray(services) ? services : [];
+				self.removeLocalService(name);
 				self.formState.selectedPresets = selected;
 				self.formState.unmanagedSelectors = [];
+				if (Object.keys(selected).length === 0)
+					self.formState.enabled = false;
 				if (trim(self.formState.editingPresetName) === trim(name)) {
 					self.formState.editingPresetName = '';
 					self.formState.presetDraftName = '';
 					self.formState.presetDraftSelectors = '';
 				}
-				self.renderIntoRoot();
 				return self.persistPresetSelectors(trim(stdout) || _('Zapret preset deleted.'));
-			});
 		}).catch(function(err) {
 			ui.addNotification(null, notificationParagraph(err.message || String(err)));
 			throw err;
@@ -497,7 +648,7 @@ return view.extend({
 			warnings.push(_('A Zapret service is already running outside RouteFlux. RouteFlux can take over that service the next time fallback or test mode starts.'));
 
 		if (!selectorHasEntries(selectors))
-			warnings.push(_('Zapret selectors are empty. Add domains or IPv4 selectors before enabling fallback.'));
+			warnings.push(_('Zapret selectors are empty. Add at least one allowed preset before enabling fallback.'));
 
 		if ((this.formState.unmanagedSelectors || []).length > 0)
 			warnings.push(_('Some existing Zapret selectors do not match a saved custom preset. Save from LuCI keeps only the custom presets listed on this page.'));
@@ -534,7 +685,7 @@ return view.extend({
 			rows.push(E('div', { 'class': 'routeflux-zapret-item routeflux-zapret-item-preset' }, [
 				E('span', { 'class': 'routeflux-zapret-badge routeflux-zapret-badge-preset' }, [ _('Preset') ]),
 				E('div', { 'class': 'routeflux-zapret-item-value' }, [
-					E('strong', {}, [ trim(service.name) ]),
+					E('strong', {}, [ zapretPresetDisplayName(service.name) ]),
 					E('div', { 'class': 'routeflux-zapret-item-meta' }, [ details.join(' · ') || _('Ready to use in Zapret.') ])
 				]),
 				isCustomService(service) ? E('button', {
@@ -598,8 +749,8 @@ return view.extend({
 				'#routeflux-zapret-root .routeflux-zapret-layout { display:grid; gap:14px; padding:0; border:0; background:transparent; box-shadow:none; color:var(--routeflux-zapret-ink); overflow:visible; }',
 				'#routeflux-zapret-root .routeflux-zapret-layout::before { display:none; }',
 				'.routeflux-zapret-grid { display:grid; grid-template-columns:repeat(auto-fit, minmax(240px, 1fr)); gap:14px; }',
-				'.routeflux-zapret-panel { position:relative; overflow:hidden; isolation:isolate; border:1px solid rgba(120, 141, 167, 0.42); border-radius:22px; padding:20px; background:var(--routeflux-zapret-panel-bg); box-shadow:0 20px 44px rgba(3, 15, 32, 0.22), inset 0 1px 0 rgba(255, 255, 255, 0.78); }',
-				'.routeflux-zapret-panel::before { content:""; position:absolute; inset:0; background:radial-gradient(circle at top left, rgba(125, 211, 252, 0.22), transparent 34%), radial-gradient(circle at bottom right, rgba(59, 130, 246, 0.12), transparent 40%); pointer-events:none; }',
+				'.routeflux-zapret-panel { position:relative; overflow:hidden; isolation:isolate; border:1px solid rgba(120, 141, 167, 0.3); border-radius:18px; padding:18px; background:var(--routeflux-zapret-surface-bg); box-shadow:none; }',
+				'.routeflux-zapret-panel::before { display:none; }',
 				'.routeflux-zapret-panel > * { position:relative; z-index:1; }',
 				'.routeflux-zapret-panel h3 { margin:0; color:var(--routeflux-zapret-ink); font-size:clamp(24px, 1.1vw + 18px, 34px); line-height:1.12; letter-spacing:-0.03em; }',
 				'.routeflux-zapret-choice-grid, .routeflux-zapret-editor-grid { display:grid; gap:14px; }',
@@ -620,22 +771,22 @@ return view.extend({
 				'.routeflux-zapret-editor-head .cbi-section-descr { margin:0; }',
 				'.routeflux-zapret-editor-kicker { display:inline-flex; align-items:center; width:max-content; max-width:100%; padding:5px 11px; border-radius:999px; background:rgba(14, 165, 233, 0.14); color:#075985; font-size:12px; font-weight:800; letter-spacing:.08em; text-transform:uppercase; }',
 				'.routeflux-zapret-inline { display:flex; gap:10px; align-items:stretch; }',
-				'.routeflux-zapret-inline > .cbi-input-text { flex:1 1 auto; min-width:0; min-height:52px; padding:0 14px; border:1px solid rgba(71, 85, 105, 0.38); border-radius:15px; background:linear-gradient(180deg, rgba(255, 255, 255, 0.99) 0%, rgba(244, 248, 252, 0.99) 100%); color:var(--routeflux-zapret-ink); box-shadow:inset 0 1px 0 rgba(255, 255, 255, 0.92), 0 10px 24px rgba(15, 23, 42, 0.08); }',
-				'.routeflux-zapret-inline > .cbi-input-textarea { flex:1 1 auto; min-width:0; min-height:124px; padding:14px; border:1px solid rgba(71, 85, 105, 0.38); border-radius:15px; background:linear-gradient(180deg, rgba(255, 255, 255, 0.99) 0%, rgba(244, 248, 252, 0.99) 100%); color:var(--routeflux-zapret-ink); box-shadow:inset 0 1px 0 rgba(255, 255, 255, 0.92), 0 10px 24px rgba(15, 23, 42, 0.08); resize:vertical; }',
+				'.routeflux-zapret-inline > .cbi-input-text { flex:1 1 auto; min-width:0; min-height:48px; padding:0 14px; border:1px solid rgba(71, 85, 105, 0.2); border-radius:14px; background:rgba(255, 255, 255, 0.98); color:var(--routeflux-zapret-ink); box-shadow:none; }',
+				'.routeflux-zapret-inline > .cbi-input-textarea { flex:1 1 auto; min-width:0; min-height:112px; padding:14px; border:1px solid rgba(71, 85, 105, 0.2); border-radius:14px; background:rgba(255, 255, 255, 0.98); color:var(--routeflux-zapret-ink); box-shadow:none; resize:vertical; }',
 				'.routeflux-zapret-inline > .cbi-input-text:focus { border-color:rgba(14, 165, 233, 0.72); box-shadow:0 0 0 1px rgba(14, 165, 233, 0.24), 0 16px 30px rgba(14, 165, 233, 0.16); }',
 				'.routeflux-zapret-inline > .cbi-input-textarea:focus { border-color:rgba(14, 165, 233, 0.72); box-shadow:0 0 0 1px rgba(14, 165, 233, 0.24), 0 16px 30px rgba(14, 165, 233, 0.16); }',
-				'.routeflux-theme-light .routeflux-zapret-inline > .cbi-input-text { border-color:rgba(125, 146, 170, 0.2); background:linear-gradient(180deg, rgba(251, 252, 254, 0.99) 0%, rgba(244, 248, 252, 0.99) 100%); color:#162638; box-shadow:inset 0 1px 0 rgba(255, 255, 255, 0.9), 0 8px 18px rgba(63, 87, 118, 0.06); }',
-				'.routeflux-theme-light .routeflux-zapret-inline > .cbi-input-textarea { border-color:rgba(125, 146, 170, 0.2); background:linear-gradient(180deg, rgba(251, 252, 254, 0.99) 0%, rgba(244, 248, 252, 0.99) 100%); color:#162638; box-shadow:inset 0 1px 0 rgba(255, 255, 255, 0.9), 0 8px 18px rgba(63, 87, 118, 0.06); }',
+				'.routeflux-theme-light .routeflux-zapret-inline > .cbi-input-text { border-color:rgba(125, 146, 170, 0.18); background:#fcfdff; color:#162638; box-shadow:none; }',
+				'.routeflux-theme-light .routeflux-zapret-inline > .cbi-input-textarea { border-color:rgba(125, 146, 170, 0.18); background:#fcfdff; color:#162638; box-shadow:none; }',
 				'.routeflux-theme-light .routeflux-zapret-inline > .cbi-input-text::placeholder { color:#63768c; opacity:1; }',
 				'.routeflux-theme-light .routeflux-zapret-inline > .cbi-input-textarea::placeholder { color:#63768c; opacity:1; }',
-				'.routeflux-theme-dark .routeflux-zapret-inline > .cbi-input-text { border-color:rgba(145, 175, 220, 0.16); background:rgba(6, 12, 22, 0.72); color:#eef4ff; box-shadow:inset 0 1px 0 rgba(255, 255, 255, 0.03); }',
-				'.routeflux-theme-dark .routeflux-zapret-inline > .cbi-input-textarea { border-color:rgba(145, 175, 220, 0.16); background:rgba(6, 12, 22, 0.72); color:#eef4ff; box-shadow:inset 0 1px 0 rgba(255, 255, 255, 0.03); }',
+				'.routeflux-theme-dark .routeflux-zapret-inline > .cbi-input-text { border-color:rgba(145, 175, 220, 0.16); background:rgba(6, 12, 22, 0.88); color:#eef4ff; box-shadow:none; }',
+				'.routeflux-theme-dark .routeflux-zapret-inline > .cbi-input-textarea { border-color:rgba(145, 175, 220, 0.16); background:rgba(6, 12, 22, 0.88); color:#eef4ff; box-shadow:none; }',
 				'.routeflux-theme-dark .routeflux-zapret-inline > .cbi-input-text::placeholder { color:#91a2bd; opacity:0.84; }',
 				'.routeflux-theme-dark .routeflux-zapret-inline > .cbi-input-textarea::placeholder { color:#91a2bd; opacity:0.84; }',
 				'.routeflux-zapret-inline > .cbi-button-action, .routeflux-zapret-actions .cbi-button { min-height:52px; padding:0 18px; border:1px solid rgba(37, 99, 235, 0.18); border-radius:15px; background:linear-gradient(180deg, rgba(243, 248, 253, 0.98) 0%, rgba(232, 240, 248, 0.98) 100%); color:#17324b; font-weight:800; box-shadow:0 12px 22px rgba(63, 87, 118, 0.08), inset 0 1px 0 rgba(255, 255, 255, 0.84); }',
 				'.routeflux-zapret-inline > .cbi-button-action:hover, .routeflux-zapret-actions .cbi-button:hover { border-color:rgba(37, 99, 235, 0.28); background:linear-gradient(180deg, rgba(236, 244, 251, 0.99) 0%, rgba(225, 236, 247, 0.99) 100%); color:#102f4c; }',
 				'.routeflux-zapret-list { display:grid; gap:8px; }',
-				'.routeflux-zapret-item { display:flex; gap:12px; align-items:center; padding:12px 14px; border-radius:15px; background:rgba(255, 255, 255, 0.93); border:1px solid rgba(125, 145, 168, 0.28); box-shadow:0 10px 22px rgba(15, 23, 42, 0.08); }',
+				'.routeflux-zapret-item { display:flex; gap:12px; align-items:center; padding:12px 14px; border-radius:15px; background:rgba(255, 255, 255, 0.93); border:1px solid rgba(125, 145, 168, 0.22); box-shadow:none; }',
 				'.routeflux-zapret-item-meta { margin-top:4px; color:var(--routeflux-zapret-ink-muted); font-size:13px; font-weight:600; }',
 				'.routeflux-zapret-item .cbi-button-action { min-width:92px; border-radius:12px; }',
 				'.routeflux-zapret-item .cbi-button-negative { min-width:92px; border-radius:12px; }',
@@ -643,23 +794,22 @@ return view.extend({
 				'.routeflux-zapret-badge { display:inline-flex; align-items:center; justify-content:center; min-width:58px; padding:4px 8px; border-radius:999px; background:rgba(16, 185, 129, 0.14); color:#047857; font-size:11px; font-weight:800; letter-spacing:.05em; text-transform:uppercase; }',
 				'.routeflux-zapret-badge-preset { background:rgba(37, 99, 235, 0.14); color:#1d4ed8; }',
 				'.routeflux-zapret-empty { padding:14px; border-radius:14px; background:rgba(255, 255, 255, 0.82); border:1px dashed rgba(125, 145, 168, 0.42); color:var(--routeflux-zapret-ink-muted); font-size:15px; font-weight:500; }',
-				'.routeflux-zapret-summary-shell { padding:16px 18px; border:1px solid rgba(125, 145, 168, 0.34); border-radius:16px; background:rgba(255, 255, 255, 0.84); box-shadow:0 10px 22px rgba(15, 23, 42, 0.08); }',
-				'.routeflux-zapret-summary-shell h3 { margin-top:0; margin-bottom:10px; color:var(--routeflux-zapret-ink); font-size:20px; letter-spacing:-0.02em; }',
+				'.routeflux-zapret-summary-shell { padding:14px 16px; border:1px solid rgba(125, 145, 168, 0.22); border-radius:14px; background:rgba(255, 255, 255, 0.72); box-shadow:none; }',
+				'.routeflux-zapret-summary-shell h3 { margin-top:0; margin-bottom:8px; color:var(--routeflux-zapret-ink); font-size:18px; letter-spacing:-0.02em; }',
 				'.routeflux-zapret-summary-list { margin:0; padding-left:18px; color:var(--routeflux-zapret-ink-soft); line-height:1.65; font-size:15px; }',
 				'.routeflux-zapret-summary-list li { color:var(--routeflux-zapret-ink); font-weight:500; }',
 				'.routeflux-zapret-summary-list li + li { margin-top:6px; }',
 				'.routeflux-zapret-actions { display:flex; flex-wrap:wrap; gap:10px; }',
-				'.routeflux-theme-dark .routeflux-zapret-panel { border-color:rgba(145, 175, 220, 0.16); background:var(--routeflux-zapret-panel-bg); box-shadow:0 24px 42px rgba(0, 0, 0, 0.28), inset 0 1px 0 rgba(255, 255, 255, 0.04); }',
-				'.routeflux-theme-dark .routeflux-zapret-panel::before { background:radial-gradient(circle at top left, rgba(88, 196, 255, 0.14), transparent 34%), radial-gradient(circle at bottom right, rgba(52, 147, 235, 0.08), transparent 40%); }',
+				'.routeflux-theme-dark .routeflux-zapret-panel { border-color:rgba(145, 175, 220, 0.14); background:rgba(8, 14, 24, 0.94); box-shadow:none; }',
 				'.routeflux-theme-dark .routeflux-zapret-choice { border-color:rgba(145, 175, 220, 0.16); background:linear-gradient(180deg, rgba(11, 18, 30, 0.94) 0%, rgba(8, 14, 24, 0.98) 100%); box-shadow:0 18px 32px rgba(0, 0, 0, 0.24), inset 0 1px 0 rgba(255, 255, 255, 0.04); }',
 				'.routeflux-theme-dark .routeflux-zapret-choice-selected { border-color:rgba(34, 197, 94, 0.42); background:linear-gradient(180deg, rgba(13, 35, 28, 0.96) 0%, rgba(10, 24, 21, 1) 100%); box-shadow:0 22px 38px rgba(8, 23, 19, 0.32), 0 0 0 1px rgba(34, 197, 94, 0.08), inset 0 1px 0 rgba(255, 255, 255, 0.06); }',
 				'.routeflux-theme-dark .routeflux-zapret-choice-indicator { border-color:rgba(145, 162, 189, 0.42); background:linear-gradient(180deg, rgba(22, 31, 45, 0.96) 0%, rgba(14, 22, 34, 1) 100%); box-shadow:inset 0 1px 0 rgba(255, 255, 255, 0.05), 0 10px 18px rgba(0, 0, 0, 0.22); }',
 				'.routeflux-theme-dark .routeflux-zapret-inline > .cbi-button-action, .routeflux-theme-dark .routeflux-zapret-actions .cbi-button-action { border-color:rgba(120, 160, 214, 0.2); background:rgba(12, 20, 34, 0.82); color:#a8d7ff; box-shadow:0 12px 24px rgba(0, 0, 0, 0.18), inset 0 1px 0 rgba(255, 255, 255, 0.03); }',
 				'.routeflux-theme-dark .routeflux-zapret-actions .cbi-button-apply { border-color:rgba(88, 196, 255, 0.34); background:linear-gradient(180deg, rgba(52, 147, 235, 0.92) 0%, rgba(30, 116, 211, 0.94) 100%); color:#f4fbff; box-shadow:0 18px 32px rgba(30, 116, 211, 0.24), inset 0 1px 0 rgba(255, 255, 255, 0.14); }',
 				'.routeflux-theme-dark .routeflux-zapret-actions .cbi-button-reset, .routeflux-theme-dark .routeflux-zapret-item .cbi-button-negative { border-color:rgba(255, 123, 140, 0.28); background:rgba(52, 16, 26, 0.82); color:#ffb7c0; box-shadow:0 16px 28px rgba(52, 16, 26, 0.24), inset 0 1px 0 rgba(255, 255, 255, 0.05); }',
-				'.routeflux-theme-dark .routeflux-zapret-item { background:linear-gradient(180deg, rgba(11, 18, 30, 0.94) 0%, rgba(8, 14, 24, 0.98) 100%); border-color:rgba(145, 175, 220, 0.14); box-shadow:0 12px 24px rgba(0, 0, 0, 0.18), inset 0 1px 0 rgba(255, 255, 255, 0.03); }',
+				'.routeflux-theme-dark .routeflux-zapret-item { background:linear-gradient(180deg, rgba(11, 18, 30, 0.94) 0%, rgba(8, 14, 24, 0.98) 100%); border-color:rgba(145, 175, 220, 0.14); box-shadow:none; }',
 				'.routeflux-theme-dark .routeflux-zapret-empty { background:rgba(8, 15, 26, 0.5); border-color:rgba(145, 175, 220, 0.24); color:#a8b8ce; }',
-				'.routeflux-theme-dark .routeflux-zapret-summary-shell { background:rgba(8, 15, 26, 0.58); border-color:rgba(145, 175, 220, 0.16); box-shadow:0 12px 24px rgba(0, 0, 0, 0.2), inset 0 1px 0 rgba(255, 255, 255, 0.03); }',
+				'.routeflux-theme-dark .routeflux-zapret-summary-shell { background:rgba(8, 15, 26, 0.58); border-color:rgba(145, 175, 220, 0.16); box-shadow:none; }',
 				'@media (max-width: 720px) { .routeflux-zapret-inline { flex-direction:column; } .routeflux-zapret-inline > .cbi-button-action, .routeflux-zapret-actions .cbi-button { width:100%; } .routeflux-zapret-item { align-items:flex-start; flex-direction:column; } .routeflux-zapret-item .cbi-button-negative, .routeflux-zapret-item .cbi-button-action { width:100%; } }'
 			]),
 			E('h2', {}, [ _('RouteFlux - Zapret') ]),
@@ -754,19 +904,14 @@ return view.extend({
 						E('span', { 'class': 'routeflux-zapret-editor-kicker' }, [ _('Selectors') ]),
 						E('h3', {}, [ _('Choose what Zapret should cover') ]),
 						E('p', { 'class': 'cbi-section-descr' }, [
-							_('Create named custom presets from domains and IPv4 selectors. Each saved preset is added to Zapret immediately.')
+							_('Create custom presets from domains and IPv4 selectors. Zapret only covers the presets listed below.')
 						])
 					]),
 					E('div', { 'class': 'routeflux-zapret-summary-shell' }, [
-						E('h3', {}, [ _('Custom presets') ]),
-						E('ul', { 'class': 'routeflux-zapret-summary-list' }, [
-							E('li', {}, [ _('Custom presets in Zapret: %d').format(selectedPresetCount) ]),
-							E('li', {}, [ _('Expanded selectors currently stored in Zapret: %d').format(selectors.length) ]),
-							E('li', {}, [ _('Use Change to rename or update a preset, or Delete to remove it from both the preset list and Zapret.') ])
-						])
-					]),
-					E('div', { 'class': 'routeflux-zapret-summary-shell', 'style': 'margin-top:16px;' }, [
 						E('h3', {}, [ trim(this.formState.editingPresetName) !== '' ? _('Edit custom preset') : _('Create custom preset') ]),
+						E('p', { 'class': 'cbi-section-descr', 'style': 'margin:10px 0 0 0;' }, [
+							_('Saved presets are added to Zapret immediately. If no presets are listed below, fallback stays disabled.')
+						]),
 						E('div', { 'class': 'routeflux-zapret-editor-grid', 'style': 'margin-top:12px;' }, [
 							E('div', {}, [
 								E('label', { 'class': 'cbi-value-title', 'for': 'routeflux-zapret-preset-name' }, [ _('Preset name') ]),
@@ -774,9 +919,13 @@ return view.extend({
 									'id': 'routeflux-zapret-preset-name',
 									'class': 'cbi-input-text',
 									'type': 'text',
-									'placeholder': 'youtube-home',
+									'placeholder': 'YouTube',
 									'value': this.formState.presetDraftName,
-									'input': ui.createHandlerFn(this, 'handlePresetDraftNameInput')
+									'spellcheck': 'false',
+									'autocapitalize': 'off',
+									'autocorrect': 'off',
+									'autocomplete': 'off',
+									'inputmode': 'text'
 								})
 							]),
 							E('div', {}, [
@@ -787,8 +936,9 @@ return view.extend({
 									'placeholder': _('Examples: youtube.com\\ngooglevideo.com\\n203.0.113.0/24'),
 									'spellcheck': 'false',
 									'autocapitalize': 'off',
+									'autocorrect': 'off',
 									'autocomplete': 'off',
-									'input': ui.createHandlerFn(this, 'handlePresetDraftSelectorsInput')
+									'wrap': 'off'
 								}, [ this.formState.presetDraftSelectors ])
 							]),
 							E('div', { 'class': 'routeflux-zapret-actions' }, [
@@ -797,15 +947,18 @@ return view.extend({
 									'type': 'button',
 									'click': ui.createHandlerFn(this, 'handleSavePreset')
 								}, [ _('Save preset') ]),
-								trim(this.formState.editingPresetName) !== '' || trim(this.formState.presetDraftName) !== '' || trim(this.formState.presetDraftSelectors) !== '' ? E('button', {
+								E('button', {
 									'class': 'cbi-button cbi-button-action',
 									'type': 'button',
 									'click': ui.createHandlerFn(this, 'handleCancelPresetEditor')
-								}, [ _('Cancel') ]) : ''
+								}, [ _('Cancel') ])
 							])
 						])
 					]),
 					E('div', { 'style': 'margin-top:16px;' }, [
+						E('div', { 'class': 'cbi-section-descr', 'style': 'margin:0 0 10px 0;' }, [
+							_('Active presets in Zapret: %d. Expanded selectors: %d.').format(selectedPresetCount, selectors.length)
+						]),
 						this.renderPresetRows()
 					]),
 					E('div', { 'class': 'routeflux-zapret-actions', 'style': 'margin-top:16px;' }, [

@@ -40,12 +40,12 @@ func TestXrayUpdateHelperSkipsInstallWhenAlreadyLatest(t *testing.T) {
 	if !strings.Contains(stdout, "ROUTEFLUX_XRAY_UPDATE_STATUS=up-to-date") {
 		t.Fatalf("expected up-to-date status, got stdout:\n%s", stdout)
 	}
-	if !strings.Contains(stdout, "Xray is already up to date (26.3.27).") {
+	if !strings.Contains(stdout, "Xray is up to date (26.3.27).") {
 		t.Fatalf("expected up-to-date message, got stdout:\n%s", stdout)
 	}
 }
 
-func TestXrayUpdateHelperRejectsUnsupportedSoftFloatMips(t *testing.T) {
+func TestXrayUpdateHelperReturnsUnsupportedStatusForSoftFloatMips(t *testing.T) {
 	t.Parallel()
 
 	repoRoot := repoRoot(t)
@@ -71,11 +71,14 @@ func TestXrayUpdateHelperRejectsUnsupportedSoftFloatMips(t *testing.T) {
 		"ROUTEFLUX_XRAY_RELEASES_API":  "https://example.invalid/releases/latest",
 		"ROUTEFLUX_XRAY_ARCH_OVERRIDE": "mipsel_24kc",
 	})
-	if err == nil {
-		t.Fatalf("expected helper to fail on unsupported mips, stdout:\n%s\nstderr:\n%s", stdout, stderr)
+	if err != nil {
+		t.Fatalf("expected helper to return unsupported status, got err: %v\nstdout:\n%s\nstderr:\n%s", err, stdout, stderr)
 	}
 
 	output := stdout + stderr
+	if !strings.Contains(output, "ROUTEFLUX_XRAY_UPDATE_STATUS=unsupported") {
+		t.Fatalf("expected unsupported status, got:\n%s", output)
+	}
 	if !strings.Contains(output, "Official Xray releases do not publish a soft-float MIPS build.") {
 		t.Fatalf("expected unsupported arch message, got:\n%s", output)
 	}

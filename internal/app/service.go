@@ -1073,6 +1073,9 @@ func (s *Service) SetZapretEnabled(ctx context.Context, enabled bool) (domain.Za
 		}
 
 		settings.Zapret = domain.CanonicalZapretSettingsWithCatalog(settings.Zapret, settings.Firewall.TargetServiceCatalog)
+		if enabled && !zapretSelectorSetHasEntries(settings.Zapret.Selectors) {
+			return domain.ZapretSettings{}, fmt.Errorf("zapret fallback needs at least one allowed preset or selector")
+		}
 		settings.Zapret.Enabled = enabled
 		if err := s.store.SaveSettings(settings); err != nil {
 			return domain.ZapretSettings{}, fmt.Errorf("save settings: %w", err)
@@ -1120,13 +1123,31 @@ func (s *Service) SetZapretSelectors(ctx context.Context, selectors []string) (d
 
 		settings.Zapret = domain.CanonicalZapretSettingsWithCatalog(settings.Zapret, settings.Firewall.TargetServiceCatalog)
 		settings.Zapret.Selectors = parsed
+		if settings.Zapret.Enabled && !zapretSelectorSetHasEntries(settings.Zapret.Selectors) {
+			settings.Zapret.Enabled = false
+		}
 		if err := s.store.SaveSettings(settings); err != nil {
 			return domain.ZapretSettings{}, fmt.Errorf("save settings: %w", err)
 		}
 
 		state, err := s.store.LoadState()
 		if err == nil && effectiveActiveTransport(state) == domain.TransportModeZapret {
-			if state.ZapretTest.Active {
+			if !settings.Zapret.Enabled {
+				if err := s.disconnectRuntime(ctx); err != nil {
+					return domain.ZapretSettings{}, err
+				}
+				state.Connected = false
+				if effectiveActiveTransport(state) != domain.TransportModeDirect {
+					state.LastTransportSwitchAt = s.currentTime().UTC()
+				}
+				state.ActiveTransport = domain.TransportModeDirect
+				state.LastFailureReason = "zapret selectors are empty"
+				state.LastTransportFailureReason = ""
+				clearZapretTestState(&state)
+				if err := s.saveState(state); err != nil {
+					return domain.ZapretSettings{}, fmt.Errorf("save state: %w", err)
+				}
+			} else if state.ZapretTest.Active {
 				if _, err := s.applyZapretTestMode(ctx, settings, state, state.ZapretTest.Restore); err != nil {
 					return domain.ZapretSettings{}, err
 				}
@@ -1143,6 +1164,10 @@ func (s *Service) SetZapretSelectors(ctx context.Context, selectors []string) (d
 
 		return settings.Zapret, nil
 	})
+}
+
+func zapretSelectorSetHasEntries(selectors domain.FirewallSelectorSet) bool {
+	return len(selectors.Services) > 0 || len(selectors.Domains) > 0 || len(selectors.CIDRs) > 0
 }
 
 // SetZapretFailbackSuccessThreshold updates the proxy failback stability threshold.
@@ -1381,10 +1406,12 @@ func (s *Service) setFirewallTargetService(ctx context.Context, name string, sel
 		return domain.FirewallTargetService{}, fmt.Errorf("load settings: %w", err)
 	}
 
+	shouldReapply := settings.Firewall.Enabled && activeFirewallReferencesService(settings.Firewall, name, settings.Firewall.TargetServiceCatalog)
 	normalizedName, definition, err := domain.ParseFirewallTargetDefinition(name, selectors, settings.Firewall.TargetServiceCatalog)
 	if err != nil {
 		return domain.FirewallTargetService{}, err
 	}
+	shouldReapply = shouldReapply || (settings.Firewall.Enabled && activeFirewallReferencesService(settings.Firewall, normalizedName, settings.Firewall.TargetServiceCatalog))
 
 	if settings.Firewall.TargetServiceCatalog == nil {
 		settings.Firewall.TargetServiceCatalog = make(map[string]domain.FirewallTargetDefinition)
@@ -1398,7 +1425,7 @@ func (s *Service) setFirewallTargetService(ctx context.Context, name string, sel
 		return domain.FirewallTargetService{}, fmt.Errorf("save settings: %w", err)
 	}
 
-	if settings.Firewall.Enabled {
+	if shouldReapply {
 		if err := s.reapplyCurrentConnection(ctx); err != nil {
 			return domain.FirewallTargetService{}, err
 		}
@@ -1448,6 +1475,7 @@ func (s *Service) deleteFirewallTargetService(ctx context.Context, name string) 
 	if referrer, ok := findReferencingTargetService(settings.Firewall.TargetServiceCatalog, entry.Name); ok {
 		return fmt.Errorf("target service %q is still referenced by target service %q", entry.Name, referrer)
 	}
+	shouldReapply := settings.Firewall.Enabled && activeFirewallReferencesService(settings.Firewall, entry.Name, settings.Firewall.TargetServiceCatalog)
 
 	delete(settings.Firewall.TargetServiceCatalog, entry.Name)
 	if len(settings.Firewall.TargetServiceCatalog) == 0 {
@@ -1461,7 +1489,7 @@ func (s *Service) deleteFirewallTargetService(ctx context.Context, name string) 
 		return fmt.Errorf("save settings: %w", err)
 	}
 
-	if settings.Firewall.Enabled {
+	if shouldReapply {
 		if err := s.reapplyCurrentConnection(ctx); err != nil {
 			return err
 		}
@@ -1481,6 +1509,18 @@ func firewallTargetsReferenceService(roots []string, catalog map[string]domain.F
 
 func firewallSelectorSetReferencesService(selectors domain.FirewallSelectorSet, catalog map[string]domain.FirewallTargetDefinition, target string) bool {
 	return firewallTargetsReferenceService(selectors.Services, catalog, target)
+}
+
+func activeFirewallReferencesService(settings domain.FirewallSettings, target string, catalog map[string]domain.FirewallTargetDefinition) bool {
+	switch domain.CanonicalFirewallMode(settings) {
+	case domain.FirewallModeTargets:
+		return firewallSelectorSetReferencesService(settings.Targets, catalog, target)
+	case domain.FirewallModeSplit:
+		return firewallSelectorSetReferencesService(settings.Split.Proxy, catalog, target) ||
+			firewallSelectorSetReferencesService(settings.Split.Bypass, catalog, target)
+	default:
+		return false
+	}
 }
 
 func findReferencingTargetService(catalog map[string]domain.FirewallTargetDefinition, target string) (string, bool) {

@@ -213,6 +213,47 @@ func TestConfigureFirewallBypassStoresExcludedSources(t *testing.T) {
 	}
 }
 
+func TestSetZapretEnabledRejectsEmptySelectors(t *testing.T) {
+	t.Parallel()
+
+	store := &memoryStore{
+		settings: domain.DefaultSettings(),
+		state:    domain.DefaultRuntimeState(),
+	}
+	service := NewService(Dependencies{Store: store})
+
+	_, err := service.SetZapretEnabled(context.Background(), true)
+	if err == nil {
+		t.Fatal("expected zapret enable to reject empty selectors")
+	}
+	if !strings.Contains(err.Error(), "needs at least one allowed preset or selector") {
+		t.Fatalf("unexpected error: %v", err)
+	}
+}
+
+func TestSetZapretSelectorsAutoDisablesEmptySelectorsWhileEnabled(t *testing.T) {
+	t.Parallel()
+
+	store := &memoryStore{
+		settings: domain.DefaultSettings(),
+		state:    domain.DefaultRuntimeState(),
+	}
+	store.settings.Zapret.Enabled = true
+	store.settings.Zapret.Selectors = domain.FirewallSelectorSet{Services: []string{"youtube"}}
+	service := NewService(Dependencies{Store: store})
+
+	settings, err := service.SetZapretSelectors(context.Background(), nil)
+	if err != nil {
+		t.Fatalf("set zapret selectors: %v", err)
+	}
+	if settings.Enabled {
+		t.Fatal("expected empty selectors to auto-disable zapret fallback")
+	}
+	if len(settings.Selectors.Services) != 0 || len(settings.Selectors.Domains) != 0 || len(settings.Selectors.CIDRs) != 0 {
+		t.Fatalf("expected empty selectors after auto-disable, got %+v", settings.Selectors)
+	}
+}
+
 func TestUpdateFirewallBlockQUICCanonicalizesLegacyTargetsMode(t *testing.T) {
 	t.Parallel()
 
@@ -561,6 +602,59 @@ func TestSetFirewallTargetServiceReappliesConnectedRuntime(t *testing.T) {
 	}
 }
 
+func TestSetFirewallTargetServiceSkipsReapplyForUnusedAlias(t *testing.T) {
+	t.Parallel()
+
+	store := &memoryStore{
+		settings: domain.DefaultSettings(),
+		state:    domain.DefaultRuntimeState(),
+		subs: []domain.Subscription{
+			{
+				ID: "sub-1",
+				Nodes: []domain.Node{
+					{
+						ID:       "node-1",
+						Protocol: domain.ProtocolVLESS,
+						Address:  "de.example.com",
+						Port:     443,
+						UUID:     "11111111-1111-1111-1111-111111111111",
+					},
+				},
+			},
+		},
+	}
+	store.settings.Firewall.Enabled = true
+	store.settings.Firewall.Mode = domain.FirewallModeTargets
+	store.settings.Firewall.Targets = domain.FirewallSelectorSet{Services: []string{"openai"}}
+	store.state.Connected = true
+	store.state.ActiveSubscriptionID = "sub-1"
+	store.state.ActiveNodeID = "node-1"
+	store.state.Mode = domain.SelectionModeManual
+
+	runtimeBackend := &recordingBackend{}
+	firewall := &recordingFirewaller{}
+	service := NewService(Dependencies{
+		Store:      store,
+		Backend:    runtimeBackend,
+		Firewaller: firewall,
+	})
+
+	entry, err := service.SetFirewallTargetService(context.Background(), "media-kit", []string{"youtube.com", "googlevideo.com"})
+	if err != nil {
+		t.Fatalf("set unused firewall target service: %v", err)
+	}
+
+	if entry.Name != "media-kit" || entry.Source != domain.FirewallTargetServiceSourceCustom || entry.ReadOnly {
+		t.Fatalf("unexpected target service entry: %+v", entry)
+	}
+	if len(runtimeBackend.requests) != 0 {
+		t.Fatalf("expected no backend reapply, got %d", len(runtimeBackend.requests))
+	}
+	if len(firewall.applied) != 0 {
+		t.Fatalf("expected no firewall apply, got %d", len(firewall.applied))
+	}
+}
+
 func TestDeleteFirewallTargetServiceRejectsUsedAlias(t *testing.T) {
 	t.Parallel()
 
@@ -582,6 +676,58 @@ func TestDeleteFirewallTargetServiceRejectsUsedAlias(t *testing.T) {
 	}
 	if !strings.Contains(strings.ToLower(err.Error()), "remove it from firewall targets first") {
 		t.Fatalf("unexpected error: %v", err)
+	}
+}
+
+func TestDeleteFirewallTargetServiceSkipsReapplyForUnusedAlias(t *testing.T) {
+	t.Parallel()
+
+	store := &memoryStore{
+		settings: domain.DefaultSettings(),
+		state:    domain.DefaultRuntimeState(),
+		subs: []domain.Subscription{
+			{
+				ID: "sub-1",
+				Nodes: []domain.Node{
+					{
+						ID:       "node-1",
+						Protocol: domain.ProtocolVLESS,
+						Address:  "de.example.com",
+						Port:     443,
+						UUID:     "11111111-1111-1111-1111-111111111111",
+					},
+				},
+			},
+		},
+	}
+	store.settings.Firewall.Enabled = true
+	store.settings.Firewall.Mode = domain.FirewallModeTargets
+	store.settings.Firewall.Targets = domain.FirewallSelectorSet{Services: []string{"openai"}}
+	store.settings.Firewall.TargetServiceCatalog = map[string]domain.FirewallTargetDefinition{
+		"openai":    {Domains: []string{"openai.com"}},
+		"media-kit": {Domains: []string{"youtube.com", "googlevideo.com"}},
+	}
+	store.state.Connected = true
+	store.state.ActiveSubscriptionID = "sub-1"
+	store.state.ActiveNodeID = "node-1"
+	store.state.Mode = domain.SelectionModeManual
+
+	runtimeBackend := &recordingBackend{}
+	firewall := &recordingFirewaller{}
+	service := NewService(Dependencies{
+		Store:      store,
+		Backend:    runtimeBackend,
+		Firewaller: firewall,
+	})
+
+	if err := service.DeleteFirewallTargetService(context.Background(), "media-kit"); err != nil {
+		t.Fatalf("delete unused firewall target service: %v", err)
+	}
+	if len(runtimeBackend.requests) != 0 {
+		t.Fatalf("expected no backend reapply, got %d", len(runtimeBackend.requests))
+	}
+	if len(firewall.applied) != 0 {
+		t.Fatalf("expected no firewall apply, got %d", len(firewall.applied))
 	}
 }
 

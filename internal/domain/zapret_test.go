@@ -58,8 +58,8 @@ func TestCanonicalZapretSettingsWithCatalogExpandsLegacyAliasesToDomains(t *test
 		},
 	}, nil)
 
-	if len(got.Selectors.Services) != 0 {
-		t.Fatalf("expected services to be removed, got %+v", got.Selectors.Services)
+	if want := []string{"youtube"}; !reflect.DeepEqual(got.Selectors.Services, want) {
+		t.Fatalf("unexpected canonical zapret services:\nwant: %+v\n got: %+v", want, got.Selectors.Services)
 	}
 	if want := []string{"1.1.1.1/32"}; !reflect.DeepEqual(got.Selectors.CIDRs, want) {
 		t.Fatalf("unexpected canonical zapret cidrs:\nwant: %+v\n got: %+v", want, got.Selectors.CIDRs)
@@ -112,12 +112,24 @@ func TestParseZapretSelectorsSupportsDomainsAndIPv4Selectors(t *testing.T) {
 	}
 }
 
-func TestParseZapretSelectorsRejectsAliases(t *testing.T) {
+func TestParseZapretSelectorsAcceptsKnownAliases(t *testing.T) {
 	t.Parallel()
 
-	_, err := ParseZapretSelectors([]string{"youtube"}, nil)
+	selectors, err := ParseZapretSelectors([]string{"youtube", "YouTube"}, nil)
+	if err != nil {
+		t.Fatalf("parse zapret selectors: %v", err)
+	}
+	if want := []string{"youtube"}; !reflect.DeepEqual(selectors.Services, want) {
+		t.Fatalf("unexpected zapret services: %+v", selectors.Services)
+	}
+}
+
+func TestParseZapretSelectorsRejectsUnknownAliases(t *testing.T) {
+	t.Parallel()
+
+	_, err := ParseZapretSelectors([]string{"not-a-service"}, nil)
 	if err == nil {
-		t.Fatal("expected zapret parser to reject aliases")
+		t.Fatal("expected zapret parser to reject unknown aliases")
 	}
 	if !strings.Contains(err.Error(), "use a fully qualified domain like youtube.com") {
 		t.Fatalf("unexpected error: %v", err)

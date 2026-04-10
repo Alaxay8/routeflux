@@ -44,6 +44,10 @@ function stripXrayUpdateStatus(output) {
 	return trim(String(output || '').replace(/ROUTEFLUX_XRAY_UPDATE_STATUS=[^\n]*\n?/, ''));
 }
 
+function xrayUpdateNotificationLevel(status) {
+	return status === 'unsupported' ? 'warning' : 'info';
+}
+
 function padNumber(value) {
 	return String(value).padStart(2, '0');
 }
@@ -157,8 +161,8 @@ return view.extend({
 			var status = extractXrayUpdateStatus(res.stdout);
 			var message = stripXrayUpdateStatus(res.stdout);
 
-			ui.addNotification(null, notificationParagraph(message || _('Xray update finished. Reloading the page...')), 'info');
-			if (status !== 'up-to-date') {
+			ui.addNotification(null, notificationParagraph(message || _('Xray update finished. Reloading the page...')), xrayUpdateNotificationLevel(status));
+			if (status !== 'up-to-date' && status !== 'unsupported') {
 				window.setTimeout(function() {
 					window.location.reload();
 				}, 1500);
