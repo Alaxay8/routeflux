@@ -30,13 +30,14 @@ func TestSubscriptionsViewKeepsSafeGeneratedXrayPreview(t *testing.T) {
 	}
 }
 
-func TestSubscriptionsViewShowsExpirationDateAndRemoveAction(t *testing.T) {
+func TestSubscriptionsViewShowsConditionalExpirationDateAndRemoveAction(t *testing.T) {
 	t.Parallel()
 
 	source := readSubscriptionsViewSource(t)
 
 	for _, want := range []string{
 		"Expiration date",
+		"if (trim(subscription.expires_at) !== '')",
 		"handleRemoveSubscription",
 		"handleCopySubscriptionID",
 		"Subscription ID copied to clipboard.",
@@ -234,12 +235,27 @@ func TestSubscriptionsViewCentersSubscriptionMetaTableOnMobile(t *testing.T) {
 		".routeflux-subscription-card .routeflux-meta-table, .routeflux-subscription-card .routeflux-meta-table .tr, .routeflux-subscription-card .routeflux-meta-table .td, .routeflux-subscription-card .routeflux-meta-table .td.left { text-align:center !important; }",
 		".routeflux-meta-table .td.routeflux-meta-label, .routeflux-subscription-card .routeflux-meta-table .td.routeflux-meta-label.left { width:100%; padding-bottom:4px; text-align:center !important; }",
 		".routeflux-meta-table .td.routeflux-meta-value, .routeflux-subscription-card .routeflux-meta-table .td.routeflux-meta-value.left { padding-top:0; text-align:center !important; }",
-		".routeflux-meta-copy-shell { display:grid; justify-items:center; gap:10px; width:100%; }",
-		".routeflux-meta-copy-value { width:100%; text-align:center; }",
-		".routeflux-meta-copy-button { margin:0 auto; }",
+		".routeflux-meta-copy-shell { display:flex; flex-direction:column; align-items:center; justify-content:center; gap:10px; width:100%; }",
+		".routeflux-meta-copy-value { width:auto; max-width:100%; text-align:center !important; margin:0 auto; }",
+		".routeflux-meta-copy-button { align-self:center; margin:0 auto; }",
 	} {
 		if !strings.Contains(source, want) {
 			t.Fatalf("subscriptions view missing centered mobile meta-table marker %q", want)
+		}
+	}
+}
+
+func TestSubscriptionsViewKeepsCopyButtonCloseToIDOnDesktop(t *testing.T) {
+	t.Parallel()
+
+	source := readSubscriptionsViewSource(t)
+
+	for _, want := range []string{
+		".routeflux-meta-copy-shell { display:inline-flex; align-items:center; justify-content:flex-start; gap:8px; min-width:0; width:auto; max-width:100%; }",
+		".routeflux-meta-copy-value { min-width:0; flex:0 1 auto; overflow-wrap:anywhere; word-break:break-word; }",
+	} {
+		if !strings.Contains(source, want) {
+			t.Fatalf("subscriptions view missing desktop copy alignment marker %q", want)
 		}
 	}
 }

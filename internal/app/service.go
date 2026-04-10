@@ -584,6 +584,8 @@ func (s *Service) refreshSubscription(ctx context.Context, subscriptionID string
 	sub.ProviderNameSource = providerNameSource
 	if metadata.ExpiresAt != nil {
 		sub.ExpiresAt = metadata.ExpiresAt
+	} else if sub.ExpiresAt != nil && !sub.ExpiresAt.After(time.Now().UTC()) {
+		sub.ExpiresAt = nil
 	}
 	if metadata.Traffic != nil {
 		sub.Traffic = metadata.Traffic

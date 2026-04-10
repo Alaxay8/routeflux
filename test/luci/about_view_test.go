@@ -16,14 +16,9 @@ func TestAboutViewUsesLatestInstallScriptUpgradeFlow(t *testing.T) {
 		"RouteFlux - About",
 		"Update to new version",
 		"/usr/libexec/routeflux-self-update",
-		"/usr/libexec/routeflux-xray-update",
 		"Existing /etc/routeflux state is preserved by the installer.",
 		"function extractSelfUpdateStatus(output)",
-		"function extractXrayUpdateStatus(output)",
-		"function xrayUpdateNotificationLevel(status)",
 		"status !== 'up-to-date'",
-		"status !== 'unsupported'",
-		"Update Xray",
 	} {
 		if !strings.Contains(source, want) {
 			t.Fatalf("about view missing marker %q", want)
@@ -114,9 +109,6 @@ func TestAboutViewFormatsBuildDateAndSimplifiesWhatsNew(t *testing.T) {
 		"Simplified LuCI interface",
 		"LuCI now opens on Subscriptions, keeps Routing focused on direct selectors, and keeps Zapret focused on compact custom presets.",
 		"About intentionally keeps destructive maintenance actions out of LuCI.",
-		"Download the latest official Xray release from XTLS/Xray-core and replace the current Xray binary on this router.",
-		"handleXrayUpgrade",
-		"routeflux-xray-update",
 	} {
 		if !strings.Contains(source, want) {
 			t.Fatalf("about view missing marker %q", want)
@@ -128,6 +120,7 @@ func TestAboutViewFormatsBuildDateAndSimplifiesWhatsNew(t *testing.T) {
 		"Update RouteFlux from LuCI",
 		"Bypass mode and target bundles",
 		"Update Zapret",
+		"Update Xray",
 		"Remove RouteFlux",
 	} {
 		if strings.Contains(source, forbidden) {
@@ -144,7 +137,6 @@ func TestAboutViewUsesRouteFluxButtonsInsteadOfLegacyThemeClasses(t *testing.T) 
 	for _, want := range []string{
 		"'class': 'cbi-button cbi-button-action'",
 		"'class': 'cbi-button cbi-button-apply'",
-		"Update Xray",
 	} {
 		if !strings.Contains(source, want) {
 			t.Fatalf("about view missing RouteFlux button marker %q", want)

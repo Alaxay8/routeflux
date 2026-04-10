@@ -1786,6 +1786,81 @@ func TestRefreshSubscriptionKeepsExistingExpiryWhenOnlyDDoSGuardCookieIsPresent(
 	assertSubscriptionTraffic(t, sub, 0, 0, 0)
 }
 
+func TestRefreshSubscriptionClearsExpiredStaleExpiryWhenProviderOmitsIt(t *testing.T) {
+	t.Parallel()
+
+	expiredAt := time.Date(2026, time.April, 5, 10, 0, 0, 0, time.UTC)
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Subscription-Userinfo", "upload=0; download=0; total=0; expire=0")
+		writeResponse(w, `[
+		  {
+		    "outbounds": [
+		      {
+		        "protocol": "vless",
+		        "tag": "proxy",
+		        "settings": {
+		          "vnext": [
+		            {
+		              "address": "one.example.com",
+		              "port": 443,
+		              "users": [
+		                {
+		                  "id": "11111111-1111-1111-1111-111111111111",
+		                  "encryption": "none",
+		                  "flow": "xtls-rprx-vision"
+		                }
+		              ]
+		            }
+		          ]
+		        },
+		        "streamSettings": {
+		          "network": "tcp",
+		          "security": "reality",
+		          "realitySettings": {
+		            "serverName": "gateway-one.example",
+		            "publicKey": "public-key-one",
+		            "shortId": "short-one",
+		            "fingerprint": "random"
+		          }
+		        }
+		      }
+		    ]
+		  }
+		]`)
+	}))
+	defer server.Close()
+
+	store := &memoryStore{
+		settings: domain.DefaultSettings(),
+		state:    domain.DefaultRuntimeState(),
+		subs: []domain.Subscription{
+			{
+				ID:           "sub-1",
+				SourceType:   domain.SourceTypeURL,
+				Source:       server.URL,
+				ProviderName: "Demo VPN",
+				DisplayName:  "Demo VPN",
+				ExpiresAt:    &expiredAt,
+				Nodes: []domain.Node{
+					{ID: "old-node"},
+				},
+			},
+		},
+	}
+
+	service := NewService(Dependencies{Store: store, HTTPClient: server.Client()})
+
+	sub, err := service.RefreshSubscription(context.Background(), "sub-1")
+	if err != nil {
+		t.Fatalf("refresh subscription: %v", err)
+	}
+
+	if sub.ExpiresAt != nil {
+		t.Fatalf("expected stale expired date to be cleared, got %v", sub.ExpiresAt)
+	}
+	assertSubscriptionTraffic(t, sub, 0, 0, 0)
+}
+
 func TestRefreshSubscriptionFallsBackToCurlUserAgentForMetadata(t *testing.T) {
 	t.Parallel()
 
