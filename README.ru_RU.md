@@ -49,6 +49,12 @@ routeflux connect --auto --subscription sub-1234567890
 - CLI: по SSH через `routeflux ...`
 - TUI: `routeflux tui`
 
+## Веб-интерфейс
+
+RouteFlux включает интерфейс LuCI для повседневного управления подписками.
+
+![RouteFlux LuCI Subscriptions](docs/images/luci-subscriptions-1.png)
+
 ## Установка
 
 ### Установка из релиза GitHub
