@@ -57,6 +57,30 @@ RouteFlux includes a LuCI interface for everyday subscription management.
 
 ![RouteFlux LuCI Subscriptions](docs/images/luci-subscriptions-1.png)
 
+The profile view shows subscription metadata, quick actions, auto exclusions, and the available node list.
+
+![RouteFlux LuCI Subscription Profile](docs/images/luci-subscriptions-2.png)
+
+The nodes table lets you compare latency, inspect transport details, connect manually, recheck routes, or exclude nodes from auto mode.
+
+![RouteFlux LuCI Nodes Table](docs/images/luci-subscriptions-3.png)
+
+The Routing page also includes a Keep Direct view for bypass selectors, where you can keep chosen domains or IPv4 targets on the direct path while bypass mode is active.
+
+![RouteFlux LuCI Keep Direct](docs/images/keep-direrct.png)
+
+For split routing workflows, the Excluded Devices view lets you keep selected LAN hosts outside the proxy path and manage them directly from LuCI.
+
+![RouteFlux LuCI Excluded Devices](docs/images/exclude-devices.png)
+
+RouteFlux also exposes Zapret fallback controls in LuCI, including automatic fallback behaviour, test mode, and the current transport state.
+
+![RouteFlux LuCI Zapret](docs/images/zapret.png)
+
+The Settings page includes appearance controls, so you can switch the RouteFlux LuCI theme without changing the rest of your OpenWrt setup.
+
+![RouteFlux LuCI Appearance](docs/images/appearance.png)
+
 ## Installation
 
 ### Install from a GitHub release
