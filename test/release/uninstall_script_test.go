@@ -56,6 +56,11 @@ func TestUninstallScriptRemovesRouteFluxAndXrayArtifacts(t *testing.T) {
 		t.Fatalf("read routeflux self-update helper: %v", err)
 	}
 	writeExecutable(t, filepath.Join(installRoot, "usr", "libexec", "routeflux-self-update"), string(selfUpdateHelper))
+	xrayUpdateHelper, err := os.ReadFile(filepath.Join(repoRoot(t), "openwrt", "root", "usr", "libexec", "routeflux-xray-update"))
+	if err != nil {
+		t.Fatalf("read routeflux xray update helper: %v", err)
+	}
+	writeExecutable(t, filepath.Join(installRoot, "usr", "libexec", "routeflux-xray-update"), string(xrayUpdateHelper))
 	writeFile(t, filepath.Join(installRoot, "etc", "crontabs", "root"), strings.Join([]string{
 		"15 4 * * * echo keep",
 		"# routeflux:xray-log-retention:start",
@@ -75,12 +80,20 @@ func TestUninstallScriptRemovesRouteFluxAndXrayArtifacts(t *testing.T) {
 	writeFile(t, filepath.Join(installRoot, "tmp", "routeflux-firewall.nft"), "table inet routeflux {}\n", 0o644)
 	writeFile(t, filepath.Join(installRoot, "tmp", "routeflux-speedtest-123", "config.json"), "{}\n", 0o644)
 	writeFile(t, filepath.Join(installRoot, "tmp", "xray-cache"), "cache\n", 0o644)
+	writeFile(t, filepath.Join(installRoot, "tmp", "lock", "procd_routeflux.lock"), "", 0o644)
+	writeFile(t, filepath.Join(installRoot, "tmp", "lock", "procd_zapret.lock"), "", 0o644)
 	writeFile(t, filepath.Join(installRoot, "tmp", "luci-indexcache"), "cache\n", 0o644)
 	writeFile(t, filepath.Join(installRoot, "tmp", "luci-modulecache", "index"), "cache\n", 0o644)
 	writeFile(t, filepath.Join(installRoot, "opt", "zapret", "ipset", "zapret-hosts-user.txt"), "youtube.com\n", 0o644)
 	writeFile(t, filepath.Join(installRoot, "opt", "zapret", "ipset", "zapret-hosts-user.txt.routeflux.bak"), "original.example.com\n", 0o644)
 	writeFile(t, filepath.Join(installRoot, "opt", "zapret", "ipset", "zapret-ip-user.txt"), "91.108.0.0/16\n", 0o644)
 	writeFile(t, filepath.Join(installRoot, "opt", "zapret", "ipset", "zapret-ip-user.txt.routeflux.bak"), "203.0.113.0/24\n", 0o644)
+	writeFile(t, filepath.Join(installRoot, "etc", "config", "zapret"), "config zapret 'base'\n", 0o644)
+	writeFile(t, filepath.Join(installRoot, "etc", "hotplug.d", "iface", "90-zapret"), "#!/bin/sh\n", 0o644)
+	writeFile(t, filepath.Join(installRoot, "etc", "sysctl.d", "99-routeflux-ipv6.conf"), "# Managed by RouteFlux\nnet.ipv6.conf.all.disable_ipv6=1\n", 0o644)
+	writeFile(t, filepath.Join(installRoot, "etc", "init.d", "routeflux.bak.20260327-233221"), "#!/bin/sh\n", 0o755)
+	writeFile(t, filepath.Join(installRoot, "etc", "opkg", "customfeeds.conf"), "src/gz routeflux https://github.com/Alaxay8/routeflux/releases/download/v0.1.4\nsrc/gz other https://example.invalid/feed\nsrc/gz routeflux https://github.com/Alaxay8/routeflux/releases/download/v0.1.4\n", 0o644)
+	writeFile(t, filepath.Join(installRoot, "etc", "opkg", "keys", "9e842876f8b9501d"), "untrusted comment: RouteFlux opkg feed\nPUBLICKEY\n", 0o644)
 	writeFile(t, filepath.Join(installRoot, "etc", "routeflux", "zapret-managed.json"), "{\"domains\":[\"youtube.com\"]}\n", 0o644)
 	writeFile(t, opkgStatePath, strings.Join([]string{
 		"base-files",
@@ -121,6 +134,7 @@ func TestUninstallScriptRemovesRouteFluxAndXrayArtifacts(t *testing.T) {
 		filepath.Join(installRoot, "opt", "zapret"),
 		filepath.Join(installRoot, "usr", "libexec", "routeflux-cron"),
 		filepath.Join(installRoot, "usr", "libexec", "routeflux-self-update"),
+		filepath.Join(installRoot, "usr", "libexec", "routeflux-xray-update"),
 		filepath.Join(installRoot, "var", "log", "xray.log"),
 		filepath.Join(installRoot, "var", "run", "xray.pid"),
 		filepath.Join(installRoot, "usr", "share", "luci", "menu.d", "luci-app-routeflux.json"),
@@ -130,9 +144,15 @@ func TestUninstallScriptRemovesRouteFluxAndXrayArtifacts(t *testing.T) {
 		filepath.Join(installRoot, "etc", "rc.d", "S95routeflux"),
 		filepath.Join(installRoot, "etc", "rc.d", "S95xray"),
 		filepath.Join(installRoot, "etc", "rc.d", "S95zapret"),
+		filepath.Join(installRoot, "etc", "config", "zapret"),
+		filepath.Join(installRoot, "etc", "hotplug.d", "iface", "90-zapret"),
+		filepath.Join(installRoot, "etc", "sysctl.d", "99-routeflux-ipv6.conf"),
+		filepath.Join(installRoot, "etc", "init.d", "routeflux.bak.20260327-233221"),
 		filepath.Join(installRoot, "tmp", "routeflux-firewall.nft"),
 		filepath.Join(installRoot, "tmp", "routeflux-speedtest-123"),
 		filepath.Join(installRoot, "tmp", "xray-cache"),
+		filepath.Join(installRoot, "tmp", "lock", "procd_routeflux.lock"),
+		filepath.Join(installRoot, "tmp", "lock", "procd_zapret.lock"),
 		filepath.Join(installRoot, "tmp", "luci-indexcache"),
 		filepath.Join(installRoot, "tmp", "luci-modulecache"),
 	} {
@@ -211,6 +231,113 @@ func TestUninstallScriptRemovesRouteFluxAndXrayArtifacts(t *testing.T) {
 	}
 	if !strings.Contains(string(contents), "15 4 * * * echo keep") {
 		t.Fatalf("expected unrelated cron entry to remain, got %q", string(contents))
+	}
+
+	customfeeds, err := os.ReadFile(filepath.Join(installRoot, "etc", "opkg", "customfeeds.conf"))
+	if err != nil {
+		t.Fatalf("read customfeeds.conf: %v", err)
+	}
+	if strings.Contains(string(customfeeds), "routeflux") {
+		t.Fatalf("expected routeflux feed entries to be removed, got %q", string(customfeeds))
+	}
+	if !strings.Contains(string(customfeeds), "src/gz other https://example.invalid/feed") {
+		t.Fatalf("expected unrelated feed entry to remain, got %q", string(customfeeds))
+	}
+	if _, err := os.Stat(filepath.Join(installRoot, "etc", "opkg", "keys", "9e842876f8b9501d")); !os.IsNotExist(err) {
+		t.Fatalf("expected routeflux opkg key to be removed, stat err=%v", err)
+	}
+}
+
+func TestUninstallScriptRemovesLegacyZapretAndRouteFluxTailsWithoutManifest(t *testing.T) {
+	t.Parallel()
+
+	scriptPath := filepath.Join(repoRoot(t), "scripts", "uninstall.sh")
+	installRoot := t.TempDir()
+	serviceLogPath := filepath.Join(t.TempDir(), "services.log")
+	opkgStatePath := filepath.Join(t.TempDir(), "opkg-state.txt")
+
+	binDir := t.TempDir()
+	writeInstallOpkgStub(t, filepath.Join(binDir, "opkg"), "mipsel_24kc")
+
+	writeServiceStub(t, filepath.Join(installRoot, "etc", "init.d", "zapret"))
+	writeFile(t, filepath.Join(installRoot, "usr", "libexec", "routeflux-xray-update"), "#!/bin/sh\nexit 0\n", 0o755)
+	writeFile(t, filepath.Join(installRoot, "etc", "init.d", "routeflux.bak.20260327-233221"), "#!/bin/sh\n", 0o755)
+	writeFile(t, filepath.Join(installRoot, "etc", "sysctl.d", "99-routeflux-ipv6.conf"), "# Managed by RouteFlux\nnet.ipv6.conf.all.disable_ipv6=1\n", 0o644)
+	writeFile(t, filepath.Join(installRoot, "etc", "config", "zapret"), "config zapret 'base'\n", 0o644)
+	writeFile(t, filepath.Join(installRoot, "etc", "hotplug.d", "iface", "90-zapret"), "#!/bin/sh\n", 0o644)
+	writeFile(t, filepath.Join(installRoot, "etc", "opkg", "customfeeds.conf"), "src/gz routeflux https://github.com/Alaxay8/routeflux/releases/download/v0.1.4\nsrc/gz keep https://example.invalid/feed\n", 0o644)
+	writeFile(t, filepath.Join(installRoot, "etc", "opkg", "keys", "9e842876f8b9501d"), "untrusted comment: RouteFlux opkg feed\nPUBLICKEY\n", 0o644)
+	writeFile(t, filepath.Join(installRoot, "opt", "zapret", "config"), "# config\n", 0o644)
+	writeFile(t, filepath.Join(installRoot, "tmp", "lock", "procd_routeflux.lock"), "", 0o644)
+	writeFile(t, filepath.Join(installRoot, "tmp", "lock", "procd_zapret.lock"), "", 0o644)
+	writeFile(t, opkgStatePath, "base-files\nzapret\n", 0o644)
+
+	stdout, stderr, err := runUninstallScriptWithEnv(
+		t,
+		scriptPath,
+		installRoot,
+		serviceLogPath,
+		binDir,
+		map[string]string{
+			"ROUTEFLUX_TEST_BIN_DIR":      binDir,
+			"ROUTEFLUX_TEST_INSTALL_ROOT": installRoot,
+			"ROUTEFLUX_TEST_OPKG_STATE":   opkgStatePath,
+		},
+	)
+	if err != nil {
+		t.Fatalf("run uninstall script: %v\nstdout:\n%s\nstderr:\n%s", err, stdout, stderr)
+	}
+
+	for _, path := range []string{
+		filepath.Join(installRoot, "usr", "libexec", "routeflux-xray-update"),
+		filepath.Join(installRoot, "etc", "init.d", "routeflux.bak.20260327-233221"),
+		filepath.Join(installRoot, "etc", "sysctl.d", "99-routeflux-ipv6.conf"),
+		filepath.Join(installRoot, "etc", "config", "zapret"),
+		filepath.Join(installRoot, "etc", "hotplug.d", "iface", "90-zapret"),
+		filepath.Join(installRoot, "opt", "zapret"),
+		filepath.Join(installRoot, "tmp", "lock", "procd_routeflux.lock"),
+		filepath.Join(installRoot, "tmp", "lock", "procd_zapret.lock"),
+		filepath.Join(installRoot, "etc", "opkg", "keys", "9e842876f8b9501d"),
+	} {
+		if _, err := os.Stat(path); !os.IsNotExist(err) {
+			t.Fatalf("expected %s to be removed, stat err=%v", path, err)
+		}
+	}
+
+	customfeeds, err := os.ReadFile(filepath.Join(installRoot, "etc", "opkg", "customfeeds.conf"))
+	if err != nil {
+		t.Fatalf("read customfeeds.conf: %v", err)
+	}
+	if strings.Contains(string(customfeeds), "routeflux") {
+		t.Fatalf("expected routeflux feed entries to be removed, got %q", string(customfeeds))
+	}
+	if !strings.Contains(string(customfeeds), "src/gz keep https://example.invalid/feed") {
+		t.Fatalf("expected unrelated feed entry to remain, got %q", string(customfeeds))
+	}
+
+	serviceLog, err := os.ReadFile(serviceLogPath)
+	if err != nil {
+		t.Fatalf("read service log: %v", err)
+	}
+	for _, want := range []string{
+		"zapret:stop",
+		"zapret:disable",
+		"opkg:remove:zapret",
+	} {
+		if !strings.Contains(string(serviceLog), want) {
+			t.Fatalf("expected service log to contain %q, got %q", want, string(serviceLog))
+		}
+	}
+
+	opkgState, err := os.ReadFile(opkgStatePath)
+	if err != nil {
+		t.Fatalf("read opkg state: %v", err)
+	}
+	if strings.Contains(string(opkgState), "zapret\n") {
+		t.Fatalf("expected zapret to be removed from opkg state, got %q", string(opkgState))
+	}
+	if !strings.Contains(stdout, "RouteFlux, bundled Xray, Zapret, and installer-managed packages removed.") {
+		t.Fatalf("expected completion message in stdout, got %q", stdout)
 	}
 }
 

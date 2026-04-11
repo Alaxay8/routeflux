@@ -8,6 +8,8 @@ It helps you import proxy subscriptions, pick the right node, apply router traff
 
 ## Overview
 
+
+
 RouteFlux is built for people who want a practical proxy workflow on OpenWrt:
 
 - Import a subscription URL, raw `vless://`, `vmess://`, or `trojan://` link, or a valid 3x-ui/Xray JSON config.
@@ -49,6 +51,36 @@ After installation you can use:
 - CLI: over SSH with `routeflux ...`
 - TUI: `routeflux tui`
 
+## Web UI
+
+RouteFlux includes a LuCI interface for everyday subscription management.
+
+![RouteFlux LuCI Subscriptions](docs/images/luci-subscriptions-1.png)
+
+The profile view shows subscription metadata, quick actions, auto exclusions, and the available node list.
+
+![RouteFlux LuCI Subscription Profile](docs/images/luci-subscriptions-2.png)
+
+The nodes table lets you compare latency, inspect transport details, connect manually, recheck routes, or exclude nodes from auto mode.
+
+![RouteFlux LuCI Nodes Table](docs/images/luci-subscriptions-3.png)
+
+The Routing page also includes a Keep Direct view for bypass selectors, where you can keep chosen domains or IPv4 targets on the direct path while bypass mode is active.
+
+![RouteFlux LuCI Keep Direct](docs/images/keep-direrct.png)
+
+For split routing workflows, the Excluded Devices view lets you keep selected LAN hosts outside the proxy path and manage them directly from LuCI.
+
+![RouteFlux LuCI Excluded Devices](docs/images/exclude-devices.png)
+
+RouteFlux also exposes Zapret fallback controls in LuCI, including automatic fallback behaviour, test mode, and the current transport state.
+
+![RouteFlux LuCI Zapret](docs/images/zapret.png)
+
+The Settings page includes appearance controls, so you can switch the RouteFlux LuCI theme without changing the rest of your OpenWrt setup.
+
+![RouteFlux LuCI Appearance](docs/images/appearance.png)
+
 ## Installation
 
 ### Install from a GitHub release
@@ -69,7 +101,7 @@ wget -O /tmp/routeflux-install.sh "https://github.com/Alaxay8/routeflux/releases
 If you need a pinned release:
 
 ```bash
-ROUTEFLUX_TAG=v0.1.5
+ROUTEFLUX_TAG=v0.1.6
 wget -O /tmp/routeflux-install.sh "https://github.com/Alaxay8/routeflux/releases/download/${ROUTEFLUX_TAG}/install.sh" && sh /tmp/routeflux-install.sh
 ```
 
@@ -288,14 +320,14 @@ routeflux dns set default
 It is the best everyday option for most users: local names stay local, public DNS is encrypted.
 
 - `system`: leave DNS as it is
-  Example: your router DNS already works fine and you do not want RouteFlux to change it.
+Example: your router DNS already works fine and you do not want RouteFlux to change it.
 
 ```bash
 routeflux dns set mode system
 ```
 
 - `remote`: send every DNS request to the DNS servers you choose
-  Example: you want all DNS to go through Cloudflare or Google DNS.
+Example: you want all DNS to go through Cloudflare or Google DNS.
 
 ```bash
 routeflux dns set mode remote
@@ -304,14 +336,14 @@ routeflux dns set servers "1.1.1.1,1.0.0.1"
 ```
 
 - `split`: keep local names on the router, send internet domains to your chosen DNS
-  Example: `router.lan` stays local, `google.com` goes to encrypted DNS.
+Example: `router.lan` stays local, `google.com` goes to encrypted DNS.
 
 ```bash
 routeflux dns set default
 ```
 
 - `disabled`: do not write RouteFlux DNS settings into Xray config
-  Example: useful only for custom setups where DNS is managed somewhere else.
+Example: useful only for custom setups where DNS is managed somewhere else.
 
 ```bash
 routeflux dns set mode disabled
@@ -327,7 +359,7 @@ DNS transports:
 CLI help keeps the common path short. This section is the detailed firewall reference.
 
 - `disabled`: do not redirect router traffic through RouteFlux
-  Example: RouteFlux is installed, but no device is forced through the proxy.
+Example: RouteFlux is installed, but no device is forced through the proxy.
 
 ```bash
 routeflux firewall disable
@@ -351,7 +383,7 @@ What does not happen when firewall is disabled:
 In simple words: RouteFlux still manages subscriptions and the active Xray runtime, but it does not capture traffic from the router or your LAN by itself.
 
 - `targets`: send traffic through RouteFlux only when the destination matches selected services, domains, or IPv4 targets
-  Example: only traffic to specific services should go through the proxy.
+Example: only traffic to specific services should go through the proxy.
 
 ```bash
 routeflux firewall set targets youtube instagram 1.1.1.1
@@ -382,9 +414,8 @@ Notes for domain targets:
 - Domain targets require `dnsmasq` with `nftset` support, which usually means `dnsmasq-full` on OpenWrt.
 - Domain targets depend on router-visible DNS answers. If clients use their own DoH or DoT directly, target IP sets may stay empty.
 - On shared CDNs, RouteFlux now falls back to direct routing for non-matching transparent traffic instead of sending every matched IP through the selected node.
-
 - `split`: use separate proxy, direct, and excluded-device tables
-  Example: proxy streaming or work services, keep banking sites direct, and leave one TV or laptop untouched.
+Example: proxy streaming or work services, keep banking sites direct, and leave one TV or laptop untouched.
 
 ```bash
 routeflux firewall set split --proxy youtube openai --bypass gosuslugi.ru sberbank.ru --exclude-host 192.168.1.50
@@ -408,9 +439,8 @@ Notes for split tunnelling:
 - Domain-based split rules require `dnsmasq` with `nftset` support when they must populate nftables destination sets on OpenWrt.
 - `routeflux firewall set anti-target ...` remains available as a legacy alias for `split` with bypass-only selectors and proxy fallback.
 - `block-quic` controls proxied QUIC handling. Enable it only when you intentionally want RouteFlux to block proxied QUIC and force clients to retry over TCP.
-
 - `hosts`: send all traffic from selected LAN devices through RouteFlux
-  Example: route one phone, TV, or laptop through the proxy.
+Example: route one phone, TV, or laptop through the proxy.
 
 ```bash
 routeflux firewall set hosts 192.168.1.150

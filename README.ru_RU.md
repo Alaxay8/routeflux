@@ -49,6 +49,36 @@ routeflux connect --auto --subscription sub-1234567890
 - CLI: по SSH через `routeflux ...`
 - TUI: `routeflux tui`
 
+## Веб-интерфейс
+
+RouteFlux включает интерфейс LuCI для повседневного управления подписками.
+
+![RouteFlux LuCI Subscriptions](docs/images/luci-subscriptions-1.png)
+
+Экран профиля показывает метаданные подписки, быстрые действия, auto exclusions и список доступных нод.
+
+![RouteFlux LuCI Subscription Profile](docs/images/luci-subscriptions-2.png)
+
+Таблица нод позволяет сравнить задержку, посмотреть детали транспорта, подключиться вручную, перепроверить маршрут или исключить ноду из auto mode.
+
+![RouteFlux LuCI Nodes Table](docs/images/luci-subscriptions-3.png)
+
+На странице Routing также есть экран Keep Direct для bypass selectors, где можно оставить выбранные домены или IPv4-цели на прямом маршруте, пока активен bypass mode.
+
+![RouteFlux LuCI Keep Direct](docs/images/keep-direrct.png)
+
+Для сценариев split routing есть экран Excluded Devices, где можно оставить выбранные LAN-хосты вне proxy path и управлять ими прямо из LuCI.
+
+![RouteFlux LuCI Excluded Devices](docs/images/exclude-devices.png)
+
+В LuCI также доступен экран управления Zapret fallback, где видны автоматическое переключение, test mode и текущее состояние транспорта.
+
+![RouteFlux LuCI Zapret](docs/images/zapret.png)
+
+На странице Settings есть переключение внешнего вида, чтобы можно было сменить тему RouteFlux внутри LuCI без изменения остального интерфейса OpenWrt.
+
+![RouteFlux LuCI Appearance](docs/images/appearance.png)
+
 ## Установка
 
 ### Установка из релиза GitHub

@@ -26,7 +26,7 @@ func TestAboutViewUsesLatestInstallScriptUpgradeFlow(t *testing.T) {
 	}
 
 	for _, forbidden := range []string{
-		"'--upgrade'",
+		"this.execHelper(routefluxBinary, [ '--upgrade' ])",
 		"this.execText([ '--upgrade' ])",
 		"fs.exec('/bin/sh'",
 	} {
@@ -44,7 +44,8 @@ func TestAboutUpdateHelperRunsExactInstallCommand(t *testing.T) {
 	for _, want := range []string{
 		"#!/bin/sh",
 		"set -eu",
-		"wget -O /tmp/routeflux-install.sh \"https://github.com/Alaxay8/routeflux/releases/latest/download/install.sh\" && sh /tmp/routeflux-install.sh",
+		"\"${ROUTEFLUX_BINARY}\" --upgrade",
+		"ROUTEFLUX_SELF_UPDATE_STATUS=up-to-date",
 	} {
 		if !strings.Contains(source, want) {
 			t.Fatalf("self-update helper missing marker %q", want)
