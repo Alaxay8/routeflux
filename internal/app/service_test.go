@@ -2315,6 +2315,7 @@ func TestConnectManualFailsWhenBackendEgressProbeFailsAndDisablesFirewall(t *tes
 	store.settings.Firewall.Mode = domain.FirewallModeHosts
 	store.settings.Firewall.Hosts = []string{"192.168.1.150"}
 	store.settings.Firewall.TransparentPort = 12345
+	store.settings.StrictEgressCheck = true
 
 	runtimeBackend := &recordingBackend{}
 	firewall := &recordingFirewaller{}

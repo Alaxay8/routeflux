@@ -9,6 +9,11 @@ var routefluxSelfUpdateHelper = '/usr/libexec/routeflux-self-update';
 var whatsNewEntries = [
 	{
 		kind: _('New'),
+		title: _('Xray Core Upgrade'),
+		summary: _('Upgraded Xray core to v26.7.28 to support latest Reality parameters and prevent connection drops')
+	},
+	{
+		kind: _('New'),
 		title: _('Only Selected Devices Mode'),
 		summary: _('Added Only Selected Devices Mode')
 	},

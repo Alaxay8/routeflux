@@ -724,3 +724,32 @@ func marshalCanonicalJSON(value any) ([]byte, error) {
 
 	return bytes.TrimSpace(buffer.Bytes()), nil
 }
+
+func TestParseNodesSkipsInvalidLines(t *testing.T) {
+	t.Parallel()
+
+	input := `
+# A comment line
+vless://11111111-1111-1111-1111-111111111111@de.example.com:443?type=ws&security=tls#Germany
+ss://invalid-credentials@us.example.com:443#USA
+vmess://eyJhZGQiOiJqcC5leGFtcGxlLmNvbSIsImFpZCI6IjAiLCJhbHBuIjoiIiwiaG9zdCI6IiIsImlkIjoiMjIyMjIyMjItMjIyMi0yMjIyLTIyMjItMjIyMjIyMjIyMjIyIiwiaW5zZWVkIjoiIiwibmV0IjoidGNwIiwicGF0aCI6IiIsInBvcnQiOiI0NDMiLCJwcyI6IkphcGFuIiwic2N5IjoiYXV0byIsInNuaSI6IiIsInRscyI6InRscyIsInR5cGUiOiJub25lIiwidmVyIjoiMiJ9
+`
+
+	nodes, err := parser.ParseNodes(input, "Test Provider")
+	if err != nil {
+		t.Fatalf("unexpected error parsing nodes with some invalid lines: %v", err)
+	}
+
+	if len(nodes) != 2 {
+		t.Fatalf("expected 2 valid nodes, got %d", len(nodes))
+	}
+
+	if nodes[0].Name != "Germany" || nodes[0].Protocol != "vless" {
+		t.Errorf("unexpected first node: %+v", nodes[0])
+	}
+
+	if nodes[1].Name != "Japan" || nodes[1].Protocol != "vmess" {
+		t.Errorf("unexpected second node: %+v", nodes[1])
+	}
+}
+

@@ -356,6 +356,7 @@ func TestSchedulerRunHealthOnceKeepsCurrentNodeWhenCandidateVerifyFails(t *testi
 			settings.Firewall.Enabled = true
 			settings.Firewall.Mode = domain.FirewallModeHosts
 			settings.Firewall.Hosts = []string{"192.168.1.150"}
+			settings.StrictEgressCheck = true
 			return settings
 		}(),
 		state: domain.RuntimeState{
