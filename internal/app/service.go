@@ -156,7 +156,7 @@ type subscriptionFetchResult struct {
 const (
 	subscriptionFetchMaxAttempts          = 3
 	subscriptionFetchBaseBackoff          = 250 * time.Millisecond
-	subscriptionFetchUserAgent            = "sing-box/1.10.0 RouteFlux/0.1.7"
+	subscriptionFetchUserAgent            = "sing-box/1.10.0"
 	subscriptionMetadataFallbackUserAgent = "curl/8.7.1"
 	subscriptionProfileTitleKey           = "Profile-Title"
 	subscriptionUserInfoKey               = "Subscription-Userinfo"
