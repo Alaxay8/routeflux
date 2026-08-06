@@ -11,6 +11,7 @@ XRAY_REPO_URL="${XRAY_REPO_URL:-https://github.com/XTLS/Xray-core.git}"
 XRAY_SOURCE_DIR="${XRAY_SOURCE_DIR:-${ROOT_DIR}/.cache/xray-src/${XRAY_VERSION}}"
 
 mkdir -p "${OUTPUT_DIR}" "$(dirname "${XRAY_SOURCE_DIR}")"
+rm -f "${OUTPUT_DIR}/xray"
 
 if [ ! -d "${XRAY_SOURCE_DIR}/.git" ]; then
 	rm -rf "${XRAY_SOURCE_DIR}"
