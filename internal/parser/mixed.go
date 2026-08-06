@@ -35,6 +35,7 @@ func ParseNodes(input, provider string) ([]domain.Node, error) {
 
 	lines := strings.Split(trimmed, "\n")
 	nodes := make([]domain.Node, 0, len(lines))
+	var lastErr error
 	for _, line := range lines {
 		line = strings.TrimSpace(line)
 		if line == "" || strings.HasPrefix(line, "#") {
@@ -43,13 +44,17 @@ func ParseNodes(input, provider string) ([]domain.Node, error) {
 
 		node, err := parseSingleNode(line, provider)
 		if err != nil {
-			return nil, fmt.Errorf("parse subscription line %q: %w", line, err)
+			lastErr = fmt.Errorf("parse subscription line %q: %w", line, err)
+			continue
 		}
 
 		nodes = append(nodes, node)
 	}
 
 	if len(nodes) == 0 {
+		if lastErr != nil {
+			return nil, lastErr
+		}
 		return nil, fmt.Errorf("no supported nodes found")
 	}
 

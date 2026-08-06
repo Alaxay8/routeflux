@@ -3028,7 +3028,11 @@ func (s *Service) applyNodeSelection(ctx context.Context, sub domain.Subscriptio
 			return s.handlePostApplyVerificationFailure(ctx, sub, node, mode, opts, rollbackSnapshot, reason, err)
 		}
 		if reason, err := s.ensureBackendEgress(ctx, settings, sub.ID, node.ID, mode); err != nil {
-			return s.handlePostApplyVerificationFailure(ctx, sub, node, mode, opts, rollbackSnapshot, reason, err)
+			if settings.StrictEgressCheck {
+				return s.handlePostApplyVerificationFailure(ctx, sub, node, mode, opts, rollbackSnapshot, reason, err)
+			}
+			s.logWarn("backend egress verification failed (ignored)", "subscription", sub.ID, "node", node.ID, "mode", mode, "error", err.Error())
+			_ = s.persistVerificationFailureHealth(node.ID, reason, s.healthFailureThreshold())
 		}
 	}
 
@@ -3188,7 +3192,6 @@ func (s *Service) resolveNodeAddress(ctx context.Context, node domain.Node) (dom
 	if s.resolver == nil {
 		return node, nil
 	}
-
 	addrs, err := s.resolver.LookupIPAddr(ctx, node.Address)
 	if err != nil {
 		s.logger.Debug("resolve node address fallback", "host", node.Address, "error", err)
@@ -4040,29 +4043,69 @@ func (s *Service) defaultBackendEgressProbe(ctx context.Context) error {
 		return fmt.Errorf("unsupported HTTP transport %T", client.Transport)
 	}
 
+	reqTimeout := 5 * time.Second
+	if timeout < reqTimeout {
+		reqTimeout = timeout
+	}
+
 	clientCopy := *client
 	clientCopy.Transport = transport
-	clientCopy.Timeout = timeout
+	clientCopy.Timeout = reqTimeout
+
+	type result struct {
+		err error
+	}
+
+	resCh := make(chan result, len(backendEgressProbeURLs))
+	successCtx, cancelSuccess := context.WithCancel(probeCtx)
+	defer cancelSuccess()
+
+	for _, rawURL := range backendEgressProbeURLs {
+		go func(urlStr string) {
+			req, err := http.NewRequestWithContext(successCtx, http.MethodGet, urlStr, nil)
+			if err != nil {
+				resCh <- result{err: err}
+				return
+			}
+
+			resp, err := clientCopy.Do(req)
+			if err != nil {
+				resCh <- result{err: err}
+				return
+			}
+
+			_, _ = io.Copy(io.Discard, io.LimitReader(resp.Body, 1024))
+			_ = resp.Body.Close()
+
+			if resp.StatusCode >= http.StatusOK && resp.StatusCode < http.StatusInternalServerError {
+				resCh <- result{err: nil}
+				return
+			}
+			resCh <- result{err: fmt.Errorf("%s returned status %d", urlStr, resp.StatusCode)}
+		}(rawURL)
+	}
 
 	var lastErr error
-	for _, rawURL := range backendEgressProbeURLs {
-		req, err := http.NewRequestWithContext(probeCtx, http.MethodGet, rawURL, nil)
-		if err != nil {
-			return err
+	success := false
+	for i := 0; i < len(backendEgressProbeURLs); i++ {
+		select {
+		case <-probeCtx.Done():
+			if lastErr == nil {
+				lastErr = probeCtx.Err()
+			}
+			return lastErr
+		case res := <-resCh:
+			if res.err == nil {
+				success = true
+				cancelSuccess()
+				return nil
+			}
+			lastErr = res.err
 		}
+	}
 
-		resp, err := clientCopy.Do(req)
-		if err != nil {
-			lastErr = err
-			continue
-		}
-
-		_, _ = io.Copy(io.Discard, io.LimitReader(resp.Body, 1024))
-		_ = resp.Body.Close()
-		if resp.StatusCode >= http.StatusOK && resp.StatusCode < http.StatusInternalServerError {
-			return nil
-		}
-		lastErr = fmt.Errorf("%s returned status %d", rawURL, resp.StatusCode)
+	if success {
+		return nil
 	}
 
 	if lastErr == nil {

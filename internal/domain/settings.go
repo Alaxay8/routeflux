@@ -79,6 +79,7 @@ type Settings struct {
 	AutoMode            bool             `json:"auto_mode"`
 	Mode                SelectionMode    `json:"mode"`
 	LogLevel            string           `json:"log_level"`
+	StrictEgressCheck   bool             `json:"strict_egress_check"`
 }
 
 // DNSMode controls how RouteFlux manages runtime DNS behavior.
@@ -241,6 +242,7 @@ func DefaultSettings() Settings {
 		AutoMode: false,
 		Mode:     SelectionModeManual,
 		LogLevel: "info",
+		StrictEgressCheck: false,
 	}
 }
 

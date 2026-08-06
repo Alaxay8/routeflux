@@ -175,6 +175,7 @@ func TestSchedulerRunOnceKeepsActiveSubscriptionWhenCandidateVerifyFails(t *test
 	store.settings.Firewall.Enabled = true
 	store.settings.Firewall.Mode = domain.FirewallModeHosts
 	store.settings.Firewall.Hosts = []string{"192.168.1.150"}
+	store.settings.StrictEgressCheck = true
 
 	runtimeBackend := &recordingBackend{}
 	firewall := &recordingFirewaller{}
