@@ -107,8 +107,9 @@ func TestAboutViewFormatsBuildDateAndSimplifiesWhatsNew(t *testing.T) {
 		"function formatBuildDate(value)",
 		"routefluxUI.renderSummaryCard(_('Build Date'), formattedBuildDate)",
 		"var versionText = 'RouteFlux ' + version + '\\nCommit: ' + commit + '\\nBuilt: ' + formattedBuildDate;",
-		"Only Selected Devices Mode",
-		"Optimized subscriptions and single servers by introducing the Server List",
+		"Local & LAN Proxy Mode",
+		"Documentation & Architecture Flow",
+		"routeflux-about-update-card-docs",
 		"About intentionally keeps destructive maintenance actions out of LuCI.",
 	} {
 		if !strings.Contains(source, want) {

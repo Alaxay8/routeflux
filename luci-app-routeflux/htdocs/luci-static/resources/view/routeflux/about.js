@@ -9,28 +9,13 @@ var routefluxSelfUpdateHelper = '/usr/libexec/routeflux-self-update';
 var whatsNewEntries = [
 	{
 		kind: _('New'),
-		title: _('Xray Core Upgrade'),
-		summary: _('Upgraded Xray core to v26.7.28 to support latest Reality parameters and prevent connection drops')
+		title: _('Local & LAN Proxy Mode'),
+		summary: _('Added dedicated SOCKS5 and HTTP proxy endpoints with configurable LAN access in Settings and CLI')
 	},
 	{
-		kind: _('New'),
-		title: _('Only Selected Devices Mode'),
-		summary: _('Added Only Selected Devices Mode')
-	},
-	{
-		kind: _('New'),
-		title: _('Server List'),
-		summary: _('Optimized subscriptions and single servers by introducing the Server List')
-	},
-	{
-		kind: _('New'),
-		title: _('Socks5 Proxy'),
-		summary: _('Added Socks5 proxy support')
-	},
-	{
-		kind: _('Fix'),
-		title: _('Duplicate Auto Nodes Fix'),
-		summary: _('Merged duplicate auto-connection servers into a single node that dynamically connects to the best one')
+		kind: _('Docs'),
+		title: _('Documentation & Architecture Flow'),
+		summary: _('Updated guides and added high-resolution system architecture flowcharts in English and Russian')
 	}
 ];
 
@@ -79,10 +64,12 @@ function formatBuildDate(value) {
 
 function renderWhatsNewCard(entry) {
 	var className = 'routeflux-card routeflux-card-primary routeflux-about-update-card';
-	if (entry.kind === _('New'))
+	if (entry.kind === _('New') || entry.kind === 'New')
 		className += ' routeflux-about-update-card-new';
-	else if (entry.kind === _('Fix'))
+	else if (entry.kind === _('Fix') || entry.kind === 'Fix')
 		className += ' routeflux-about-update-card-fix';
+	else if (entry.kind === _('Docs') || entry.kind === 'Docs')
+		className += ' routeflux-about-update-card-docs';
 
 	return E('div', { 'class': className }, [
 		E('div', { 'class': 'routeflux-card-accent' }, []),
@@ -233,12 +220,16 @@ return view.extend({
 			'.routeflux-about-update-card { min-height:168px; }',
 			'.routeflux-about-update-card-new .routeflux-card-accent { background:linear-gradient(90deg, #22c55e 0%, #16a34a 100%); }',
 			'.routeflux-about-update-card-fix .routeflux-card-accent { background:linear-gradient(90deg, #f59e0b 0%, #d97706 100%); }',
+			'.routeflux-about-update-card-docs .routeflux-card-accent { background:linear-gradient(90deg, #38bdf8 0%, #0284c7 100%); }',
 			'.routeflux-theme-light .routeflux-about-update-card-new { border-color:rgba(34, 197, 94, 0.2); background:linear-gradient(180deg, rgba(250, 252, 250, 0.99) 0%, rgba(240, 253, 244, 0.99) 100%); }',
 			'.routeflux-theme-light .routeflux-about-update-card-new .routeflux-card-label { color:#15803d; }',
 			'.routeflux-theme-light .routeflux-about-update-card-new .routeflux-about-update-title { color:#14532d; }',
 			'.routeflux-theme-light .routeflux-about-update-card-fix { border-color:rgba(245, 158, 11, 0.2); background:linear-gradient(180deg, rgba(253, 250, 245, 0.99) 0%, rgba(254, 243, 199, 0.38) 100%); }',
 			'.routeflux-theme-light .routeflux-about-update-card-fix .routeflux-card-label { color:#b45309; }',
 			'.routeflux-theme-light .routeflux-about-update-card-fix .routeflux-about-update-title { color:#78350f; }',
+			'.routeflux-theme-light .routeflux-about-update-card-docs { border-color:rgba(56, 189, 248, 0.2); background:linear-gradient(180deg, rgba(250, 252, 254, 0.99) 0%, rgba(240, 249, 255, 0.99) 100%); }',
+			'.routeflux-theme-light .routeflux-about-update-card-docs .routeflux-card-label { color:#0284c7; }',
+			'.routeflux-theme-light .routeflux-about-update-card-docs .routeflux-about-update-title { color:#0369a1; }',
 			'.routeflux-about-update-title { margin-bottom:10px; }',
 			'.routeflux-about-update-summary { margin:0; color:var(--routeflux-text-secondary); line-height:1.6; }',
 			'.routeflux-modal-help { margin:0 0 12px; color:var(--routeflux-text-secondary); max-width:100%; overflow-wrap:anywhere; word-break:break-word; line-height:1.45; }',

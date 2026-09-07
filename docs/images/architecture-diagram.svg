@@ -1,0 +1,530 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 2400 1520" width="2400" height="1520" style="background-color: #0b0f19; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;">
+  <defs>
+    <!-- Background Gradient -->
+    <linearGradient id="bgGrad" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#090d16" />
+      <stop offset="40%" stop-color="#0f172a" />
+      <stop offset="100%" stop-color="#080c14" />
+    </linearGradient>
+
+    <!-- Header Gradient -->
+    <linearGradient id="headerGrad" x1="0%" y1="0%" x2="100%" y2="0%">
+      <stop offset="0%" stop-color="#38bdf8" />
+      <stop offset="50%" stop-color="#818cf8" />
+      <stop offset="100%" stop-color="#c084fc" />
+    </linearGradient>
+
+    <!-- Card Background Glows -->
+    <linearGradient id="glowControl" x1="0%" y1="0%" x2="0%" y2="100%">
+      <stop offset="0%" stop-color="#0284c7" stop-opacity="0.18" />
+      <stop offset="100%" stop-color="#0284c7" stop-opacity="0.0" />
+    </linearGradient>
+
+    <linearGradient id="glowNft" x1="0%" y1="0%" x2="0%" y2="100%">
+      <stop offset="0%" stop-color="#ea580c" stop-opacity="0.18" />
+      <stop offset="100%" stop-color="#ea580c" stop-opacity="0.0" />
+    </linearGradient>
+
+    <linearGradient id="glowXray" x1="0%" y1="0%" x2="0%" y2="100%">
+      <stop offset="0%" stop-color="#7c3aed" stop-opacity="0.18" />
+      <stop offset="100%" stop-color="#7c3aed" stop-opacity="0.0" />
+    </linearGradient>
+
+    <!-- Arrow Markers -->
+    <marker id="arrowBlue" markerWidth="9" markerHeight="9" refX="7" refY="4.5" orient="auto">
+      <path d="M 0 1 L 7 4.5 L 0 8 z" fill="#38bdf8" />
+    </marker>
+    <marker id="arrowOrange" markerWidth="9" markerHeight="9" refX="7" refY="4.5" orient="auto">
+      <path d="M 0 1 L 7 4.5 L 0 8 z" fill="#f97316" />
+    </marker>
+    <marker id="arrowPurple" markerWidth="9" markerHeight="9" refX="7" refY="4.5" orient="auto">
+      <path d="M 0 1 L 7 4.5 L 0 8 z" fill="#c084fc" />
+    </marker>
+    <marker id="arrowGreen" markerWidth="9" markerHeight="9" refX="7" refY="4.5" orient="auto">
+      <path d="M 0 1 L 7 4.5 L 0 8 z" fill="#10b981" />
+    </marker>
+    <marker id="arrowTeal" markerWidth="9" markerHeight="9" refX="7" refY="4.5" orient="auto">
+      <path d="M 0 1 L 7 4.5 L 0 8 z" fill="#14b8a6" />
+    </marker>
+
+    <!-- Drop Shadow Filter -->
+    <filter id="shadow" x="-3%" y="-3%" width="106%" height="106%">
+      <feDropShadow dx="0" dy="6" stdDeviation="10" flood-color="#000000" flood-opacity="0.5" />
+    </filter>
+  </defs>
+
+  <!-- Background Base -->
+  <rect width="2400" height="1520" fill="url(#bgGrad)" />
+
+  <!-- Subtle Blueprint Grid -->
+  <g opacity="0.035" stroke="#ffffff" stroke-width="1">
+    <line x1="0" y1="0" x2="0" y2="1520"/><line x1="60" y1="0" x2="60" y2="1520"/><line x1="120" y1="0" x2="120" y2="1520"/><line x1="180" y1="0" x2="180" y2="1520"/><line x1="240" y1="0" x2="240" y2="1520"/><line x1="300" y1="0" x2="300" y2="1520"/><line x1="360" y1="0" x2="360" y2="1520"/><line x1="420" y1="0" x2="420" y2="1520"/><line x1="480" y1="0" x2="480" y2="1520"/><line x1="540" y1="0" x2="540" y2="1520"/><line x1="600" y1="0" x2="600" y2="1520"/><line x1="660" y1="0" x2="660" y2="1520"/><line x1="720" y1="0" x2="720" y2="1520"/><line x1="780" y1="0" x2="780" y2="1520"/><line x1="840" y1="0" x2="840" y2="1520"/><line x1="900" y1="0" x2="900" y2="1520"/><line x1="960" y1="0" x2="960" y2="1520"/><line x1="1020" y1="0" x2="1020" y2="1520"/><line x1="1080" y1="0" x2="1080" y2="1520"/><line x1="1140" y1="0" x2="1140" y2="1520"/><line x1="1200" y1="0" x2="1200" y2="1520"/><line x1="1260" y1="0" x2="1260" y2="1520"/><line x1="1320" y1="0" x2="1320" y2="1520"/><line x1="1380" y1="0" x2="1380" y2="1520"/><line x1="1440" y1="0" x2="1440" y2="1520"/><line x1="1500" y1="0" x2="1500" y2="1520"/><line x1="1560" y1="0" x2="1560" y2="1520"/><line x1="1620" y1="0" x2="1620" y2="1520"/><line x1="1680" y1="0" x2="1680" y2="1520"/><line x1="1740" y1="0" x2="1740" y2="1520"/><line x1="1800" y1="0" x2="1800" y2="1520"/><line x1="1860" y1="0" x2="1860" y2="1520"/><line x1="1920" y1="0" x2="1920" y2="1520"/><line x1="1980" y1="0" x2="1980" y2="1520"/><line x1="2040" y1="0" x2="2040" y2="1520"/><line x1="2100" y1="0" x2="2100" y2="1520"/><line x1="2160" y1="0" x2="2160" y2="1520"/><line x1="2220" y1="0" x2="2220" y2="1520"/><line x1="2280" y1="0" x2="2280" y2="1520"/><line x1="2340" y1="0" x2="2340" y2="1520"/>
+    <line x1="0" y1="0" x2="2400" y2="0"/><line x1="0" y1="60" x2="2400" y2="60"/><line x1="0" y1="120" x2="2400" y2="120"/><line x1="0" y1="180" x2="2400" y2="180"/><line x1="0" y1="240" x2="2400" y2="240"/><line x1="0" y1="300" x2="2400" y2="300"/><line x1="0" y1="360" x2="2400" y2="360"/><line x1="0" y1="420" x2="2400" y2="420"/><line x1="0" y1="480" x2="2400" y2="480"/><line x1="0" y1="540" x2="2400" y2="540"/><line x1="0" y1="600" x2="2400" y2="600"/><line x1="0" y1="660" x2="2400" y2="660"/><line x1="0" y1="720" x2="2400" y2="720"/><line x1="0" y1="780" x2="2400" y2="780"/><line x1="0" y1="840" x2="2400" y2="840"/><line x1="0" y1="900" x2="2400" y2="900"/><line x1="0" y1="960" x2="2400" y2="960"/><line x1="0" y1="1020" x2="2400" y2="1020"/><line x1="0" y1="1080" x2="2400" y2="1080"/><line x1="0" y1="1140" x2="2400" y2="1140"/><line x1="0" y1="1200" x2="2400" y2="1200"/><line x1="0" y1="1260" x2="2400" y2="1260"/><line x1="0" y1="1320" x2="2400" y2="1320"/><line x1="0" y1="1380" x2="2400" y2="1380"/><line x1="0" y1="1440" x2="2400" y2="1440"/><line x1="0" y1="1500" x2="2400" y2="1500"/>
+  </g>
+
+  <!-- ==================== HEADER ==================== -->
+  <g transform="translate(80, 45)">
+    <!-- Logo Badge -->
+    <rect x="0" y="0" width="56" height="56" rx="14" fill="#1e293b" stroke="#38bdf8" stroke-width="2" />
+    <circle cx="28" cy="28" r="16" fill="none" stroke="#38bdf8" stroke-width="2.5" stroke-dasharray="8,4" />
+    <circle cx="28" cy="28" r="6" fill="#38bdf8" />
+    <path d="M 12 28 L 22 28 M 34 28 L 44 28 M 28 12 L 28 22 M 28 34 L 28 44" stroke="#38bdf8" stroke-width="2.5" stroke-linecap="round" />
+
+    <text x="74" y="32" font-size="32" font-weight="800" fill="url(#headerGrad)" letter-spacing="0.4">RouteFlux • Architecture &amp; System Flow</text>
+    <text x="74" y="52" font-size="14.5" fill="#94a3b8">Native Xray subscription manager, intelligent routing, DNS &amp; LAN proxy for OpenWrt / ImmortalWrt</text>
+
+    <!-- Badges -->
+    <g transform="translate(1330, 10)">
+      <rect x="0" y="0" width="130" height="32" rx="16" fill="#1e293b" stroke="#38bdf8" stroke-width="1.2" />
+      <text x="65" y="20.5" font-size="12" font-weight="700" fill="#38bdf8" text-anchor="middle">OpenWrt 22.03+</text>
+
+      <rect x="145" y="0" width="110" height="32" rx="16" fill="#1e293b" stroke="#f97316" stroke-width="1.2" />
+      <text x="200" y="20.5" font-size="12" font-weight="700" fill="#f97316" text-anchor="middle">nftables fw4</text>
+
+      <rect x="270" y="0" width="145" height="32" rx="16" fill="#1e293b" stroke="#14b8a6" stroke-width="1.2" />
+      <text x="342.5" y="20.5" font-size="12" font-weight="700" fill="#14b8a6" text-anchor="middle">dnsmasq + nftset</text>
+
+      <rect x="430" y="0" width="110" height="32" rx="16" fill="#1e293b" stroke="#a855f7" stroke-width="1.2" />
+      <text x="485" y="20.5" font-size="12" font-weight="700" fill="#a855f7" text-anchor="middle">Xray-core</text>
+
+      <rect x="555" y="0" width="155" height="32" rx="16" fill="#1e293b" stroke="#10b981" stroke-width="1.2" />
+      <text x="632.5" y="20.5" font-size="12" font-weight="700" fill="#10b981" text-anchor="middle">SOCKS5 &amp; HTTP LAN</text>
+
+      <rect x="725" y="0" width="120" height="32" rx="16" fill="#1e293b" stroke="#e2e8f0" stroke-width="1.2" />
+      <text x="785" y="20.5" font-size="12" font-weight="700" fill="#e2e8f0" text-anchor="middle">Go 1.26 Native</text>
+    </g>
+  </g>
+
+  <!-- ==================== SECTION 1: CONTROL PLANE (TOP) ==================== -->
+  <g transform="translate(80, 125)">
+    <!-- Zone Container -->
+    <rect width="2240" height="360" rx="18" fill="#0f172a" stroke="#1e3a8a" stroke-width="1.6" filter="url(#shadow)" />
+    <rect width="2240" height="360" rx="18" fill="url(#glowControl)" />
+
+    <!-- Zone Label -->
+    <rect x="24" y="16" width="390" height="28" rx="8" fill="#1e3a8a" />
+    <text x="36" y="35" font-size="12.5" font-weight="800" fill="#93c5fd" letter-spacing="1">1. CONTROL PLANE &amp; BUSINESS LOGIC (GO CORE)</text>
+
+    <!-- Sub-Box 1.1: Management Interfaces -->
+    <g transform="translate(25, 56)">
+      <rect width="455" height="282" rx="12" fill="#1e293b" stroke="#334155" stroke-width="1.2" />
+      <text x="24" y="32" font-size="15.5" font-weight="700" fill="#38bdf8">Management Interfaces</text>
+      <text x="24" y="50" font-size="11.5" fill="#94a3b8">Single shared source of truth across all clients</text>
+
+      <!-- LuCI Item -->
+      <g transform="translate(18, 66)">
+        <rect width="419" height="58" rx="8" fill="#0f172a" stroke="#38bdf8" stroke-width="1" />
+        <rect x="12" y="12" width="34" height="34" rx="7" fill="#0284c7" />
+        <text x="29" y="34" font-size="13" font-weight="bold" fill="#ffffff" text-anchor="middle">WEB</text>
+        <text x="58" y="27" font-size="13.5" font-weight="700" fill="#f8fafc">LuCI Web UI (OpenWrt)</text>
+        <text x="58" y="44" font-size="11" fill="#94a3b8">Tabs: Subscriptions, Routing, DNS, Zapret, Settings</text>
+      </g>
+
+      <!-- CLI Item -->
+      <g transform="translate(18, 134)">
+        <rect width="419" height="58" rx="8" fill="#0f172a" stroke="#334155" stroke-width="1" />
+        <rect x="12" y="12" width="34" height="34" rx="7" fill="#334155" />
+        <text x="29" y="34" font-size="13" font-weight="bold" fill="#38bdf8" text-anchor="middle">&gt;_</text>
+        <text x="58" y="27" font-size="13.5" font-weight="700" fill="#f8fafc">CLI (Cobra) • SSH Terminal</text>
+        <text x="58" y="44" font-size="11" fill="#94a3b8">Commands: routeflux add, connect, proxy, dns, firewall</text>
+      </g>
+
+      <!-- TUI Item -->
+      <g transform="translate(18, 202)">
+        <rect width="419" height="66" rx="8" fill="#0f172a" stroke="#334155" stroke-width="1" />
+        <rect x="12" y="16" width="34" height="34" rx="7" fill="#475569" />
+        <text x="29" y="38" font-size="12" font-weight="bold" fill="#c084fc" text-anchor="middle">TUI</text>
+        <text x="58" y="27" font-size="13.5" font-weight="700" fill="#f8fafc">TUI (Bubble Tea) &amp; Daemon</text>
+        <text x="58" y="44" font-size="11" fill="#94a3b8">Interactive terminal server browser</text>
+        <text x="58" y="58" font-size="10.5" fill="#38bdf8">routeflux daemon: background checks &amp; auto-refresh</text>
+      </g>
+    </g>
+
+    <!-- Sub-Box 1.2: Subscriptions & Parser -->
+    <g transform="translate(500, 56)">
+      <rect width="500" height="282" rx="12" fill="#1e293b" stroke="#334155" stroke-width="1.2" />
+      <text x="24" y="32" font-size="15.5" font-weight="700" fill="#38bdf8">Subscription Import &amp; Parser</text>
+      <text x="24" y="50" font-size="11.5" fill="#94a3b8">parser module: auto-detection of formats &amp; protocols</text>
+
+      <g transform="translate(18, 66)">
+        <rect width="464" height="96" rx="8" fill="#0f172a" stroke="#334155" stroke-width="1" />
+        <text x="16" y="23" font-size="12.5" font-weight="700" fill="#cbd5e1">Supported Protocols &amp; Links:</text>
+
+        <rect x="16" y="34" width="102" height="23" rx="5" fill="#1e293b" />
+        <text x="67" y="50" font-size="11" font-weight="700" fill="#38bdf8" text-anchor="middle">VLESS + Reality</text>
+
+        <rect x="126" y="34" width="72" height="23" rx="5" fill="#1e293b" />
+        <text x="162" y="50" font-size="11" font-weight="700" fill="#a855f7" text-anchor="middle">VMess</text>
+
+        <rect x="206" y="34" width="66" height="23" rx="5" fill="#1e293b" />
+        <text x="239" y="50" font-size="11" font-weight="700" fill="#f59e0b" text-anchor="middle">Trojan</text>
+
+        <rect x="280" y="34" width="94" height="23" rx="5" fill="#1e293b" />
+        <text x="327" y="50" font-size="11" font-weight="700" fill="#ec4899" text-anchor="middle">Hysteria 1 / 2</text>
+
+        <rect x="382" y="34" width="66" height="23" rx="5" fill="#1e293b" />
+        <text x="415" y="50" font-size="11" font-weight="700" fill="#10b981" text-anchor="middle">Socks5</text>
+
+        <text x="16" y="77" font-size="11" fill="#94a3b8">• Subscription URLs (Base64) • Share links (vless://, vmess://...)</text>
+        <text x="16" y="90" font-size="10.5" fill="#64748b">• 3x-ui client configurations and raw Xray JSON profiles</text>
+      </g>
+
+      <g transform="translate(18, 172)">
+        <rect width="464" height="96" rx="8" fill="#0f172a" stroke="#334155" stroke-width="1" />
+        <text x="16" y="23" font-size="12.5" font-weight="700" fill="#cbd5e1">State Persistence (Store):</text>
+        <text x="16" y="42" font-size="11" fill="#94a3b8">Atomic JSON persistence in /etc/routeflux/:</text>
+        <text x="16" y="60" font-size="11" font-family="monospace" fill="#38bdf8">subscriptions.json • settings.json • state.json</text>
+        <text x="16" y="78" font-size="10.5" fill="#10b981">✓ Preserves subscriptions, nodes, and proxy settings across reboots</text>
+      </g>
+    </g>
+
+    <!-- Sub-Box 1.3: Probe Engine & Scoring -->
+    <g transform="translate(1020, 56)">
+      <rect width="580" height="282" rx="12" fill="#1e293b" stroke="#334155" stroke-width="1.2" />
+      <text x="24" y="32" font-size="15.5" font-weight="700" fill="#38bdf8">Probe Engine • Health Evaluation &amp; Auto Selection</text>
+      <text x="24" y="50" font-size="11.5" fill="#94a3b8">probe, speedtest, and smart anti-flap switching</text>
+
+      <g transform="translate(18, 66)">
+        <rect width="544" height="96" rx="8" fill="#0f172a" stroke="#334155" stroke-width="1" />
+        <text x="16" y="23" font-size="12.5" font-weight="700" fill="#f8fafc">Parallel Availability &amp; Speed Testing:</text>
+        <text x="16" y="42" font-size="11" fill="#94a3b8">• Background TCP handshake and RTT ping across all subscription nodes</text>
+        <text x="16" y="60" font-size="11" fill="#94a3b8">• Dynamic health score calculated from latency, jitter, and packet loss</text>
+        <text x="16" y="78" font-size="11" fill="#94a3b8">• Egress verification via generate_204 before active deployment</text>
+      </g>
+
+      <g transform="translate(18, 172)">
+        <rect width="544" height="96" rx="8" fill="#0f172a" stroke="#334155" stroke-width="1" />
+        <text x="16" y="23" font-size="12.5" font-weight="700" fill="#f8fafc">Intelligent Auto-Failover &amp; Anti-Flap:</text>
+        <text x="16" y="42" font-size="11" fill="#94a3b8">• Anti-flap protection: cooldown window prevents rapid flipping</text>
+        <text x="16" y="60" font-size="11" fill="#94a3b8">• Instant transparent failover to backup node if active node drops</text>
+        <text x="16" y="78" font-size="10.5" fill="#10b981">✓ Guarantees continuous connectivity for all LAN devices and proxies</text>
+      </g>
+    </g>
+
+    <!-- Sub-Box 1.4: Config Generator & Service Manager -->
+    <g transform="translate(1620, 56)">
+      <rect width="595" height="282" rx="12" fill="#1e293b" stroke="#334155" stroke-width="1.2" />
+      <text x="24" y="32" font-size="15.5" font-weight="700" fill="#38bdf8">Atomic Config Generator &amp; Service Sync</text>
+      <text x="24" y="50" font-size="11.5" fill="#94a3b8">backend/xray and platform/openwrt orchestration</text>
+
+      <g transform="translate(18, 66)">
+        <rect width="559" height="96" rx="8" fill="#0f172a" stroke="#334155" stroke-width="1" />
+        <text x="16" y="23" font-size="12.5" font-weight="700" fill="#f8fafc">Transactional Xray JSON Generation:</text>
+        <text x="16" y="42" font-size="11" fill="#94a3b8">1. Renders /var/run/routeflux/xray.json with active node, DNS, inbounds</text>
+        <text x="16" y="60" font-size="11" fill="#f59e0b" font-weight="bold">2. Strict validation test: xray -test -c /tmp/xray.json</text>
+        <text x="16" y="78" font-size="11" fill="#94a3b8">3. Atomic rollback snapshot: previous config restored if validation fails</text>
+      </g>
+
+      <g transform="translate(18, 172)">
+        <rect width="559" height="96" rx="8" fill="#0f172a" stroke="#334155" stroke-width="1" />
+        <text x="16" y="23" font-size="12.5" font-weight="700" fill="#f8fafc">OpenWrt Dataplane Synchronization:</text>
+        <text x="16" y="42" font-size="11" fill="#94a3b8">• Configures nftables ruleset via fw4 table inet routeflux</text>
+        <text x="16" y="60" font-size="11" fill="#94a3b8">• Generates dnsmasq nftset directives for dynamic domain capturing</text>
+        <text x="16" y="78" font-size="11" fill="#94a3b8">• Gracefully reloads services (/etc/init.d/xray reload)</text>
+      </g>
+    </g>
+  </g>
+
+  <!-- Control Plane Connector Lines -->
+  <path d="M 760 485 L 760 525" stroke="#14b8a6" stroke-width="2.5" stroke-dasharray="5,4" marker-end="url(#arrowTeal)" fill="none" />
+  <rect x="690" y="495" width="140" height="22" rx="5" fill="#0f172a" stroke="#14b8a6" stroke-width="1" />
+  <text x="760" y="510" font-size="10.5" font-weight="bold" fill="#14b8a6" text-anchor="middle">dnsmasq.conf</text>
+
+  <path d="M 1350 485 L 1350 525" stroke="#f97316" stroke-width="2.5" stroke-dasharray="5,4" marker-end="url(#arrowOrange)" fill="none" />
+  <rect x="1285" y="495" width="130" height="22" rx="5" fill="#0f172a" stroke="#f97316" stroke-width="1" />
+  <text x="1350" y="510" font-size="10.5" font-weight="bold" fill="#f97316" text-anchor="middle">nftables rules</text>
+
+  <!-- ==================== SECTION 2: DATA PLANE (MIDDLE) ==================== -->
+  <g transform="translate(80, 535)">
+    <!-- Zone Container -->
+    <rect width="2240" height="375" rx="18" fill="#0f172a" stroke="#c2410c" stroke-width="1.6" filter="url(#shadow)" />
+    <rect width="2240" height="375" rx="18" fill="url(#glowNft)" />
+
+    <!-- Zone Label -->
+    <rect x="24" y="16" width="460" height="28" rx="8" fill="#9a3412" />
+    <text x="36" y="35" font-size="12.5" font-weight="800" fill="#fed7aa" letter-spacing="1">2. OPENWRT DATAPLANE • TRAFFIC INTERCEPTION &amp; LAN PROXY</text>
+
+    <!-- Sub-Box 2.1: LAN Clients & Ingress -->
+    <g transform="translate(25, 56)">
+      <rect width="445" height="295" rx="12" fill="#1e293b" stroke="#334155" stroke-width="1.2" />
+      <text x="24" y="32" font-size="15.5" font-weight="700" fill="#f97316">LAN Clients &amp; Traffic Modes</text>
+      <text x="24" y="50" font-size="11.5" fill="#94a3b8">Home &amp; office network devices (192.168.1.0/24)</text>
+
+      <g transform="translate(18, 66)">
+        <rect width="409" height="90" rx="8" fill="#0f172a" stroke="#334155" stroke-width="1" />
+        <text x="16" y="24" font-size="12.5" font-weight="700" fill="#f8fafc">Mode A: Transparent Gateway (Default)</text>
+        <text x="16" y="44" font-size="11" fill="#94a3b8">Devices send standard traffic through default gateway</text>
+        <text x="16" y="62" font-size="11" fill="#38bdf8">nftables transparently intercepts DNS (53) and TCP/UDP</text>
+        <text x="16" y="78" font-size="10.5" fill="#64748b">Zero client configuration needed on phones, PCs, or TVs</text>
+      </g>
+
+      <g transform="translate(18, 168)">
+        <rect width="409" height="112" rx="8" fill="#0f172a" stroke="#10b981" stroke-width="1" />
+        <text x="16" y="23" font-size="12.5" font-weight="700" fill="#10b981">Mode B: Explicit Local &amp; LAN Proxy (NEW)</text>
+        <text x="16" y="43" font-size="11" fill="#cbd5e1">Routing: Off — no router firewall interception</text>
+        <text x="16" y="61" font-size="11" fill="#f8fafc">• SOCKS5 (:10808) &amp; HTTP (:10809) open to LAN</text>
+        <text x="16" y="79" font-size="11" fill="#94a3b8">• Configured in browsers, Telegram, Happ, SwitchyOmega</text>
+        <text x="16" y="97" font-size="10.5" fill="#10b981">✓ Preserves smart home, banking, and full native NAT speeds</text>
+      </g>
+    </g>
+
+    <!-- Sub-Box 2.2: DNS & Dynamic nftset -->
+    <g transform="translate(490, 56)">
+      <rect width="520" height="295" rx="12" fill="#1e293b" stroke="#0d9488" stroke-width="1.4" />
+      <text x="24" y="32" font-size="15.5" font-weight="700" fill="#14b8a6">dnsmasq-full &amp; Dynamic nftset</text>
+      <text x="24" y="50" font-size="11.5" fill="#94a3b8">Dynamic domain-to-IP resolution without static IP lists</text>
+
+      <g transform="translate(18, 66)">
+        <rect width="484" height="124" rx="8" fill="#0f172a" stroke="#0d9488" stroke-width="1" />
+        <text x="16" y="23" font-size="12.5" font-weight="700" fill="#2dd4bf">How the nftset directive works:</text>
+        <text x="16" y="43" font-size="11" fill="#cbd5e1">1. RouteFlux injects target domain patterns into dnsmasq:</text>
+        <text x="16" y="61" font-size="10.5" font-family="monospace" fill="#38bdf8">nftset=/youtube.com/4#inet#routeflux#proxy_target_v4</text>
+        <text x="16" y="79" font-size="11" fill="#cbd5e1">2. Client requests domain (e.g. googlevideo.com)</text>
+        <text x="16" y="97" font-size="11" font-weight="bold" fill="#f59e0b">3. dnsmasq kernel hook adds resolved IP directly to nftables set!</text>
+        <text x="16" y="113" font-size="10" fill="#64748b">Subsequent packets immediately match proxy redirection rules</text>
+      </g>
+
+      <g transform="translate(18, 202)">
+        <rect width="484" height="77" rx="8" fill="#0f172a" stroke="#334155" stroke-width="1" />
+        <text x="16" y="22" font-size="12.5" font-weight="700" fill="#f8fafc">DNS Resolution Modes:</text>
+        <text x="16" y="42" font-size="11" fill="#94a3b8">• <tspan font-weight="bold" fill="#f8fafc">Split (Default):</tspan> .lan queries stay local, external via encrypted DoH</text>
+        <text x="16" y="60" font-size="11" fill="#94a3b8">• <tspan font-weight="bold" fill="#f8fafc">Remote:</tspan> 100% of DNS routed through remote upstream resolvers</text>
+      </g>
+    </g>
+
+    <!-- Sub-Box 2.3: nftables Kernel Routing -->
+    <g transform="translate(1030, 56)">
+      <rect width="1185" height="295" rx="12" fill="#1e293b" stroke="#f97316" stroke-width="1.4" />
+      <text x="24" y="32" font-size="15.5" font-weight="700" fill="#f97316">nftables (table inet routeflux) • Hardware-Accelerated Flow</text>
+      <text x="24" y="50" font-size="11.5" fill="#94a3b8">In-kernel Netfilter packet evaluation and transparent redirection</text>
+
+      <!-- Sets sub-box -->
+      <g transform="translate(18, 66)">
+        <rect width="365" height="213" rx="8" fill="#0f172a" stroke="#334155" stroke-width="1" />
+        <text x="16" y="23" font-size="12.5" font-weight="700" fill="#f8fafc">Dynamic Kernel Sets:</text>
+
+        <text x="16" y="47" font-size="11" font-family="monospace" fill="#ef4444">@excluded_source_v4</text>
+        <text x="16" y="62" font-size="10" fill="#94a3b8">Bypassed LAN devices (TV, consoles, work PCs)</text>
+
+        <text x="16" y="86" font-size="11" font-family="monospace" fill="#10b981">@local_bypass_v4</text>
+        <text x="16" y="101" font-size="10" fill="#94a3b8">Private subnets: 10.0.0.0/8, 192.168.0.0/16, lo...</text>
+
+        <text x="16" y="125" font-size="11" font-family="monospace" fill="#10b981">@direct_target_v4</text>
+        <text x="16" y="140" font-size="10" fill="#94a3b8">Direct bypass targets (banking, government, local)</text>
+
+        <text x="16" y="164" font-size="11" font-family="monospace" fill="#a855f7">@proxy_target_v4</text>
+        <text x="16" y="179" font-size="10" fill="#94a3b8">Dynamic proxy targets (YouTube, Discord, AI, etc.)</text>
+      </g>
+
+      <!-- Chains sub-box -->
+      <g transform="translate(400, 66)">
+        <rect width="767" height="213" rx="8" fill="#0f172a" stroke="#334155" stroke-width="1" />
+        <text x="16" y="23" font-size="12.5" font-weight="700" fill="#f8fafc">Kernel Chains: prerouting (TCP) &amp; prerouting_mangle (UDP TProxy):</text>
+
+        <!-- Rule 1 -->
+        <rect x="16" y="34" width="735" height="34" rx="6" fill="#1e293b" />
+        <text x="24" y="55" font-size="10.5" font-family="monospace" fill="#94a3b8">1. ip saddr @excluded_source_v4 <tspan font-weight="bold" fill="#10b981">return</tspan> | ip daddr @local_bypass_v4 <tspan font-weight="bold" fill="#10b981">return</tspan></text>
+        <text x="615" y="55" font-size="10" font-weight="bold" fill="#10b981">➔ Direct WAN Egress</text>
+
+        <!-- Rule 2 -->
+        <rect x="16" y="74" width="735" height="34" rx="6" fill="#1e293b" />
+        <text x="24" y="95" font-size="10.5" font-family="monospace" fill="#94a3b8">2. ip daddr @direct_target_v4 <tspan font-weight="bold" fill="#10b981">return</tspan> (Keep Direct / Bypass)</text>
+        <text x="615" y="95" font-size="10" font-weight="bold" fill="#10b981">➔ Direct WAN Egress</text>
+
+        <!-- Rule 3 TCP -->
+        <rect x="16" y="114" width="735" height="42" rx="6" fill="#1e293b" stroke="#38bdf8" stroke-width="1" />
+        <text x="24" y="132" font-size="10.5" font-family="monospace" fill="#38bdf8">3. TCP: ip daddr @proxy_target_v4 tcp redirect to :12345</text>
+        <text x="24" y="147" font-size="9.5" fill="#94a3b8">Redirects TCP packets to Xray dokodemo-door listener</text>
+        <text x="595" y="138" font-size="10" font-weight="bold" fill="#38bdf8">➔ To Xray Inbound :12345</text>
+
+        <!-- Rule 4 UDP -->
+        <rect x="16" y="162" width="735" height="42" rx="6" fill="#1e293b" stroke="#f97316" stroke-width="1" />
+        <text x="24" y="180" font-size="10.5" font-family="monospace" fill="#f97316">4. UDP: ip daddr @proxy_target_v4 meta mark set 0x1 tproxy to :12345</text>
+        <text x="24" y="195" font-size="9.5" fill="#94a3b8">TProxy + policy routing table 100 for UDP streams (block-quic option)</text>
+        <text x="595" y="186" font-size="10" font-weight="bold" fill="#f97316">➔ To Xray Inbound :12345</text>
+      </g>
+    </g>
+  </g>
+
+  <!-- Horizontal Arrows Between Sub-boxes in Data Plane -->
+  <path d="M 470 680 L 490 680" stroke="#14b8a6" stroke-width="3" marker-end="url(#arrowTeal)" fill="none" />
+  <rect x="462" y="652" width="56" height="20" rx="4" fill="#0f172a" stroke="#14b8a6" stroke-width="1" />
+  <text x="490" y="666" font-size="9.5" font-weight="bold" fill="#14b8a6" text-anchor="middle">DNS 53</text>
+
+  <path d="M 1010 680 L 1030 680" stroke="#f97316" stroke-width="3" marker-end="url(#arrowOrange)" fill="none" />
+  <rect x="998" y="652" width="64" height="20" rx="4" fill="#0f172a" stroke="#f97316" stroke-width="1" />
+  <text x="1030" y="666" font-size="9.5" font-weight="bold" fill="#f97316" text-anchor="middle">nftset IP</text>
+
+  <!-- Downward Arrow from nftables to Xray Inbound -->
+  <path d="M 1480 870 L 1480 945" stroke="#c084fc" stroke-width="3.5" marker-end="url(#arrowPurple)" fill="none" />
+  <rect x="1350" y="895" width="260" height="26" rx="6" fill="#0f172a" stroke="#c084fc" stroke-width="1" />
+  <text x="1480" y="912" font-size="11" font-weight="bold" fill="#c084fc" text-anchor="middle">TCP Redirect &amp; UDP TProxy (:12345)</text>
+
+  <!-- Downward Arrow from LAN proxy direct to Xray Inbound -->
+  <path d="M 230 870 L 230 945" stroke="#10b981" stroke-width="3.5" marker-end="url(#arrowGreen)" fill="none" />
+  <rect x="95" y="895" width="270" height="26" rx="6" fill="#0f172a" stroke="#10b981" stroke-width="1" />
+  <text x="230" y="912" font-size="11" font-weight="bold" fill="#10b981" text-anchor="middle">Direct LAN SOCKS5 / HTTP Inbounds</text>
+
+
+  <!-- ==================== SECTION 3: XRAY RUNTIME & INTERNET (BOTTOM) ==================== -->
+  <g transform="translate(80, 950)">
+    <!-- Zone Container -->
+    <rect width="2240" height="340" rx="18" fill="#0f172a" stroke="#6b21a8" stroke-width="1.6" filter="url(#shadow)" />
+    <rect width="2240" height="340" rx="18" fill="url(#glowXray)" />
+
+    <!-- Zone Label -->
+    <rect x="24" y="16" width="450" height="28" rx="8" fill="#581c87" />
+    <text x="36" y="35" font-size="12.5" font-weight="800" fill="#e9d5ff" letter-spacing="1">3. XRAY RUNTIME PROCESS &amp; GLOBAL INTERNET EGRESS</text>
+
+    <!-- Sub-Box 3.1: Inbounds -->
+    <g transform="translate(25, 56)">
+      <rect width="455" height="258" rx="12" fill="#1e293b" stroke="#a855f7" stroke-width="1.2" />
+      <text x="24" y="32" font-size="15.5" font-weight="700" fill="#c084fc">Dual Inbounds: Transparent &amp; LAN Proxy</text>
+      <text x="24" y="50" font-size="11.5" fill="#94a3b8">Receives router-intercepted and direct LAN proxy streams</text>
+
+      <g transform="translate(18, 66)">
+        <rect width="419" height="80" rx="8" fill="#0f172a" stroke="#334155" stroke-width="1" />
+        <text x="16" y="23" font-size="12.5" font-weight="700" fill="#f8fafc">transparent-in (dokodemo-door :12345):</text>
+        <text x="16" y="42" font-size="10.5" fill="#94a3b8">• TProxy &amp; Redirect entry point for router netfilter</text>
+        <text x="16" y="58" font-size="10.5" fill="#94a3b8">• Sniffing: HTTP Host &amp; TLS SNI domain inspection</text>
+        <text x="16" y="74" font-size="10.5" fill="#10b981">✓ Unmatched requests fall through gently to direct out</text>
+      </g>
+
+      <g transform="translate(18, 154)">
+        <rect width="419" height="80" rx="8" fill="#0f172a" stroke="#10b981" stroke-width="1" />
+        <text x="16" y="23" font-size="12.5" font-weight="700" fill="#10b981">socks-in (:10808) &amp; http-in (:10809):</text>
+        <text x="16" y="42" font-size="10.5" fill="#94a3b8">• SOCKS5 protocol with full UDP associate support</text>
+        <text x="16" y="58" font-size="10.5" fill="#94a3b8">• HTTP forward proxy for browser extensions and apps</text>
+        <text x="16" y="74" font-size="10" fill="#38bdf8">Configurable: 127.0.0.1 (local only) or 0.0.0.0 (LAN access)</text>
+      </g>
+    </g>
+
+    <!-- Sub-Box 3.2: Internal Xray Router & DNS -->
+    <g transform="translate(500, 56)">
+      <rect width="480" height="258" rx="12" fill="#1e293b" stroke="#334155" stroke-width="1.2" />
+      <text x="24" y="32" font-size="15.5" font-weight="700" fill="#c084fc">Internal Xray Routing &amp; DNS</text>
+      <text x="24" y="50" font-size="11.5" fill="#94a3b8">Rule-based dispatching based on inbounds and domains</text>
+
+      <g transform="translate(18, 66)">
+        <rect width="444" height="168" rx="8" fill="#0f172a" stroke="#334155" stroke-width="1" />
+        <text x="16" y="23" font-size="12.5" font-weight="700" fill="#f8fafc">Routing Rule Table:</text>
+        <text x="16" y="44" font-size="11" fill="#94a3b8">• <tspan font-weight="bold" fill="#a855f7">tag: selected</tspan> ➔ Active subscription server</text>
+        <text x="16" y="64" font-size="11" fill="#94a3b8">• <tspan font-weight="bold" fill="#10b981">tag: direct</tspan> ➔ Direct WAN egress via router ISP</text>
+        <text x="16" y="84" font-size="11" fill="#94a3b8">• <tspan font-weight="bold" fill="#f59e0b">tag: zapret</tspan> ➔ Local nfqws DPI circumvention</text>
+        <text x="16" y="104" font-size="11" fill="#94a3b8">• <tspan font-weight="bold" fill="#ef4444">tag: block</tspan> ➔ Blackhole ad networks &amp; QUIC UDP 443</text>
+        <text x="16" y="128" font-size="11" fill="#38bdf8">Built-in DoH / DoT DNS resolver for remote domain resolution</text>
+        <text x="16" y="146" font-size="10.5" fill="#64748b">Prevents ISP DNS poisoning and eavesdropping</text>
+      </g>
+    </g>
+
+    <!-- Sub-Box 3.3: Outbounds & Egress Targets -->
+    <g transform="translate(1000, 56)">
+      <rect width="1215" height="258" rx="12" fill="#1e293b" stroke="#334155" stroke-width="1.2" />
+      <text x="24" y="32" font-size="15.5" font-weight="700" fill="#c084fc">Outbounds • Global Network Egress (WAN / Internet)</text>
+      <text x="24" y="50" font-size="11.5" fill="#94a3b8">Final encrypted delivery to target destination servers</text>
+
+      <!-- Channel 1: Proxy Outbound -->
+      <g transform="translate(18, 66)">
+        <rect width="375" height="168" rx="10" fill="#0f172a" stroke="#a855f7" stroke-width="1.4" />
+        <rect x="12" y="12" width="28" height="28" rx="6" fill="#7c3aed" />
+        <text x="26" y="31" font-size="14" font-weight="bold" fill="#ffffff" text-anchor="middle">🔒</text>
+        <text x="48" y="26" font-size="13" font-weight="700" fill="#f8fafc">Encrypted Tunnel (Selected Node)</text>
+        <text x="48" y="41" font-size="10" fill="#a855f7">VLESS-Reality / VMess / Trojan / Hy2</text>
+        <text x="16" y="70" font-size="11" fill="#cbd5e1">Traffic encrypted to remote overseas VPS</text>
+        <text x="16" y="90" font-size="11" fill="#94a3b8">• Bypasses censorship, DPI &amp; throttling</text>
+        <text x="16" y="108" font-size="11" fill="#94a3b8">• YouTube 4K, Discord, AI, Notion, Socials</text>
+        <text x="16" y="128" font-size="10.5" fill="#64748b">• Full privacy from local ISP logging</text>
+        <text x="16" y="148" font-size="10.5" font-weight="bold" fill="#a855f7">➔ Remote VPS ➔ Global Internet</text>
+      </g>
+
+      <!-- Channel 2: Direct WAN -->
+      <g transform="translate(415, 66)">
+        <rect width="375" height="168" rx="10" fill="#0f172a" stroke="#10b981" stroke-width="1.4" />
+        <rect x="12" y="12" width="28" height="28" rx="6" fill="#059669" />
+        <text x="26" y="31" font-size="14" font-weight="bold" fill="#ffffff" text-anchor="middle">🌐</text>
+        <text x="48" y="26" font-size="13" font-weight="700" fill="#f8fafc">Direct Route (Direct WAN)</text>
+        <text x="48" y="41" font-size="10" fill="#10b981">Bypasses proxy through local ISP</text>
+        <text x="16" y="70" font-size="11" fill="#cbd5e1">Native wire-speed, lowest possible ping</text>
+        <text x="16" y="90" font-size="11" fill="#94a3b8">• Banking, government portals, local media</text>
+        <text x="16" y="108" font-size="11" fill="#94a3b8">• Excluded LAN devices (smart TVs, consoles)</text>
+        <text x="16" y="128" font-size="10.5" fill="#64748b">• All non-blocked domestic destinations</text>
+        <text x="16" y="148" font-size="10.5" font-weight="bold" fill="#10b981">➔ Local ISP ➔ Domestic Internet</text>
+      </g>
+
+      <!-- Channel 3: Zapret Fallback -->
+      <g transform="translate(812, 66)">
+        <rect width="385" height="168" rx="10" fill="#0f172a" stroke="#f59e0b" stroke-width="1.4" />
+        <rect x="12" y="12" width="28" height="28" rx="6" fill="#d97706" />
+        <text x="26" y="31" font-size="14" font-weight="bold" fill="#ffffff" text-anchor="middle">⚡</text>
+        <text x="48" y="26" font-size="13" font-weight="700" fill="#f8fafc">Zapret Fallback (DPI Bypass)</text>
+        <text x="48" y="41" font-size="10" fill="#f59e0b">Local packet modification without remote VPS</text>
+        <text x="16" y="70" font-size="11" fill="#cbd5e1">TCP/TLS packet desynchronization against DPI</text>
+        <text x="16" y="90" font-size="11" fill="#94a3b8">• Zero VPS bandwidth consumption</text>
+        <text x="16" y="108" font-size="11" fill="#94a3b8">• Automatic fallback if proxy connection fails</text>
+        <text x="16" y="128" font-size="10.5" fill="#64748b">• Handled locally on router via nfqws</text>
+        <text x="16" y="148" font-size="10.5" font-weight="bold" fill="#f59e0b">➔ Local nfqws ➔ Direct WAN</text>
+      </g>
+    </g>
+  </g>
+
+  <!-- Horizontal Arrows Inbound to Router to Outbounds -->
+  <path d="M 480 1090 L 500 1090" stroke="#c084fc" stroke-width="3" marker-end="url(#arrowPurple)" fill="none" />
+  <path d="M 980 1090 L 1000 1090" stroke="#c084fc" stroke-width="3" marker-end="url(#arrowPurple)" fill="none" />
+
+  <!-- ==================== FOOTER / STEP-BY-STEP FLOW ==================== -->
+  <g transform="translate(80, 1315)">
+    <rect width="2240" height="155" rx="14" fill="#111827" stroke="#1f2937" stroke-width="1.2" />
+    <text x="24" y="28" font-size="13.5" font-weight="800" fill="#94a3b8" letter-spacing="0.8">STEP-BY-STEP OPERATIONAL WORKFLOW:</text>
+
+    <!-- Step 1 -->
+    <g transform="translate(24, 46)">
+      <circle cx="16" cy="16" r="16" fill="#1e3a8a" />
+      <text x="16" y="21.5" font-size="13" font-weight="bold" fill="#38bdf8" text-anchor="middle">1</text>
+      <text x="44" y="16" font-size="13" font-weight="700" fill="#f8fafc">Subscription Import &amp; Benchmarking</text>
+      <text x="44" y="34" font-size="11" fill="#94a3b8">User adds subscription URL via Web UI or CLI.</text>
+      <text x="44" y="50" font-size="11" fill="#94a3b8">RouteFlux probes all nodes in parallel and selects</text>
+      <text x="44" y="66" font-size="11" fill="#94a3b8">the lowest-latency, most reliable server.</text>
+    </g>
+
+    <!-- Step 2 -->
+    <g transform="translate(470, 46)">
+      <circle cx="16" cy="16" r="16" fill="#7c2d12" />
+      <text x="16" y="21.5" font-size="13" font-weight="bold" fill="#f97316" text-anchor="middle">2</text>
+      <text x="44" y="16" font-size="13" font-weight="700" fill="#f8fafc">Atomic Config Test &amp; Deployment</text>
+      <text x="44" y="34" font-size="11" fill="#94a3b8">Renders Xray JSON and verifies with xray -test.</text>
+      <text x="44" y="50" font-size="11" fill="#94a3b8">On success, atomic nftables and dnsmasq</text>
+      <text x="44" y="66" font-size="11" fill="#94a3b8">nftset directives are applied simultaneously.</text>
+    </g>
+
+    <!-- Step 3 -->
+    <g transform="translate(920, 46)">
+      <circle cx="16" cy="16" r="16" fill="#0f766e" />
+      <text x="16" y="21.5" font-size="13" font-weight="bold" fill="#14b8a6" text-anchor="middle">3</text>
+      <text x="44" y="16" font-size="13" font-weight="700" fill="#f8fafc">Dynamic DNS Interception (nftset)</text>
+      <text x="44" y="34" font-size="11" fill="#94a3b8">Client queries a domain (e.g., YouTube, Discord).</text>
+      <text x="44" y="50" font-size="11" fill="#94a3b8">dnsmasq automatically populates kernel @proxy_target_v4.</text>
+      <text x="44" y="66" font-size="11" fill="#94a3b8">No static IP list maintenance required!</text>
+    </g>
+
+    <!-- Step 4 -->
+    <g transform="translate(1370, 46)">
+      <circle cx="16" cy="16" r="16" fill="#581c87" />
+      <text x="16" y="21.5" font-size="13" font-weight="bold" fill="#a855f7" text-anchor="middle">4</text>
+      <text x="44" y="16" font-size="13" font-weight="700" fill="#f8fafc">Dual Routing &amp; Direct LAN Proxy</text>
+      <text x="44" y="34" font-size="11" fill="#94a3b8">Transparent traffic splits between Direct and Xray;</text>
+      <text x="44" y="50" font-size="11" fill="#94a3b8">Alternatively, with Routing Off, devices connect</text>
+      <text x="44" y="66" font-size="11" fill="#94a3b8">directly to SOCKS5 (:10808) or HTTP (:10809).</text>
+    </g>
+
+    <!-- Step 5 -->
+    <g transform="translate(1815, 46)">
+      <circle cx="16" cy="16" r="16" fill="#065f46" />
+      <text x="16" y="21.5" font-size="13" font-weight="bold" fill="#10b981" text-anchor="middle">5</text>
+      <text x="44" y="16" font-size="13" font-weight="700" fill="#f8fafc">Continuous Failover &amp; Anti-Flap</text>
+      <text x="44" y="34" font-size="11" fill="#94a3b8">Background daemon continuously monitors health.</text>
+      <text x="44" y="50" font-size="11" fill="#94a3b8">If the active node fails, RouteFlux seamlessly</text>
+      <text x="44" y="66" font-size="11" fill="#94a3b8">switches traffic to the next best standby server.</text>
+    </g>
+  </g>
+
+</svg>

@@ -29,8 +29,37 @@ The current runtime target is OpenWrt and compatible forks such as ImmortalWrt. 
 - Only Selected Devices routing mode to direct only specified LAN hosts through the active proxy while leaving others direct.
 - Parallel latency checks and auto best-node connection when selecting duplicate server names.
 - Simple transparent routing rules for LAN hosts, destination targets, and split tunnelling policies.
+- Local and LAN proxy mode exposing dedicated SOCKS5 (:10808) and HTTP (:10809) inbounds with LuCI and CLI controls.
 - Dedicated DNS commands with a sensible default profile for everyday router use.
 - Shared state across CLI, LuCI, and TUI, so you can switch interfaces without losing context.
+
+## Architecture
+
+RouteFlux coordinates control plane management, kernel-level packet interception, and the Xray runtime across three decoupled layers:
+
+[![RouteFlux Architecture & System Flow](docs/images/architecture-diagram.png)](docs/images/architecture-diagram.png)
+
+> **Tip:** Click the diagram to enlarge, or open the [Vector SVG version](docs/images/architecture-diagram.svg) for infinite resolution.
+
+### System Layers
+
+1. **Control Plane (Go Core)**
+   - **Unified Management:** Shared state across LuCI Web UI, Cobra CLI, and Bubble Tea interactive TUI.
+   - **Parser & Store:** Multi-format subscription parser (VLESS Reality, VMess, Trojan, Hysteria 1/2, Socks5) with atomic JSON persistence in `/etc/routeflux/`.
+   - **Probe Engine:** Parallel TCP handshake and RTT benchmarking, dynamic health scoring, egress verification via `generate_204`, and anti-flap failover protection.
+   - **Atomic Config Generator:** Transactional Xray configuration rendering with pre-flight validation (`xray -test -c`) and automated rollback snapshot.
+
+2. **Data Plane (OpenWrt & nftables)**
+   - **Dynamic Domain Resolution:** `dnsmasq-full` dynamic `nftset` directives populate kernel sets on-the-fly without static IP lists.
+   - **Hardware-Accelerated Routing:** `table inet routeflux` in Linux Netfilter with prerouting redirect (TCP) and TProxy (UDP).
+   - **Flexible Operating Modes:**
+     - **Mode A (Transparent Gateway):** Zero-config transparent redirection for all LAN devices.
+     - **Mode B (Explicit LAN Proxy):** Dedicated SOCKS5 (`:10808`) and HTTP (`:10809`) inbounds for individual device or browser setup with native NAT routing.
+
+3. **Xray Runtime & Egress**
+   - **Dual Inbounds:** Receives transparent router-intercepted traffic as well as direct LAN proxy connections.
+   - **Built-in DoH / DoT:** Dedicated remote DNS resolution preventing ISP hijacking and eavesdropping.
+   - **Multi-Route Outbounds:** Directs traffic to encrypted VPS tunnels (VLESS, VMess, Trojan, Hy2), unblocked direct WAN routes, or local Zapret DPI bypass (`nfqws`).
 
 ## Quick Start
 
