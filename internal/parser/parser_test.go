@@ -752,4 +752,3 @@ vmess://eyJhZGQiOiJqcC5leGFtcGxlLmNvbSIsImFpZCI6IjAiLCJhbHBuIjoiIiwiaG9zdCI6IiIs
 		t.Errorf("unexpected second node: %+v", nodes[1])
 	}
 }
-
