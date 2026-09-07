@@ -151,3 +151,100 @@ func TestBuildDNSMasqRouteFluxDNSConfigRejectsAdvancedMatchers(t *testing.T) {
 		t.Fatalf("unexpected error: %v", err)
 	}
 }
+
+func TestDNSRuntimeManagerApplyAndDisableIdempotent(t *testing.T) {
+	t.Parallel()
+
+	dir := t.TempDir()
+	logPath := filepath.Join(dir, "calls.log")
+	procRoot := filepath.Join(dir, "proc")
+	configPath := filepath.Join(dir, "etc", "dnsmasq.conf")
+	confDir := filepath.Join(dir, "dnsmasq.d")
+	resolvFile := filepath.Join(dir, "resolv.conf.auto")
+	pidDir := filepath.Join(procRoot, "123")
+	servicePath := writeExecutable(t, filepath.Join(dir, "dnsmasq-service"), "#!/bin/sh\nprintf '%s\\n' \"$1\" >> \""+logPath+"\"\nexit 0\n")
+
+	if err := os.MkdirAll(pidDir, 0o755); err != nil {
+		t.Fatalf("mkdir proc pid dir: %v", err)
+	}
+	if err := os.MkdirAll(filepath.Dir(configPath), 0o755); err != nil {
+		t.Fatalf("mkdir config dir: %v", err)
+	}
+	if err := os.MkdirAll(confDir, 0o755); err != nil {
+		t.Fatalf("mkdir conf dir: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(pidDir, "comm"), []byte("dnsmasq\n"), 0o644); err != nil {
+		t.Fatalf("write comm: %v", err)
+	}
+	cmdline := strings.Join([]string{
+		"dnsmasq",
+		"--conf-file=" + configPath,
+	}, "\x00") + "\x00"
+	if err := os.WriteFile(filepath.Join(pidDir, "cmdline"), []byte(cmdline), 0o644); err != nil {
+		t.Fatalf("write cmdline: %v", err)
+	}
+	if err := os.WriteFile(configPath, []byte("conf-dir="+confDir+"\nresolv-file="+resolvFile+"\n"), 0o644); err != nil {
+		t.Fatalf("write config: %v", err)
+	}
+	if err := os.WriteFile(resolvFile, []byte("nameserver 1.1.1.1\n"), 0o644); err != nil {
+		t.Fatalf("write resolv file: %v", err)
+	}
+
+	manager := DNSRuntimeManager{
+		ProcRoot:           procRoot,
+		DNSMasqServicePath: servicePath,
+	}
+
+	// 1. Disable when no snippet exists: should not restart dnsmasq.
+	if err := manager.Disable(context.Background()); err != nil {
+		t.Fatalf("disable: %v", err)
+	}
+	if _, err := os.Stat(logPath); !os.IsNotExist(err) {
+		calls, _ := os.ReadFile(logPath)
+		t.Fatalf("expected no service calls on initial disable, got: %s", calls)
+	}
+
+	settings := domain.DNSSettings{
+		Mode:      domain.DNSModeRemote,
+		Transport: domain.DNSTransportPlain,
+		Servers:   []string{"1.1.1.1"},
+	}
+
+	// 2. Apply first time: should write snippet and restart dnsmasq.
+	if err := manager.Apply(context.Background(), settings, "127.0.0.1", 1053); err != nil {
+		t.Fatalf("apply: %v", err)
+	}
+	calls, err := os.ReadFile(logPath)
+	if err != nil || !strings.Contains(string(calls), "restart") {
+		t.Fatalf("expected restart on first apply, got: %s (err=%v)", calls, err)
+	}
+	_ = os.Remove(logPath)
+
+	// 3. Apply second time with identical settings: should NOT restart dnsmasq.
+	if err := manager.Apply(context.Background(), settings, "127.0.0.1", 1053); err != nil {
+		t.Fatalf("apply second: %v", err)
+	}
+	if _, err := os.Stat(logPath); !os.IsNotExist(err) {
+		calls, _ := os.ReadFile(logPath)
+		t.Fatalf("expected no restart on duplicate apply, got: %s", calls)
+	}
+
+	// 4. Disable when snippet exists: should remove snippet and restart dnsmasq.
+	if err := manager.Disable(context.Background()); err != nil {
+		t.Fatalf("disable: %v", err)
+	}
+	calls, err = os.ReadFile(logPath)
+	if err != nil || !strings.Contains(string(calls), "restart") {
+		t.Fatalf("expected restart on disable when snippet existed, got: %s (err=%v)", calls, err)
+	}
+	_ = os.Remove(logPath)
+
+	// 5. Disable second time when snippet already removed: should NOT restart dnsmasq.
+	if err := manager.Disable(context.Background()); err != nil {
+		t.Fatalf("disable second: %v", err)
+	}
+	if _, err := os.Stat(logPath); !os.IsNotExist(err) {
+		calls, _ := os.ReadFile(logPath)
+		t.Fatalf("expected no restart on second disable, got: %s", calls)
+	}
+}

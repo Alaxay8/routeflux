@@ -8,6 +8,11 @@ var routefluxBinary = '/usr/bin/routeflux';
 var routefluxSelfUpdateHelper = '/usr/libexec/routeflux-self-update';
 var whatsNewEntries = [
 	{
+		kind: _('Fix'),
+		title: _('Fast Node Switching & Timeout Prevention'),
+		summary: _('Optimized node switching by eliminating redundant firewall and dnsmasq reloads, and increased LuCI RPC timeout to 60s')
+	},
+	{
 		kind: _('New'),
 		title: _('Local & LAN Proxy Mode'),
 		summary: _('Added dedicated SOCKS5 and HTTP proxy endpoints with configurable LAN access in Settings and CLI')

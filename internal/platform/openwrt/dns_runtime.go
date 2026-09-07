@@ -75,11 +75,25 @@ func (m DNSRuntimeManager) Apply(ctx context.Context, settings domain.DNSSetting
 	if err != nil {
 		return err
 	}
+	pending, err := dnsRestartPending(snippetPath)
+	if err != nil {
+		return err
+	}
+	existing, readErr := os.ReadFile(snippetPath)
+	if readErr != nil && !os.IsNotExist(readErr) {
+		return fmt.Errorf("read dnsmasq dns runtime snippet: %w", readErr)
+	}
+	if readErr == nil && string(existing) == config && !pending {
+		return nil
+	}
+	if err := markDNSRestartPending(snippetPath); err != nil {
+		return err
+	}
 	if err := atomicWriteText(snippetPath, config, 0o644); err != nil {
 		return fmt.Errorf("write dnsmasq dns runtime snippet: %w", err)
 	}
 
-	return m.restartDNSMasq(ctx)
+	return m.finishDNSRestart(ctx, snippetPath)
 }
 
 // Disable removes the RouteFlux dnsmasq override and restarts dnsmasq when needed.
@@ -88,16 +102,64 @@ func (m DNSRuntimeManager) Disable(ctx context.Context) error {
 	if snippetPath == "" {
 		info, err := m.runtimeInfo()
 		if err != nil {
-			return nil
+			return fmt.Errorf("locate dnsmasq dns runtime snippet: %w", err)
 		}
 		snippetPath = m.snippetPath(info)
 	}
-
+	pending, err := dnsRestartPending(snippetPath)
+	if err != nil {
+		return err
+	}
+	_, statErr := os.Stat(snippetPath)
+	if statErr != nil && !os.IsNotExist(statErr) {
+		return fmt.Errorf("stat dnsmasq dns runtime snippet: %w", statErr)
+	}
+	if os.IsNotExist(statErr) && !pending {
+		return nil
+	}
+	if err := markDNSRestartPending(snippetPath); err != nil {
+		return err
+	}
 	if err := os.Remove(snippetPath); err != nil && !os.IsNotExist(err) {
 		return fmt.Errorf("remove dnsmasq dns runtime snippet: %w", err)
 	}
+	return m.finishDNSRestart(ctx, snippetPath)
+}
 
-	return m.restartDNSMasq(ctx)
+// dnsRestartMarkerPath is hidden so dnsmasq ignores it when loading conf-dir.
+func dnsRestartMarkerPath(snippetPath string) string {
+	return filepath.Join(filepath.Dir(snippetPath), "."+filepath.Base(snippetPath)+".pending")
+}
+
+func dnsRestartPending(snippetPath string) (bool, error) {
+	info, err := os.Stat(dnsRestartMarkerPath(snippetPath))
+	if os.IsNotExist(err) {
+		return false, nil
+	}
+	if err != nil {
+		return false, fmt.Errorf("read DNS restart marker: %w", err)
+	}
+	if !info.Mode().IsRegular() {
+		return false, fmt.Errorf("DNS restart marker is not a regular file")
+	}
+	return true, nil
+}
+
+func markDNSRestartPending(snippetPath string) error {
+	if err := atomicWriteText(dnsRestartMarkerPath(snippetPath), "restart pending\n", 0o600); err != nil {
+		return fmt.Errorf("write DNS restart marker: %w", err)
+	}
+	return nil
+}
+
+func (m DNSRuntimeManager) finishDNSRestart(ctx context.Context, snippetPath string) error {
+	if err := m.restartDNSMasq(ctx); err != nil {
+		return err
+	}
+	if err := os.Remove(dnsRestartMarkerPath(snippetPath)); err != nil {
+		return fmt.Errorf("remove DNS restart marker: %w", err)
+	}
+	return nil
 }
 
 // Status reports the current RouteFlux-managed DNS runtime status on OpenWrt.

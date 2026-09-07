@@ -2,6 +2,10 @@
 'require baseclass';
 'require ui';
 
+if (typeof L !== 'undefined' && L.env) {
+	L.env.rpctimeout = Math.max(Number(L.env.rpctimeout) || 0, 60);
+}
+
 var themePreferenceKey = 'routeflux.ui.theme.preference';
 
 function trim(value) {

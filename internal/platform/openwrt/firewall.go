@@ -129,20 +129,28 @@ func (m FirewallManager) Apply(ctx context.Context, settings domain.FirewallSett
 	if err != nil {
 		return err
 	}
-	if err := atomicWriteText(m.RulesPath, rules, 0o644); err != nil {
-		return fmt.Errorf("write firewall rules: %w", err)
-	}
 
-	m.cleanupPolicyRouting(ctx)
-	_ = m.run(ctx, "delete", "table", "inet", "routeflux")
-	if err := m.run(ctx, "-f", m.RulesPath); err != nil {
-		return fmt.Errorf("apply nftables rules: %w", err)
-	}
-	if needsUDPPolicyRouting(settings) {
-		if err := m.setupPolicyRouting(ctx); err != nil {
-			_ = m.run(ctx, "delete", "table", "inet", "routeflux")
-			m.cleanupPolicyRouting(ctx)
-			return err
+	rulesPath := firstNonEmpty(m.RulesPath, FirewallRulesPath())
+	existingRules, readErr := os.ReadFile(rulesPath)
+	rulesUnchanged := readErr == nil && string(existingRules) == rules
+	tableActive := m.run(ctx, "list", "table", "inet", "routeflux") == nil
+
+	if !tableActive || !rulesUnchanged {
+		if err := atomicWriteText(rulesPath, rules, 0o644); err != nil {
+			return fmt.Errorf("write firewall rules: %w", err)
+		}
+
+		m.cleanupPolicyRouting(ctx)
+		_ = m.run(ctx, "delete", "table", "inet", "routeflux")
+		if err := m.run(ctx, "-f", rulesPath); err != nil {
+			return fmt.Errorf("apply nftables rules: %w", err)
+		}
+		if needsUDPPolicyRouting(settings) {
+			if err := m.setupPolicyRouting(ctx); err != nil {
+				_ = m.run(ctx, "delete", "table", "inet", "routeflux")
+				m.cleanupPolicyRouting(ctx)
+				return err
+			}
 		}
 	}
 
@@ -163,6 +171,8 @@ type conntrackStats struct {
 
 // Disable removes the transient RouteFlux nftables table.
 func (m FirewallManager) Disable(ctx context.Context) error {
+	rulesPath := firstNonEmpty(m.RulesPath, FirewallRulesPath())
+	_ = os.Remove(rulesPath)
 	if err := m.tuneConntrack(ctx); err != nil {
 		return err
 	}
@@ -171,7 +181,6 @@ func (m FirewallManager) Disable(ctx context.Context) error {
 	if err != nil && !strings.Contains(strings.ToLower(err.Error()), "no such file or directory") {
 		return err
 	}
-	_ = os.Remove(m.RulesPath)
 	if err := m.syncDNSMasqTargets(ctx, nil, nil); err != nil {
 		return err
 	}

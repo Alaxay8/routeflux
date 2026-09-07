@@ -685,3 +685,83 @@ func TestFirewallManagerTuneConntrackIgnoresReadOnlyPaths(t *testing.T) {
 		t.Fatalf("tuneConntrack should ignore missing proc paths: %v", err)
 	}
 }
+
+func TestFirewallManagerApplyAndDisableIdempotent(t *testing.T) {
+	t.Parallel()
+
+	dir := t.TempDir()
+	logPath := filepath.Join(dir, "calls.log")
+	nftPath := writeExecutable(t, filepath.Join(dir, "nft"), "#!/bin/sh\nprintf 'nft %s\\n' \"$*\" >> \""+logPath+"\"\nexit 0\n")
+	ipPath := writeExecutable(t, filepath.Join(dir, "ip"), "#!/bin/sh\nprintf 'ip %s\\n' \"$*\" >> \""+logPath+"\"\nexit 0\n")
+	dnsmasqPath := writeExecutable(t, filepath.Join(dir, "dnsmasq"), "#!/bin/sh\nif [ \"$1\" = \"--test\" ]; then\n  exit 0\nfi\necho 'Dnsmasq test binary'\n")
+	servicePath := writeExecutable(t, filepath.Join(dir, "dnsmasq-service"), "#!/bin/sh\nprintf 'service %s\\n' \"$1\" >> \""+logPath+"\"\nexit 0\n")
+	snippetPath := filepath.Join(dir, "routeflux.conf")
+	rulesPath := filepath.Join(dir, "routeflux-firewall.nft")
+
+	manager := FirewallManager{
+		NFTPath:            nftPath,
+		IPPath:             ipPath,
+		RulesPath:          rulesPath,
+		DNSMasqPath:        dnsmasqPath,
+		DNSMasqServicePath: servicePath,
+		DNSMasqSnippetPath: snippetPath,
+	}
+
+	settings := domain.FirewallSettings{
+		Enabled:         true,
+		TransparentPort: 12345,
+		Mode:            domain.FirewallModeSplit,
+		Split: domain.FirewallSplitSettings{
+			Bypass: domain.FirewallSelectorSet{
+				Domains: []string{"youtube.com"},
+			},
+			DefaultAction: domain.FirewallDefaultActionProxy,
+		},
+		BlockQUIC: true,
+	}
+
+	// 1. Apply first time: applies rules and reloads dnsmasq for snippet.
+	if err := manager.Apply(context.Background(), settings); err != nil {
+		t.Fatalf("apply first: %v", err)
+	}
+	calls, err := os.ReadFile(logPath)
+	if err != nil || !strings.Contains(string(calls), "-f") {
+		t.Fatalf("expected nft -f on first apply, got: %s (err=%v)", calls, err)
+	}
+	_ = os.Remove(logPath)
+
+	// 2. Apply second time with identical settings: should skip nft -f and dnsmasq reload!
+	if err := manager.Apply(context.Background(), settings); err != nil {
+		t.Fatalf("apply second: %v", err)
+	}
+	calls, _ = os.ReadFile(logPath)
+	if strings.Contains(string(calls), "-f") {
+		t.Fatalf("expected nft -f to be skipped on idempotent apply, got: %s", calls)
+	}
+	if strings.Contains(string(calls), "service reload") {
+		t.Fatalf("expected dnsmasq reload to be skipped on idempotent apply, got: %s", calls)
+	}
+	_ = os.Remove(logPath)
+
+	// 3. Disable when snippet and rules existed: removes snippet, table, and reloads dnsmasq.
+	if err := manager.Disable(context.Background()); err != nil {
+		t.Fatalf("disable first: %v", err)
+	}
+	calls, _ = os.ReadFile(logPath)
+	if !strings.Contains(string(calls), "delete table") {
+		t.Fatalf("expected delete table on disable, got: %s", calls)
+	}
+	if !strings.Contains(string(calls), "service reload") {
+		t.Fatalf("expected dnsmasq reload on snippet removal, got: %s", calls)
+	}
+	_ = os.Remove(logPath)
+
+	// 4. Disable second time when snippet already removed: should NOT reload dnsmasq!
+	if err := manager.Disable(context.Background()); err != nil {
+		t.Fatalf("disable second: %v", err)
+	}
+	calls, _ = os.ReadFile(logPath)
+	if strings.Contains(string(calls), "service reload") {
+		t.Fatalf("expected dnsmasq reload to be skipped when snippet is already absent, got: %s", calls)
+	}
+}

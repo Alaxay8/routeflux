@@ -741,6 +741,9 @@ return view.extend({
 	},
 
 	execCommand: function(argv) {
+		if (typeof L !== 'undefined' && L.env)
+			L.env.rpctimeout = Math.max(Number(L.env.rpctimeout) || 0, 60);
+
 		return fs.exec(routefluxBinary, argv).then(function(res) {
 			var stderr = trim(res.stderr);
 			var stdout = trim(res.stdout);

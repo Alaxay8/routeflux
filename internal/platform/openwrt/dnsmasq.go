@@ -234,13 +234,22 @@ func (m FirewallManager) syncDNSMasqTargets(ctx context.Context, proxyDomains []
 	}
 
 	if len(trimmedProxyDomains) == 0 && len(trimmedBypassDomains) == 0 {
-		if err := os.Remove(snippetPath); err != nil && !os.IsNotExist(err) {
+		if err := os.Remove(snippetPath); err != nil {
+			if os.IsNotExist(err) {
+				return nil
+			}
 			return fmt.Errorf("remove dnsmasq nftset snippet: %w", err)
 		}
 		return m.reloadDNSMasq(ctx)
 	}
 
-	if err := atomicWriteText(snippetPath, buildDNSMasqNFTSetConfig(trimmedProxyDomains, trimmedBypassDomains), 0o644); err != nil {
+	desiredConfig := buildDNSMasqNFTSetConfig(trimmedProxyDomains, trimmedBypassDomains)
+	existing, readErr := os.ReadFile(snippetPath)
+	if readErr == nil && string(existing) == desiredConfig {
+		return nil
+	}
+
+	if err := atomicWriteText(snippetPath, desiredConfig, 0o644); err != nil {
 		return fmt.Errorf("write dnsmasq nftset snippet: %w", err)
 	}
 
