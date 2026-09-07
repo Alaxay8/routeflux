@@ -171,6 +171,51 @@ ssh root@router "tar -xzf /tmp/routeflux_${VERSION}_${ARCH}.tar.gz -C / && rm -f
 
 ## Usage
 
+### Local and LAN proxy
+
+RouteFlux provides SOCKS5 (TCP and UDP) and HTTP proxies through the selected
+subscription server. By default, they listen on `127.0.0.1:10808` and
+`127.0.0.1:10809` and accept connections only from the router.
+
+In LuCI, open **RouteFlux → Settings → Local / LAN Proxy**, enable **Allow
+connections from LAN**, and save. The SOCKS5 and HTTP ports can be changed there.
+The save action is independent of the appearance setting.
+
+The same settings are available from the CLI:
+
+```bash
+routeflux proxy get
+routeflux --json proxy get
+routeflux proxy set --allow-lan true --socks-port 10808 --http-port 10809
+routeflux proxy set --allow-lan false
+```
+
+Only supplied options change. Ports must be distinct, between 1 and 65535, and
+must not conflict with enabled DNS or transparent proxy listeners. Settings
+persist through subscription updates, server changes, and restarts. Changes apply
+to an active Xray connection immediately. When Xray is disconnected or RouteFlux
+is using Zapret, they take effect on the next Xray connection. Failed runtime
+updates restore the previous proxy settings and configuration.
+
+LAN access listens on all IPv4 interfaces (`0.0.0.0`), including localhost, without
+proxy authentication. Keep the ports accessible only to trusted LAN clients using
+the OpenWrt firewall. RouteFlux does not open WAN firewall rules. IPv6 proxy
+listening is not supported by this setting.
+
+For explicit proxy use without transparent routing, keep RouteFlux connected and
+run `routeflux firewall disable` (or select **Routing → Off**). This disables
+RouteFlux traffic interception, not the OpenWrt firewall. Routing shows the LAN
+endpoints and a link to Settings. Configure clients with the router's actual LAN
+address and the saved ports. For example, for a router at `192.168.1.1`:
+
+```bash
+curl --proxy http://192.168.1.1:10809 https://example.com
+curl --proxy socks5h://192.168.1.1:10808 https://example.com
+```
+
+Do not edit the generated Xray JSON to change listeners: RouteFlux regenerates it.
+SOCKS5 UDP also requires UDP support from the selected upstream server.
+
 ### Everyday flow
 
 ```bash
@@ -495,6 +540,17 @@ OpenWrt integration suite:
 make test-integration
 ```
 
+### Local proxy integration tests
+
+With Xray installed and available on `PATH`, run the HTTP CONNECT, SOCKS5 TCP,
+and SOCKS5 UDP tests against local Xray and echo servers:
+
+```bash
+ROUTEFLUX_RUN_XRAY_INTEGRATION=1 go test ./internal/backend/xray -run TestProxyProtocolsIntegration -v
+```
+
+LuCI proxy behavior tests run with `go test ./test/luci` when Node.js is on `PATH`.
+
 Additional project docs:
 
 - [docs/config.md](docs/config.md)
@@ -504,5 +560,3 @@ Additional project docs:
 ## License
 
 MIT
-
-

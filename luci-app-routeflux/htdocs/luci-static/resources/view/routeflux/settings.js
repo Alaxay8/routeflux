@@ -1,8 +1,12 @@
 'use strict';
 'require view';
+'require fs';
+'require rpc';
 'require dom';
 'require ui';
 'require routeflux.ui as routefluxUI';
+
+var callLANStatus = rpc.declare({ object: 'network.interface.lan', method: 'status', expect: {} });
 
 function trim(value) {
 	if (value == null)
@@ -23,7 +27,79 @@ function choiceClass(selected) {
 
 return view.extend({
 	load: function() {
-		return Promise.resolve([]);
+		return Promise.all([
+			this.execProxy([ '--json', 'proxy', 'get' ]).catch(function(err) { return { __error__: err.message || String(err) }; }),
+			callLANStatus().catch(function() { return {}; })
+		]);
+	},
+
+	execProxy: function(args) {
+		return fs.exec('/usr/bin/routeflux', args).then(function(res) {
+			if (res.code !== 0)
+				throw new Error(trim(res.stderr) || trim(res.stdout) || _('Could not apply proxy settings.'));
+			return JSON.parse(res.stdout);
+		});
+	},
+
+	handleSaveProxy: function(ev) {
+		if (ev) ev.preventDefault();
+		if (this.proxySaving) return Promise.resolve();
+		var draft = this.proxyDraft;
+		var socks = Number(draft.socks_port), http = Number(draft.http_port);
+		if (!Number.isInteger(socks) || !Number.isInteger(http) || socks < 1 || http < 1 || socks > 65535 || http > 65535 || socks === http) {
+			ui.addNotification(null, notificationParagraph(_('Use different SOCKS5 and HTTP ports between 1 and 65535.')), 'error');
+			return Promise.resolve();
+		}
+		this.proxySaving = true;
+		this.renderIntoRoot();
+		return this.execProxy([ '--json', 'proxy', 'set', '--allow-lan', String(draft.allow_lan), '--socks-port', String(socks), '--http-port', String(http) ]).then(L.bind(function(saved) {
+			this.loadedData[0] = saved;
+			this.proxyDraft = Object.assign({}, saved);
+			ui.addNotification(null, notificationParagraph(_('Proxy settings saved. They apply immediately when the Xray connection is active.')), 'info');
+		}, this)).catch(function(err) {
+			ui.addNotification(null, notificationParagraph(err.message || String(err)), 'error');
+		}).finally(L.bind(function() {
+			this.proxySaving = false;
+			this.renderIntoRoot();
+		}, this));
+	},
+
+	renderProxySettings: function(data) {
+		var saved = data[0] || {};
+		if (saved.__error__)
+			return E('div', { 'class': 'cbi-section' }, [ E('h3', {}, [ _('Local / LAN Proxy') ]), E('p', { 'class': 'alert-message warning' }, [ saved.__error__ ]) ]);
+		if (!this.proxyDraft)
+			this.proxyDraft = Object.assign({}, saved);
+		var draft = this.proxyDraft;
+		var addresses = (data[1] || {})['ipv4-address'] || [];
+		var address = addresses.length ? addresses[0].address : _('<LAN address>');
+		var portField = L.bind(function(key, label) {
+			return E('div', { 'class': 'cbi-value' }, [
+				E('label', { 'class': 'cbi-value-title', 'for': 'routeflux-proxy-' + key }, [ label ]),
+				E('div', { 'class': 'cbi-value-field' }, [ E('input', {
+					'id': 'routeflux-proxy-' + key, 'type': 'number', 'min': '1', 'max': '65535', 'step': '1',
+					'value': draft[key], 'disabled': this.proxySaving,
+					'input': function(ev) { draft[key] = ev.currentTarget.value; }
+				}) ])
+			]);
+		}, this);
+		return E('div', { 'class': 'cbi-section' }, [
+			E('h3', {}, [ _('Local / LAN Proxy') ]),
+			E('p', { 'class': 'cbi-section-descr' }, [ _('Connect applications directly through the selected subscription server, independently of Routing.') ]),
+			E('label', { 'class': 'routeflux-proxy-toggle' }, [
+				E('input', { 'id': 'routeflux-proxy-allow-lan', 'type': 'checkbox', 'checked': draft.allow_lan, 'disabled': this.proxySaving,
+					'change': function(ev) { draft.allow_lan = ev.currentTarget.checked; } }),
+				' ', _('Allow connections from LAN')
+			]),
+			E('p', { 'class': 'cbi-section-descr' }, [ _('Enabling LAN access listens on all IPv4 interfaces (0.0.0.0), without proxy authentication. Restrict access to trusted LAN devices using the OpenWrt firewall. No WAN rules are added.') ]),
+			portField('socks_port', _('SOCKS5 port')),
+			portField('http_port', _('HTTP port')),
+			E('p', {}, [ saved.allow_lan
+				? _('Saved LAN endpoints (available while Xray is connected): ') + address + ':' + saved.socks_port + ' (SOCKS5) / ' + address + ':' + saved.http_port + ' (HTTP)'
+				: _('LAN access is disabled. Only applications on the router can use the local proxy.') ]),
+			E('button', { 'id': 'routeflux-proxy-save', 'type': 'button', 'class': 'cbi-button cbi-button-apply', 'disabled': this.proxySaving,
+				'click': ui.createHandlerFn(this, 'handleSaveProxy') }, [ this.proxySaving ? _('Applying...') : _('Save proxy settings') ])
+		]);
 	},
 
 	handleAppearanceChange: function(ev) {
@@ -95,8 +171,10 @@ return view.extend({
 
 		content.push(E('h2', {}, [ _('RouteFlux - Settings') ]));
 		content.push(E('p', { 'class': 'cbi-section-descr' }, [
-			_('Choose the RouteFlux theme used inside LuCI.')
+			_('Configure local proxy access and the RouteFlux appearance.')
 		]));
+
+		content.push(this.renderProxySettings(data));
 
 		content.push(E('div', { 'class': 'cbi-section' }, [
 			E('h3', {}, [ _('Appearance') ]),

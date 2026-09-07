@@ -29,6 +29,31 @@ RouteFlux hardens secret-bearing state on disk:
 
 Auto health checks and live failover are performed only while `routeflux daemon` or the OpenWrt `/etc/init.d/routeflux` service is running.
 
+## Local and LAN proxy
+
+The `proxy` block in `settings.json` stores explicit proxy listener settings:
+
+```json
+{
+  "proxy": {
+    "allow_lan": false,
+    "socks_port": 10808,
+    "http_port": 10809
+  }
+}
+```
+
+Use `routeflux proxy set --allow-lan true --socks-port 10808 --http-port 10809`
+or LuCI **Settings → Local / LAN Proxy** to validate and apply changes together.
+`routeflux --json proxy get` returns this block. Omitted command flags keep their
+saved values. Older settings migrate to localhost-only listeners on the default
+ports. Schema version 11 adds the proxy block.
+
+LAN access switches both listeners from `127.0.0.1` to `0.0.0.0` (IPv4). It is
+independent of Routing and does not change OpenWrt firewall rules. Restrict access
+to trusted LAN clients; these listeners do not require authentication. The selected
+upstream must support UDP for SOCKS5 UDP relay to work.
+
 ## State
 Runtime state keeps:
 - active subscription and node

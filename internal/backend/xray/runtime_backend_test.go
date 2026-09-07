@@ -270,6 +270,13 @@ func TestRuntimeBackendRollbackConfigRestoresCapturedSnapshot(t *testing.T) {
 	if !jsonEqual(t, got, liveConfig) {
 		t.Fatalf("expected rollback to restore captured config\nwant:\n%s\ngot:\n%s", liveConfig, got)
 	}
+	backup, err := runtimeBackend.CaptureRollback()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !jsonEqual(t, backup.Config, liveConfig) {
+		t.Fatal("rollback left a failed candidate as last-known-good")
+	}
 	if controller.reloadCalls != 2 {
 		t.Fatalf("expected apply reload plus rollback reload, got %d", controller.reloadCalls)
 	}

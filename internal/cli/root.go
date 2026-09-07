@@ -86,6 +86,7 @@ func newRootCmd() *cobra.Command {
 		newServicesCmd(opts),
 		newStatusCmd(opts),
 		newSettingsCmd(opts),
+		newProxyCmd(opts),
 		newZapretCmd(opts),
 		newTUICmd(opts),
 		newVersionCmd(opts),

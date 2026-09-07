@@ -13,6 +13,7 @@ type ConfigRequest struct {
 	SelectedNodeID              string
 	LogLevel                    string
 	DNS                         domain.DNSSettings
+	AllowLAN                    bool
 	SOCKSPort                   int
 	HTTPPort                    int
 	LocalDNSEnabled             bool

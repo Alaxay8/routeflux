@@ -35,6 +35,7 @@ func TestLuCIACLReadPermissionsUseSafeWhitelist(t *testing.T) {
 		"/usr/bin/routeflux --json status":             {},
 		"/usr/bin/routeflux --json diagnostics":        {},
 		"/usr/bin/routeflux --json list subscriptions": {},
+		"/usr/bin/routeflux --json proxy get":          {},
 		"/usr/bin/routeflux --json dns get":            {},
 		"/usr/bin/routeflux --json firewall get":       {},
 		"/usr/bin/routeflux --json zapret get":         {},

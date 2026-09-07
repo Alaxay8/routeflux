@@ -73,6 +73,7 @@ type Settings struct {
 	SwitchCooldown      Duration         `json:"switch_cooldown"`
 	LatencyThreshold    Duration         `json:"latency_threshold"`
 	AutoExcludedNodes   []string         `json:"auto_excluded_nodes"`
+	Proxy               ProxySettings    `json:"proxy"`
 	DNS                 DNSSettings      `json:"dns"`
 	Firewall            FirewallSettings `json:"firewall"`
 	Zapret              ZapretSettings   `json:"zapret"`
@@ -219,7 +220,8 @@ type FirewallSettings struct {
 // DefaultSettings returns the baseline configuration used on first start.
 func DefaultSettings() Settings {
 	return Settings{
-		SchemaVersion:       10,
+		SchemaVersion:       11,
+		Proxy:               DefaultProxySettings(),
 		RefreshInterval:     NewDuration(time.Hour),
 		HealthCheckInterval: NewDuration(30 * time.Second),
 		SwitchCooldown:      NewDuration(5 * time.Minute),
@@ -238,10 +240,10 @@ func DefaultSettings() Settings {
 			ModeDrafts:           FirewallModeDrafts{},
 			BlockQUIC:            false,
 		},
-		Zapret:   DefaultZapretSettings(),
-		AutoMode: false,
-		Mode:     SelectionModeManual,
-		LogLevel: "info",
+		Zapret:            DefaultZapretSettings(),
+		AutoMode:          false,
+		Mode:              SelectionModeManual,
+		LogLevel:          "info",
 		StrictEgressCheck: false,
 	}
 }

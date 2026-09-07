@@ -622,7 +622,7 @@ func (s *Service) InspectXrayConfig(subscriptionID, nodeID string) (json.RawMess
 		return nil, err
 	}
 
-	rendered, err := s.backend.GenerateConfig(s.backendConfigRequest(runtimeSettings, node, domain.SelectionModeManual, 10808, 10809, firewallEnabled(settings.Firewall), s.dns != nil && localDNSRuntimeEnabled(settings.DNS)))
+	rendered, err := s.backend.GenerateConfig(s.backendConfigRequest(runtimeSettings, node, domain.SelectionModeManual, 0, 0, firewallEnabled(settings.Firewall), s.dns != nil && localDNSRuntimeEnabled(settings.DNS)))
 	if err != nil {
 		return nil, fmt.Errorf("generate xray config for %s/%s: %w", sub.ID, node.ID, err)
 	}
@@ -2851,7 +2851,14 @@ func (s *Service) subscriptionNode(subscriptionID, nodeID string) (domain.Subscr
 }
 
 func (s *Service) backendConfigRequest(settings domain.Settings, node domain.Node, mode domain.SelectionMode, socksPort, httpPort int, transparent bool, localDNS bool) backend.ConfigRequest {
+	allowLAN := false
+	if socksPort == 0 && httpPort == 0 {
+		socksPort = settings.Proxy.SOCKSPort
+		httpPort = settings.Proxy.HTTPPort
+		allowLAN = settings.Proxy.AllowLAN
+	}
 	req := backend.ConfigRequest{
+		AllowLAN:                    allowLAN,
 		Mode:                        mode,
 		Nodes:                       []domain.Node{node},
 		SelectedNodeID:              node.ID,
@@ -3020,7 +3027,7 @@ func (s *Service) applyNodeSelection(ctx context.Context, sub domain.Subscriptio
 		}
 
 		s.logInfo("apply backend config", "subscription", sub.ID, "node", node.ID, "mode", mode, "resolved_address", resolvedNode.Address)
-		if err := s.backend.ApplyConfig(ctx, s.backendConfigRequest(runtimeSettings, resolvedNode, mode, 10808, 10809, firewallEnabled(settings.Firewall), s.dns != nil && localDNSRuntimeEnabled(settings.DNS))); err != nil {
+		if err := s.backend.ApplyConfig(ctx, s.backendConfigRequest(runtimeSettings, resolvedNode, mode, 0, 0, firewallEnabled(settings.Firewall), s.dns != nil && localDNSRuntimeEnabled(settings.DNS))); err != nil {
 			s.logWarn("apply backend config failed", "subscription", sub.ID, "node", node.ID, "mode", mode, "error", err.Error())
 			return s.handleNodeSelectionFailure(ctx, sub, node, mode, opts, fmt.Sprintf("apply backend config: %v", err), fmt.Errorf("apply backend config: %w", err))
 		}
@@ -4032,7 +4039,11 @@ func (s *Service) defaultBackendEgressProbe(ctx context.Context) error {
 	probeCtx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
 
-	proxyURL, err := url.Parse("http://127.0.0.1:10809")
+	settings, err := s.store.LoadSettings()
+	if err != nil {
+		return fmt.Errorf("load proxy settings: %w", err)
+	}
+	proxyURL, err := url.Parse(fmt.Sprintf("http://127.0.0.1:%d", settings.Proxy.HTTPPort))
 	if err != nil {
 		return err
 	}

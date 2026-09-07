@@ -1,11 +1,13 @@
 'use strict';
 'require view';
+'require rpc';
 'require fs';
 'require dom';
 'require ui';
 'require routeflux.ui as routefluxUI';
 
 var routefluxBinary = '/usr/bin/routeflux';
+var callLANStatus = rpc.declare({ object: 'network.interface.lan', method: 'status', expect: {} });
 
 function trim(value) {
 	if (value == null)
@@ -703,7 +705,9 @@ return view.extend({
 			}),
 			fs.read('/tmp/dhcp.leases').catch(function() {
 				return '';
-			})
+			}),
+			this.execJSON([ '--json', 'proxy', 'get' ]).catch(function(err) { return { __error__: err.message || String(err) }; }),
+			callLANStatus().catch(function() { return {}; })
 		]);
 	},
 
@@ -774,11 +778,23 @@ return view.extend({
 		});
 	},
 
+	renderProxyHint: function() {
+		var proxy = this.proxySettings || {};
+		var addresses = (this.lanStatus || {})['ipv4-address'] || [];
+		var address = addresses.length ? addresses[0].address : _('<LAN address>');
+		var message = proxy.__error__ ? _('Could not load LAN proxy settings.') : proxy.allow_lan
+			? _('With Routing Off, LAN devices can still use the connected Xray proxy: ') + address + ':' + proxy.socks_port + ' (SOCKS5) / ' + address + ':' + proxy.http_port + ' (HTTP). '
+			: _('With Routing Off, enable LAN access in Settings to connect devices directly to the proxy. ');
+		return E('div', { 'class': 'alert-message info' }, [ message, E('a', { 'href': L.url('admin', 'services', 'routeflux', 'settings') }, [ _('Settings') ]) ]);
+	},
+
 	renderCard: function(label, value, options) {
 		return routefluxUI.renderSummaryCard(label, value, options);
 	},
 
 	initializePageState: function(data) {
+		this.proxySettings = data[5] || {};
+		this.lanStatus = data[6] || {};
 		var status = data[0] || {};
 		var firewallPayload = data[1] && !data[1].__error__
 			? data[1]
@@ -1588,6 +1604,7 @@ return view.extend({
 					else {
 						return E('div', { 'class': 'routeflux-routing-empty', 'style': 'text-align:center; padding:30px;' }, [
 							E('p', { 'style': 'font-size:16px; font-weight:700; margin-bottom:8px;' }, [ _('Routing is currently Off') ]),
+							self.renderProxyHint(),
 							E('p', { 'style': 'color:var(--routeflux-routing-ink-soft); margin:0;' }, [ _('Select Bypass or Only Selected Devices above to configure traffic interception.') ])
 						]);
 					}

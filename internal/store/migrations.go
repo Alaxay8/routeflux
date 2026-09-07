@@ -80,7 +80,13 @@ func decodeSettings(data []byte, path string) (domain.Settings, error) {
 		FailbackSuccessThreshold *int                    `json:"failback_success_threshold"`
 	}
 
+	type rawProxySettings struct {
+		AllowLAN  *bool `json:"allow_lan"`
+		SOCKSPort *int  `json:"socks_port"`
+		HTTPPort  *int  `json:"http_port"`
+	}
 	type rawSettings struct {
+		Proxy               *rawProxySettings     `json:"proxy"`
 		SchemaVersion       *int                  `json:"schema_version"`
 		RefreshInterval     *domain.Duration      `json:"refresh_interval"`
 		HealthCheckInterval *domain.Duration      `json:"health_check_interval"`
@@ -109,6 +115,20 @@ func decodeSettings(data []byte, path string) (domain.Settings, error) {
 		return domain.Settings{}, fmt.Errorf("%w %d", ErrUnsupportedSettingsSchema, schemaVersion)
 	}
 
+	if raw.Proxy != nil {
+		if raw.Proxy.AllowLAN != nil {
+			settings.Proxy.AllowLAN = *raw.Proxy.AllowLAN
+		}
+		if raw.Proxy.SOCKSPort != nil {
+			settings.Proxy.SOCKSPort = *raw.Proxy.SOCKSPort
+		}
+		if raw.Proxy.HTTPPort != nil {
+			settings.Proxy.HTTPPort = *raw.Proxy.HTTPPort
+		}
+		if err := settings.Proxy.Validate(0, 0); err != nil {
+			return domain.Settings{}, err
+		}
+	}
 	if raw.RefreshInterval != nil {
 		settings.RefreshInterval = *raw.RefreshInterval
 	}

@@ -43,13 +43,28 @@ func (Generator) Generate(req backend.ConfigRequest) ([]byte, error) {
 		return nil, err
 	}
 
+	listen := "127.0.0.1"
+	if req.AllowLAN {
+		listen = "0.0.0.0"
+	}
+	proxy := domain.ProxySettings{SOCKSPort: fallbackPort(req.SOCKSPort, 10808), HTTPPort: fallbackPort(req.HTTPPort, 10809)}
+	dnsPort, transparentPort := 0, 0
+	if req.LocalDNSEnabled {
+		dnsPort = fallbackPort(req.LocalDNSPort, 1053)
+	}
+	if req.TransparentProxy {
+		transparentPort = fallbackPort(req.TransparentPort, 12345)
+	}
+	if err := proxy.Validate(dnsPort, transparentPort); err != nil {
+		return nil, err
+	}
 	cfg := xrayConfig{
 		Log: xrayLog{LogLevel: firstNonEmpty(req.LogLevel, "warning")},
 		DNS: dnsConfig,
 		Inbounds: []xrayInbound{
 			{
 				Tag:      "socks-in",
-				Listen:   "127.0.0.1",
+				Listen:   listen,
 				Port:     fallbackPort(req.SOCKSPort, 10808),
 				Protocol: "socks",
 				Settings: struct {
@@ -58,7 +73,7 @@ func (Generator) Generate(req backend.ConfigRequest) ([]byte, error) {
 			},
 			{
 				Tag:      "http-in",
-				Listen:   "127.0.0.1",
+				Listen:   listen,
 				Port:     fallbackPort(req.HTTPPort, 10809),
 				Protocol: "http",
 				Settings: struct{}{},

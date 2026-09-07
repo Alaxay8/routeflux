@@ -132,11 +132,13 @@ func (b RuntimeBackend) RollbackConfig(ctx context.Context, snapshot backend.Rol
 	if err := writeRawConfig(b.writer.Path, snapshot.Config); err != nil {
 		return fmt.Errorf("restore xray config: %w", err)
 	}
-	if b.controller == nil {
-		return nil
+	if b.controller != nil {
+		if err := b.controller.Reload(ctx); err != nil {
+			return fmt.Errorf("reload xray service: %w", err)
+		}
 	}
-	if err := b.controller.Reload(ctx); err != nil {
-		return fmt.Errorf("reload xray service: %w", err)
+	if err := writeRawConfig(b.backupPath, snapshot.Config); err != nil {
+		return fmt.Errorf("restore xray last-known-good config: %w", err)
 	}
 	return nil
 }
