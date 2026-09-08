@@ -52,7 +52,7 @@ return view.extend({
 		}
 		this.proxySaving = true;
 		this.renderIntoRoot();
-		return this.execProxy([ '--json', 'proxy', 'set', '--allow-lan', String(draft.allow_lan), '--socks-port', String(socks), '--http-port', String(http) ]).then(L.bind(function(saved) {
+		return this.execProxy([ '--json', 'proxy', 'set', '--allow-lan', String(Boolean(draft.allow_lan)), '--socks-port', String(socks), '--http-port', String(http) ]).then(L.bind(function(saved) {
 			this.loadedData[0] = saved;
 			this.proxyDraft = Object.assign({}, saved);
 			ui.addNotification(null, notificationParagraph(_('Proxy settings saved. They apply immediately when the Xray connection is active.')), 'info');
@@ -87,7 +87,7 @@ return view.extend({
 			E('h3', {}, [ _('Local / LAN Proxy') ]),
 			E('p', { 'class': 'cbi-section-descr' }, [ _('Connect applications directly through the selected subscription server, independently of Routing.') ]),
 			E('label', { 'class': 'routeflux-proxy-toggle' }, [
-				E('input', { 'id': 'routeflux-proxy-allow-lan', 'type': 'checkbox', 'checked': draft.allow_lan, 'disabled': this.proxySaving,
+				E('input', { 'id': 'routeflux-proxy-allow-lan', 'type': 'checkbox', 'checked': draft.allow_lan ? 'checked' : null, 'disabled': this.proxySaving,
 					'change': function(ev) { draft.allow_lan = ev.currentTarget.checked; } }),
 				' ', _('Allow connections from LAN')
 			]),

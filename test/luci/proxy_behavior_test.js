@@ -17,16 +17,40 @@ const env = {
 };
 function load(name) { return vm.runInNewContext('(function(){'+fs.readFileSync(path.join(views,name),'utf8')+'})()',env); }
 function flatten(x) { if (x == null) return ''; if (typeof x !== 'object') return String(x); return Array.isArray(x) ? x.map(flatten).join(' ') : flatten(x.children); }
+function findNode(node, pred) {
+ if (!node || typeof node !== 'object') return null;
+ if (pred(node)) return node;
+ const list = Array.isArray(node) ? node : (Array.isArray(node.children) ? node.children : []);
+ for (const item of list) { const found = findNode(item, pred); if (found) return found; }
+ return null;
+}
 (async () => {
  const page = load('settings.js');
  const data = await page.load();
  const rendered = page.render(data);
  assert.match(flatten(rendered), /Local \/ LAN Proxy/);
  assert.ok(calls.some(args => args.join(' ') === '--json proxy get'));
+
+ const lanCheckboxDefault = findNode(rendered, n => n.attrs && n.attrs.id === 'routeflux-proxy-allow-lan');
+ assert.ok(lanCheckboxDefault, 'checkbox must be present');
+ assert.equal(lanCheckboxDefault.attrs.checked, null, 'checkbox must be null when allow_lan is false so LuCI does not set checked attribute');
+
  page.proxyDraft = {allow_lan: true, socks_port: '20808', http_port: '20809'};
+ const renderedChecked = page.render(data);
+ const lanCheckboxChecked = findNode(renderedChecked, n => n.attrs && n.attrs.id === 'routeflux-proxy-allow-lan');
+ assert.equal(lanCheckboxChecked.attrs.checked, 'checked', 'checkbox must be checked when allow_lan is true');
+
  await page.handleSaveProxy();
  assert.equal(calls.at(-1).join(' '), '--json proxy set --allow-lan true --socks-port 20808 --http-port 20809');
  assert.equal(themeChanges, 0);
+
+ page.proxyDraft = {allow_lan: false, socks_port: '10808', http_port: '10809'};
+ const renderedUnchecked = page.render(data);
+ const lanCheckboxUnchecked = findNode(renderedUnchecked, n => n.attrs && n.attrs.id === 'routeflux-proxy-allow-lan');
+ assert.equal(lanCheckboxUnchecked.attrs.checked, null, 'checkbox must be null when unchecked');
+ await page.handleSaveProxy();
+ assert.equal(calls.at(-1).join(' '), '--json proxy set --allow-lan false --socks-port 10808 --http-port 10809');
+
  page.proxyDraft = {allow_lan: true, socks_port: '20808', http_port: '20808'};
  let count = calls.length;
  await page.handleSaveProxy();
