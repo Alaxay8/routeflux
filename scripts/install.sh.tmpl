@@ -407,6 +407,11 @@ ensure_openwrt_dependencies() {
 		return 0
 	fi
 
+	if [ -x "${ROUTEFLUX_INSTALL_ROOT}/usr/bin/routeflux" ]; then
+		log "Existing RouteFlux detected, skipping dependency check for upgrade"
+		return 0
+	fi
+
 	if ! opkg_available; then
 		warn "opkg not found, skipping OpenWrt dependency installation"
 		return 0
@@ -449,7 +454,9 @@ install_zapret_bundle() {
 
 	if zapret_is_ready; then
 		log "Detected existing Zapret runtime"
-		stabilize_zapret_service
+		if [ ! -x "${ROUTEFLUX_INSTALL_ROOT}/usr/bin/routeflux" ]; then
+			stabilize_zapret_service
+		fi
 		return 0
 	fi
 
@@ -529,7 +536,7 @@ while [ "$#" -gt 0 ]; do
 			ROUTEFLUX_DRY_RUN=1
 			shift
 			;;
-		--without-deps)
+		--without-deps|--no-deps)
 			ROUTEFLUX_INSTALL_DEPS=0
 			shift
 			;;
