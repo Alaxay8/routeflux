@@ -644,7 +644,11 @@ persist_install_manifest
 
 rm -f "$(root_path "tmp/luci-indexcache")"*
 rm -rf "$(root_path "tmp/luci-modulecache")"*
-run_service_if_present rpcd reload || true
+if [ -n "${ROUTEFLUX_TEST_SERVICE_LOG:-}" ]; then
+	run_service_if_present rpcd reload || true
+else
+	(sleep 2 && run_service_if_present rpcd reload) >/dev/null 2>&1 &
+fi
 run_service_if_present routeflux enable || true
 run_service_if_present routeflux restart || run_service_if_present routeflux start || true
 
