@@ -4,6 +4,12 @@ on:
   push:
     tags:
       - "v*"
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: 'Release version tag (e.g. v0.1.9)'
+        required: true
+        type: string
 
 permissions:
   contents: write
@@ -18,6 +24,20 @@ jobs:
         with:
           fetch-depth: 0
 
+      - name: Determine release version
+        id: vars
+        run: |
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            TAG="${{ inputs.tag }}"
+          else
+            TAG="${{ github.ref_name }}"
+          fi
+          case "$TAG" in
+            v*) ;;
+            *) TAG="v$TAG" ;;
+          esac
+          echo "tag=$TAG" >> "$GITHUB_OUTPUT"
+
       - uses: actions/setup-go@v5
         with:
           go-version: '1.26.1'
@@ -31,15 +51,28 @@ jobs:
 
       - name: Build OpenWrt release artifacts
         env:
-          VERSION: ${{ github.ref_name }}
+          VERSION: ${{ steps.vars.outputs.tag }}
         run: make package-release VERSION="${VERSION}"
 
       - name: Publish GitHub release assets
         uses: softprops/action-gh-release@v2
         with:
+          name: ${{ steps.vars.outputs.tag }}
+          tag_name: ${{ steps.vars.outputs.tag }}
           generate_release_notes: true
-          prerelease: ${{ contains(github.ref_name, '-beta.') }}
+          make_latest: ${{ !contains(steps.vars.outputs.tag, '-beta.') }}
+          prerelease: ${{ contains(steps.vars.outputs.tag, '-beta.') }}
           files: |
             dist/*.tar.gz
             dist/install.sh
             dist/uninstall.sh
+
+      - name: Update floating 'latest' git tag
+        if: ${{ !contains(steps.vars.outputs.tag, '-beta.') }}
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git tag -f "${{ steps.vars.outputs.tag }}"
+          git push origin -f "${{ steps.vars.outputs.tag }}"
+          git tag -f latest "${{ steps.vars.outputs.tag }}"
+          git push origin -f latest
