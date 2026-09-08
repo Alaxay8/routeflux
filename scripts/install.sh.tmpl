@@ -628,8 +628,8 @@ harden_secret_storage
 ensure_xray_log_retention
 persist_install_manifest
 
-rm -f "$(root_path "tmp/luci-indexcache")"
-rm -rf "$(root_path "tmp/luci-modulecache")"
+rm -f "$(root_path "tmp/luci-indexcache")"*
+rm -rf "$(root_path "tmp/luci-modulecache")"*
 run_service_if_present rpcd reload || true
 run_service_if_present uhttpd reload || true
 run_service_if_present routeflux enable || true

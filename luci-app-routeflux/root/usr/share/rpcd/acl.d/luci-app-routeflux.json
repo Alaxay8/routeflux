@@ -4,6 +4,7 @@
 		"read": {
 			"ubus": { "network.interface.lan": [ "status" ] },
 			"file": {
+				"/usr/bin/routeflux --json version": [ "exec" ],
 				"/usr/bin/routeflux --json status": [ "exec" ],
 				"/usr/bin/routeflux --json diagnostics": [ "exec" ],
 				"/usr/bin/routeflux --json list subscriptions": [ "exec" ],
