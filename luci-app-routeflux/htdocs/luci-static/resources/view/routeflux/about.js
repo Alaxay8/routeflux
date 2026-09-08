@@ -86,6 +86,7 @@ function renderWhatsNewCard(entry) {
 
 return view.extend({
 	load: function() {
+		L.env.rpctimeout = Math.max(Number(L.env.rpctimeout) || 0, 180);
 		return Promise.all([
 			this.execJSON([ '--json', 'version' ]).catch(function(err) {
 				return { __error__: err.message || String(err) };
@@ -135,6 +136,7 @@ return view.extend({
 		if (!window.confirm(_('Download the latest RouteFlux release and install it over the current router version? Existing /etc/routeflux state is preserved by the installer.')))
 			return Promise.resolve();
 
+		L.env.rpctimeout = Math.max(Number(L.env.rpctimeout) || 0, 180);
 		ui.showIndicator();
 
 		return this.execHelper(routefluxSelfUpdateHelper).then(function(res) {

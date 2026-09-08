@@ -15,7 +15,10 @@ func newRestartCmd(opts *rootOptions) *cobra.Command {
 		Short: "Restart the RouteFlux service and clear LuCI caches",
 		RunE: func(cmd *cobra.Command, args []string) error {
 			// 1. Clear LuCI cache
-			_ = os.Remove("/tmp/luci-indexcache")
+			matches, _ := filepath.Glob("/tmp/luci-indexcache*")
+			for _, m := range matches {
+				_ = os.Remove(m)
+			}
 			_ = os.RemoveAll("/tmp/luci-modulecache")
 
 			// Remove lock files
