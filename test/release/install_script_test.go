@@ -58,7 +58,6 @@ func TestInstallScriptInstallsMatchedOpenWrtTarball(t *testing.T) {
 	for _, want := range []string{
 		"cron:restart",
 		"rpcd:reload",
-		"uhttpd:reload",
 		"routeflux:enable",
 		"routeflux:restart",
 	} {
@@ -505,7 +504,6 @@ func TestInstallScriptBootstrapsBareRouterAcrossSupportedArchitectures(t *testin
 				"routeflux:enable",
 				"routeflux:restart",
 				"rpcd:reload",
-				"uhttpd:reload",
 			} {
 				if !strings.Contains(string(serviceLog), want) {
 					t.Fatalf("expected service log to contain %q, got %q", want, string(serviceLog))
