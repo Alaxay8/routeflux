@@ -24,7 +24,7 @@ def build_svg(lang="en", scale=1.0):
     badge_native = "Go 1.26 Native"
 
     # Section 1
-    s1_title = "1. УПРАВЛЕНИЕ И БИЗНЕС-ЛОГИКА (CONTROL PLANE GO)" if is_ru else "1. CONTROL PLANE &amp; BUSINESS LOGIC (GO CORE)"
+    s1_title = "1. УПРАВЛЕНИЕ И ЛОГИКА (GO)" if is_ru else "1. CONTROL PLANE (GO)"
     
     # 1.1 Management Interfaces
     b11_title = "Интерфейсы взаимодействия" if is_ru else "Management Interfaces"
@@ -52,40 +52,40 @@ def build_svg(lang="en", scale=1.0):
     b13_sub = "Модули probe, speedtest и умное anti-flap переключение" if is_ru else "probe, speedtest, and smart anti-flap switching"
     b13_test_header = "Параллельный замер доступности:" if is_ru else "Parallel Availability &amp; Speed Testing:"
     b13_test_1 = "• Фоновый TCP handshake и RTT пинг всех нод подписки" if is_ru else "• Background TCP handshake and RTT ping across all subscription nodes"
-    b13_test_2 = "• Расчет скоринга нод (Health Score) по задержке, джиттеру и потерям" if is_ru else "• Dynamic health score calculated from latency, jitter, and packet loss"
-    b13_test_3 = "• Проверка реального выхода через generate_204 перед активацией" if is_ru else "• Egress verification via generate_204 before active deployment"
+    b13_test_2 = "• Скоринг: задержка, успешные проверки и ошибки" if is_ru else "• Score: latency, successful checks, and failures"
+    b13_test_3 = "• Проверка выхода через generate_204 при подключении" if is_ru else "• Egress checks via generate_204 during connection"
     b13_failover_header = "Интеллектуальный Auto-Failover &amp; Anti-Flap:" if is_ru else "Intelligent Auto-Failover &amp; Anti-Flap:"
-    b13_failover_1 = "• Защита от частых переключений (anti-flap): кулдаун стабильности" if is_ru else "• Anti-flap protection: cooldown window prevents rapid flipping"
-    b13_failover_2 = "• Мгновенное переключение на резервную ноду при обрыве связи" if is_ru else "• Instant transparent failover to backup node if active node drops"
-    b13_failover_3 = "✓ Гарантирует непрерывный доступ для клиентов сети и прокси" if is_ru else "✓ Guarantees continuous connectivity for all LAN devices and proxies"
+    b13_failover_1 = "• Периодические проверки и защита от частых переключений" if is_ru else "• Periodic checks and cooldown limit repeated switching"
+    b13_failover_2 = "• В Auto: выбор резервной ноды при сбоях" if is_ru else "• Auto mode selects a backup node after failures"
+    b13_failover_3 = "Соединения могут прерываться при смене ноды" if is_ru else "Connections may be interrupted during node changes"
 
     # 1.4 Config Generator
     b14_title = "Атомарный генератор конфигов и сервис-менеджер" if is_ru else "Atomic Config Generator &amp; Service Sync"
     b14_sub = "Оркестрация backend/xray и platform/openwrt" if is_ru else "backend/xray and platform/openwrt orchestration"
     b14_gen_header = "Транзакционная генерация Xray JSON:" if is_ru else "Transactional Xray JSON Generation:"
-    b14_gen_1 = "1. Рендеринг /var/run/routeflux/xray.json с активной нодой, DNS, inbounds" if is_ru else "1. Renders /var/run/routeflux/xray.json with active node, DNS, inbounds"
-    b14_gen_2 = "2. Обязательный тест валидности: xray -test -c /tmp/xray.json" if is_ru else "2. Strict validation test: xray -test -c /tmp/xray.json"
-    b14_gen_3 = "3. Атомарный откат к рабочей версии при ошибках валидации" if is_ru else "3. Atomic rollback snapshot: previous config restored if validation fails"
+    b14_gen_1 = "1. Генерация конфига для /etc/xray/config.json (по умолчанию)" if is_ru else "1. Generates config for /etc/xray/config.json (default)"
+    b14_gen_2 = "2. Проверка временного файла: xray -test -config &lt;путь&gt;" if is_ru else "2. Validates a temporary file: xray -test -config &lt;path&gt;"
+    b14_gen_3 = "3. При ошибке проверки рабочий конфиг не заменяется" if is_ru else "3. Validation failure leaves the live config unchanged"
     b14_sync_header = "Синхронизация платформы OpenWrt:" if is_ru else "OpenWrt Dataplane Synchronization:"
-    b14_sync_1 = "• Настройка правил фаервола via fw4 table inet routeflux" if is_ru else "• Configures nftables ruleset via fw4 table inet routeflux"
+    b14_sync_1 = "• Отдельная таблица nftables: inet routeflux" if is_ru else "• Dedicated nftables table: inet routeflux"
     b14_sync_2 = "• Генерация директив nftset для службы dnsmasq" if is_ru else "• Generates dnsmasq nftset directives for dynamic domain capturing"
-    b14_sync_3 = "• Мягкий перезапуск сервисов (/etc/init.d/xray reload)" if is_ru else "• Gracefully reloads services (/etc/init.d/xray reload)"
+    b14_sync_3 = "• Reload Xray; откат при ошибке применения" if is_ru else "• Reload Xray; roll back if applying the config fails"
 
     # Section 2
-    s2_title = "2. СЕТЕВОЙ ТРАФИК И ПЕРЕХВАТ (DATA PLANE OPENWRT)" if is_ru else "2. OPENWRT DATAPLANE • TRAFFIC INTERCEPTION &amp; LAN PROXY"
+    s2_title = "2. ТРАФИК OPENWRT И LAN-ПРОКСИ" if is_ru else "2. OPENWRT TRAFFIC &amp; LAN PROXY"
     
     # 2.1 LAN Clients
     b21_title = "Клиенты LAN и режимы работы" if is_ru else "LAN Clients &amp; Traffic Modes"
     b21_sub = "Устройства домашней и офисной сети (192.168.1.0/24)" if is_ru else "Home &amp; office network devices (192.168.1.0/24)"
-    b21_mode_a_title = "Режим А: Прозрачный шлюз (По умолчанию)" if is_ru else "Mode A: Transparent Gateway (Default)"
+    b21_mode_a_title = "Режим А: Прозрачный шлюз (Routing включён)" if is_ru else "Mode A: Transparent Gateway (Routing enabled)"
     b21_mode_a_1 = "Устройства отправляют обычный трафик через шлюз" if is_ru else "Devices send standard traffic through default gateway"
-    b21_mode_a_2 = "nftables прозрачно перехватывает DNS (53) и TCP/UDP" if is_ru else "nftables transparently intercepts DNS (53) and TCP/UDP"
+    b21_mode_a_2 = "Перехват выбранного TCP/UDP по правилам Routing" if is_ru else "Selected TCP/UDP traffic follows Routing rules"
     b21_mode_a_3 = "Не требует настроек на телефонах, ПК или смарт-ТВ" if is_ru else "Zero client configuration needed on phones, PCs, or TVs"
-    b21_mode_b_title = "Режим Б: Прямой локальный и LAN-прокси (NEW)" if is_ru else "Mode B: Explicit Local &amp; LAN Proxy (NEW)"
-    b21_mode_b_1 = "Routing: Off — роутер не вмешивается в чужой трафик" if is_ru else "Routing: Off — no router firewall interception"
-    b21_mode_b_2 = "• SOCKS5 (:10808) и HTTP (:10809) открыты для локальной сети" if is_ru else "• SOCKS5 (:10808) &amp; HTTP (:10809) open to LAN"
-    b21_mode_b_3 = "• Настраивается в браузере, Telegram, Happ, SwitchyOmega" if is_ru else "• Configured in browsers, Telegram, Happ, SwitchyOmega"
-    b21_mode_b_4 = "✓ Сохраняет умный дом, банкинг и нативную скорость NAT" if is_ru else "✓ Preserves smart home, banking, and full native NAT speeds"
+    b21_mode_b_title = "Режим Б: Локальный и LAN-прокси" if is_ru else "Mode B: Explicit Local &amp; LAN Proxy"
+    b21_mode_b_1 = "По умолчанию Routing Off и доступ только с localhost" if is_ru else "Default: Routing Off and localhost-only listeners"
+    b21_mode_b_2 = "• Для LAN: Allow LAN, подключённый Xray, доступ в firewall" if is_ru else "• LAN requires Allow LAN, connected Xray, firewall access"
+    b21_mode_b_3 = "• В клиенте: IP роутера и порт SOCKS5 / HTTP" if is_ru else "• Client uses router IP and SOCKS5 / HTTP port"
+    b21_mode_b_4 = "Порты по умолчанию: 10808 / 10809; можно изменить" if is_ru else "Default ports: 10808 / 10809; configurable"
 
     # 2.2 dnsmasq nftset
     b22_title = "dnsmasq-full и динамический nftset" if is_ru else "dnsmasq-full &amp; Dynamic nftset"
@@ -93,21 +93,21 @@ def build_svg(lang="en", scale=1.0):
     b22_how_header = "Принцип работы директивы nftset:" if is_ru else "How the nftset directive works:"
     b22_how_1 = "1. RouteFlux передает списки доменов в dnsmasq:" if is_ru else "1. RouteFlux injects target domain patterns into dnsmasq:"
     b22_how_2 = "2. Клиент запрашивает домен (например, googlevideo.com)" if is_ru else "2. Client requests domain (e.g. googlevideo.com)"
-    b22_how_3 = "3. Хук ядра dnsmasq мгновенно добавляет IP в набор nftables!" if is_ru else "3. dnsmasq kernel hook adds resolved IP directly to nftables set!"
+    b22_how_3 = "3. dnsmasq добавляет IP из DNS-ответа в nftables set" if is_ru else "3. dnsmasq adds IPs from DNS replies to an nftables set"
     b22_how_4 = "Последующие пакеты сразу попадают под правила прокси" if is_ru else "Subsequent packets immediately match proxy redirection rules"
     b22_dns_modes = "Режимы DNS (DNS Modes):" if is_ru else "DNS Resolution Modes:"
     b22_dns_split = "• <tspan font-weight=\"bold\" fill=\"#f8fafc\">Split (По умолч.):</tspan> .lan локально, внешний DNS шифруется (DoH)" if is_ru else "• <tspan font-weight=\"bold\" fill=\"#f8fafc\">Split (Default):</tspan> .lan queries stay local, external via encrypted DoH"
-    b22_dns_remote = "• <tspan font-weight=\"bold\" fill=\"#f8fafc\">Remote:</tspan> 100% DNS-запросов идут через удаленный DoH резолвер" if is_ru else "• <tspan font-weight=\"bold\" fill=\"#f8fafc\">Remote:</tspan> 100% of DNS routed through remote upstream resolvers"
+    b22_dns_remote = "• Remote: запросы через настроенные upstream DNS" if is_ru else "• Remote: queries use configured upstream DNS"
 
     # 2.3 nftables
-    b23_title = "nftables (Таблица inet routeflux) • Аппаратный роутинг" if is_ru else "nftables (table inet routeflux) • Hardware-Accelerated Flow"
+    b23_title = "nftables (inet routeflux) • Правила ядра Linux" if is_ru else "nftables (inet routeflux) • Linux Kernel Rules"
     b23_sub = "Фильтрация и прозрачный редирект в ядре Linux (Netfilter)" if is_ru else "In-kernel Netfilter packet evaluation and transparent redirection"
     b23_sets_header = "Динамические наборы ядра (Sets):" if is_ru else "Dynamic Kernel Sets:"
     b23_set_excl = "Исключенные хосты LAN (ТВ, консоли, рабочие ПК)" if is_ru else "Bypassed LAN devices (TV, consoles, work PCs)"
     b23_set_priv = "Локальные подсети: 10.0.0.0/8, 192.168.0.0/16, lo..." if is_ru else "Private subnets: 10.0.0.0/8, 192.168.0.0/16, lo..."
     b23_set_dir = "Прямой выход (банки, госуслуги, локальные ресурсы)" if is_ru else "Direct bypass targets (banking, government, local)"
     b23_set_pxy = "Целевые сервисы (YouTube, Discord, AI и др.)" if is_ru else "Dynamic proxy targets (YouTube, Discord, AI, etc.)"
-    b23_chains_header = "Цепочки prerouting (TCP) и prerouting_mangle (UDP TProxy):" if is_ru else "Kernel Chains: prerouting (TCP) &amp; prerouting_mangle (UDP TProxy):"
+    b23_chains_header = "Пример выборочного перехвата (правила зависят от режима):" if is_ru else "Selective capture example (rules depend on mode):"
     b23_rule1_out = "➔ Прямой выход (Direct WAN)" if is_ru else "➔ Direct WAN Egress"
     b23_rule2_out = "➔ Прямой выход (Direct WAN)" if is_ru else "➔ Direct WAN Egress"
     b23_rule3_desc = "Перенаправление TCP пакетов в слушатель dokodemo-door" if is_ru else "Redirects TCP packets to Xray dokodemo-door listener"
@@ -119,15 +119,15 @@ def build_svg(lang="en", scale=1.0):
     conn_lan_proxy = "Прямые входы SOCKS5 / HTTP для LAN" if is_ru else "Direct LAN SOCKS5 / HTTP Inbounds"
 
     # Section 3
-    s3_title = "3. ИСПОЛНЯЕМЫЙ РАНТАЙМ XRAY И ВЫХОД В ИНТЕРНЕТ" if is_ru else "3. XRAY RUNTIME PROCESS &amp; GLOBAL INTERNET EGRESS"
+    s3_title = "3. XRAY И ОТДЕЛЬНЫЙ РЕЖИМ ZAPRET" if is_ru else "3. XRAY &amp; SEPARATE ZAPRET MODE"
     
     # 3.1 Inbounds
-    b31_title = "Двойные Inbounds: Прозрачный и LAN-прокси" if is_ru else "Dual Inbounds: Transparent &amp; LAN Proxy"
+    b31_title = "Входы Xray: прозрачные и SOCKS5 / HTTP" if is_ru else "Xray Inbounds: Transparent &amp; SOCKS5 / HTTP"
     b31_sub = "Принимает трафик от роутера и прямые подключения из LAN" if is_ru else "Receives router-intercepted and direct LAN proxy streams"
-    b31_tp_1 = "• Точка входа TProxy &amp; Redirect для сетевого фильтра роутера" if is_ru else "• TProxy &amp; Redirect entry point for router netfilter"
+    b31_tp_1 = "• TCP: transparent-in; UDP: transparent-udp-in" if is_ru else "• TCP: transparent-in; UDP: transparent-udp-in"
     b31_tp_2 = "• Sniffing: определение HTTP Host и TLS SNI доменов" if is_ru else "• Sniffing: HTTP Host &amp; TLS SNI domain inspection"
-    b31_tp_3 = "✓ Не совпавшие запросы мягко уходят в прямой direct out" if is_ru else "✓ Unmatched requests fall through gently to direct out"
-    b31_socks_1 = "• Протокол SOCKS5 с полной поддержкой UDP associate" if is_ru else "• SOCKS5 protocol with full UDP associate support"
+    b31_tp_3 = "Выход зависит от режима и default action" if is_ru else "Outbound depends on routing mode and default action"
+    b31_socks_1 = "• SOCKS5 UDP требует поддержки со стороны сервера" if is_ru else "• SOCKS5 UDP requires upstream server support"
     b31_socks_2 = "• HTTP forward-прокси для расширений браузера и приложений" if is_ru else "• HTTP forward proxy for browser extensions and apps"
     b31_socks_3 = "Настраиваемый бинд: 127.0.0.1 (только роутер) или 0.0.0.0 (LAN)" if is_ru else "Configurable: 127.0.0.1 (local only) or 0.0.0.0 (LAN access)"
 
@@ -137,37 +137,38 @@ def build_svg(lang="en", scale=1.0):
     b32_table_header = "Таблица маршрутизации (Routing Rules):" if is_ru else "Routing Rule Table:"
     b32_rule_sel = "• <tspan font-weight=\"bold\" fill=\"#a855f7\">tag: selected</tspan> ➔ Активная нода подписки" if is_ru else "• <tspan font-weight=\"bold\" fill=\"#a855f7\">tag: selected</tspan> ➔ Active subscription server"
     b32_rule_dir = "• <tspan font-weight=\"bold\" fill=\"#10b981\">tag: direct</tspan> ➔ Прямой выход через провайдера роутера" if is_ru else "• <tspan font-weight=\"bold\" fill=\"#10b981\">tag: direct</tspan> ➔ Direct WAN egress via router ISP"
-    b32_rule_zap = "• <tspan font-weight=\"bold\" fill=\"#f59e0b\">tag: zapret</tspan> ➔ Локальный сервис обхода DPI (nfqws)" if is_ru else "• <tspan font-weight=\"bold\" fill=\"#f59e0b\">tag: zapret</tspan> ➔ Local nfqws DPI circumvention"
-    b32_rule_blk = "• <tspan font-weight=\"bold\" fill=\"#ef4444\">tag: block</tspan> ➔ Блокировка рекламы и QUIC UDP 443" if is_ru else "• <tspan font-weight=\"bold\" fill=\"#ef4444\">tag: block</tspan> ➔ Blackhole ad networks &amp; QUIC UDP 443"
-    b32_doh_1 = "Встроенный DoH / DoT резолвер для внешних доменов" if is_ru else "Built-in DoH / DoT DNS resolver for remote domain resolution"
-    b32_doh_2 = "Исключает утечки DNS (DNS Leaks) и подмену ответов провайдером" if is_ru else "Prevents ISP DNS poisoning and eavesdropping"
+    b32_rule_zap = "• SOCKS5 / HTTP → selected (TCP и UDP)" if is_ru else "• SOCKS5 / HTTP → selected (TCP and UDP)"
+    b32_rule_blk = "• tag: block → blackhole; по правилам QUIC/UDP" if is_ru else "• tag: block → blackhole, per QUIC/UDP policy"
+    b32_doh_1 = "DNS: plain или DoH; DoT не поддерживается" if is_ru else "DNS: plain or DoH; DoT is not supported"
+    b32_doh_2 = "Обрабатывает DNS, направленный через RouteFlux" if is_ru else "Handles DNS queries routed through RouteFlux"
 
     # 3.3 Outbounds
-    b33_title = "Outbounds • Выходы в глобальную сеть (WAN / Internet)" if is_ru else "Outbounds • Global Network Egress (WAN / Internet)"
-    b33_sub = "Финальная зашифрованная доставка до серверов назначения" if is_ru else "Final encrypted delivery to target destination servers"
+    b33_title = "Выходы Xray: selected и direct" if is_ru else "Xray Outbounds: selected and direct"
+    b33_sub = "Выбор пути определяется правилами и активной нодой" if is_ru else "Rules and the active node determine the egress path"
     
-    b33_c1_title = "Шифрованный туннель (Proxy)" if is_ru else "Encrypted Tunnel (Selected Node)"
-    b33_c1_sub = "VLESS-Reality / VMess / Trojan / Hy2"
-    b33_c1_1 = "Трафик шифруется и идет на зарубежный сервер" if is_ru else "Traffic encrypted to remote overseas VPS"
-    b33_c1_2 = "• Обход блокировок, DPI и замедлений" if is_ru else "• Bypasses censorship, DPI &amp; throttling"
-    b33_c1_3 = "• YouTube 4K, Discord, AI, Notion, Соцсети" if is_ru else "• YouTube 4K, Discord, AI, Notion, Socials"
-    b33_c1_4 = "• Полная защита от цензуры провайдера" if is_ru else "• Full privacy from local ISP logging"
+    b33_c1_title = "Сервер подписки (selected)" if is_ru else "Subscription Server (selected)"
+    b33_c1_sub = "VLESS / VMess / Trojan / Hysteria / SOCKS5" if is_ru else "VLESS / VMess / Trojan / Hysteria / SOCKS5"
+    b33_c1_1 = "Трафик направляется через выбранную ноду" if is_ru else "Traffic uses the selected subscription node"
+    b33_c1_2 = "• Защита зависит от протокола и настроек" if is_ru else "• Protection depends on protocol and settings"
+    b33_c1_3 = "• SOCKS5 / HTTP используют этот выход" if is_ru else "• SOCKS5 / HTTP use this outbound"
+    b33_c1_4 = "Доступность зависит от сервера и сети" if is_ru else "Availability depends on the server and network"
     b33_c1_5 = "➔ Удаленный сервер ➔ Глобальный Интернет" if is_ru else "➔ Remote VPS ➔ Global Internet"
 
     b33_c2_title = "Прямой маршрут (Direct WAN)" if is_ru else "Direct Route (Direct WAN)"
     b33_c2_sub = "Без прокси через местного провайдера" if is_ru else "Bypasses proxy through local ISP"
-    b33_c2_1 = "Максимальная скорость канала, минимальный пинг" if is_ru else "Native wire-speed, lowest possible ping"
+    b33_c2_1 = "Прямое соединение без сервера подписки" if is_ru else "Direct connection without a subscription server"
     b33_c2_2 = "• Российские сервисы, Банки, Госуслуги" if is_ru else "• Banking, government portals, local media"
     b33_c2_3 = "• Исключенные устройства LAN (ТВ, приставки)" if is_ru else "• Excluded LAN devices (smart TVs, consoles)"
-    b33_c2_4 = "• Весь трафик вне списков проксирования" if is_ru else "• All non-blocked domestic destinations"
-    b33_c2_5 = "➔ Местный провайдер ➔ Рунет" if is_ru else "➔ Local ISP ➔ Domestic Internet"
+    b33_c2_4 = "• Default action зависит от режима Routing" if is_ru else "• Default action depends on Routing mode"
+    b33_c2_5 = "➔ Провайдер ➔ Сервер назначения" if is_ru else "➔ Local ISP ➔ Destination server"
 
-    b33_c3_title = "Zapret Fallback (Обход DPI)" if is_ru else "Zapret Fallback (DPI Bypass)"
-    b33_c3_sub = "Модификация пакетов без удаленного сервера" if is_ru else "Local packet modification without remote VPS"
-    b33_c3_1 = "Пакетный хак TCP/TLS для обхода ТСПУ" if is_ru else "TCP/TLS packet desynchronization against DPI"
-    b33_c3_2 = "• Нулевой расход трафика подписки / VPS" if is_ru else "• Zero VPS bandwidth consumption"
-    b33_c3_3 = "• Автоматический fallback при сбоях ноды" if is_ru else "• Automatic fallback if proxy connection fails"
-    b33_c3_4 = "• Обрабатывается локально через nfqws" if is_ru else "• Handled locally on router via nfqws"
+    zapret_heading = "Отдельный транспорт OpenWrt" if is_ru else "Separate OpenWrt Transport"
+    b33_c3_title = "Zapret: отдельный режим" if is_ru else "Zapret: Separate Mode"
+    b33_c3_sub = "nfqws вне Xray; это не outbound" if is_ru else "nfqws outside Xray; not an outbound"
+    b33_c3_1 = "При fallback RouteFlux останавливает Xray" if is_ru else "RouteFlux stops Xray when entering fallback"
+    b33_c3_2 = "• SOCKS5 / HTTP в этом режиме недоступны" if is_ru else "• SOCKS5 / HTTP are unavailable in this mode"
+    b33_c3_3 = "• Нужны включённый Zapret и выбранные домены" if is_ru else "• Requires enabled Zapret and domain selectors"
+    b33_c3_4 = "Обход DPI для выбранных доменов через nfqws" if is_ru else "nfqws handles DPI bypass for selected domains"
     b33_c3_5 = "➔ Локальный nfqws ➔ Direct WAN" if is_ru else "➔ Local nfqws ➔ Direct WAN"
 
     # Footer
@@ -175,28 +176,28 @@ def build_svg(lang="en", scale=1.0):
     
     f_s1_title = "Импорт подписки и замер задержек" if is_ru else "Subscription Import &amp; Benchmarking"
     f_s1_1 = "Пользователь добавляет подписку через LuCI или CLI." if is_ru else "User adds subscription URL via Web UI or CLI."
-    f_s1_2 = "RouteFlux параллельно пингует все ноды и выбирает" if is_ru else "RouteFlux probes all nodes in parallel and selects"
-    f_s1_3 = "наиболее стабильный сервер с наименьшим RTT." if is_ru else "the lowest-latency, most reliable server."
+    f_s1_2 = "В Auto выбирает ноду по результатам проверок;" if is_ru else "Auto mode selects a node using health checks;"
+    f_s1_3 = "в ручном режиме сервер выбирает пользователь." if is_ru else "in manual mode, the user selects the server."
 
-    f_s2_title = "Атомарный тест и активация конфига" if is_ru else "Atomic Config Test &amp; Deployment"
+    f_s2_title = "Проверка и применение конфига" if is_ru else "Config Validation &amp; Deployment"
     f_s2_1 = "Формируется Xray JSON и проверяется: xray -test." if is_ru else "Renders Xray JSON and verifies with xray -test."
-    f_s2_2 = "При успехе одновременно применяются правила" if is_ru else "On success, atomic nftables and dnsmasq"
-    f_s2_3 = "в таблице nftables и директивы для dnsmasq." if is_ru else "nftset directives are applied simultaneously."
+    f_s2_2 = "Затем применяются настройки сервисов;" if is_ru else "Service settings are then applied;"
+    f_s2_3 = "при ошибках выполняется обработка и откат." if is_ru else "failures trigger error handling and rollback."
 
-    f_s3_title = "Умный DNS-перехват (nftset)" if is_ru else "Dynamic DNS Interception (nftset)"
+    f_s3_title = "DNS-ответы и nftset" if is_ru else "DNS Replies &amp; nftset"
     f_s3_1 = "Клиент запрашивает домен (YouTube, Discord и др.)." if is_ru else "Client queries a domain (e.g., YouTube, Discord)."
     f_s3_2 = "dnsmasq на лету наполняет набор @proxy_target_v4." if is_ru else "dnsmasq automatically populates kernel @proxy_target_v4."
-    f_s3_3 = "Статические списки IP-адресов больше не нужны!" if is_ru else "No static IP list maintenance required!"
+    f_s3_3 = "Работает для запросов через этот dnsmasq." if is_ru else "Applies to queries handled by this dnsmasq."
 
     f_s4_title = "Раздельная маршрутизация и LAN-прокси" if is_ru else "Dual Routing &amp; Direct LAN Proxy"
     f_s4_1 = "Прямой трафик идет в обход прокси в WAN;" if is_ru else "Transparent traffic splits between Direct and Xray;"
-    f_s4_2 = "Либо при Routing Off устройства подключаются" if is_ru else "Alternatively, with Routing Off, devices connect"
-    f_s4_3 = "напрямую к SOCKS5 (:10808) или HTTP (:10809)." if is_ru else "directly to SOCKS5 (:10808) or HTTP (:10809)."
+    f_s4_2 = "Для LAN-прокси нужны Allow LAN и Xray;" if is_ru else "LAN proxy requires Allow LAN and active Xray;"
+    f_s4_3 = "клиент использует IP роутера и заданный порт." if is_ru else "clients use the router IP and configured port."
 
     f_s5_title = "Непрерывный мониторинг и Anti-Flap" if is_ru else "Continuous Failover &amp; Anti-Flap"
     f_s5_1 = "Фоновый демон постоянно следит за состоянием." if is_ru else "Background daemon continuously monitors health."
-    f_s5_2 = "При падении активной ноды RouteFlux бесшовно" if is_ru else "If the active node fails, RouteFlux seamlessly"
-    f_s5_3 = "переключает трафик на резервный сервер." if is_ru else "switches traffic to the next best standby server."
+    f_s5_2 = "В Auto возможна смена ноды или Zapret fallback." if is_ru else "Auto may switch nodes or enter Zapret fallback."
+    f_s5_3 = "Сохранение текущих соединений не гарантируется." if is_ru else "Existing connections may be interrupted."
 
     raw_svg = f"""<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 {WIDTH} {HEIGHT}" width="{pixel_w}" height="{pixel_h}" style="background-color: #0b0f19; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;">
   <defs>
@@ -302,7 +303,7 @@ def build_svg(lang="en", scale=1.0):
     <rect width="2240" height="360" rx="18" fill="url(#glowControl)" />
 
     <!-- Zone Label -->
-    <rect x="24" y="16" width="390" height="28" rx="8" fill="#1e3a8a" />
+    <rect x="24" y="16" width="520" height="28" rx="8" fill="#1e3a8a" />
     <text x="36" y="35" font-size="12.5" font-weight="800" fill="#93c5fd" letter-spacing="1">{s1_title}</text>
 
     <!-- Sub-Box 1.1: Management Interfaces -->
@@ -573,7 +574,7 @@ def build_svg(lang="en", scale=1.0):
     <rect width="2240" height="340" rx="18" fill="url(#glowXray)" />
 
     <!-- Zone Label -->
-    <rect x="24" y="16" width="450" height="28" rx="8" fill="#581c87" />
+    <rect x="24" y="16" width="520" height="28" rx="8" fill="#581c87" />
     <text x="36" y="35" font-size="12.5" font-weight="800" fill="#e9d5ff" letter-spacing="1">{s3_title}</text>
 
     <!-- Sub-Box 3.1: Inbounds -->
@@ -584,7 +585,7 @@ def build_svg(lang="en", scale=1.0):
 
       <g transform="translate(18, 66)">
         <rect width="419" height="80" rx="8" fill="#0f172a" stroke="#334155" stroke-width="1" />
-        <text x="16" y="23" font-size="12.5" font-weight="700" fill="#f8fafc">transparent-in (dokodemo-door :12345):</text>
+        <text x="16" y="23" font-size="12.5" font-weight="700" fill="#f8fafc">dokodemo-door TCP / UDP (:12345):</text>
         <text x="16" y="42" font-size="10.5" fill="#94a3b8">{b31_tp_1}</text>
         <text x="16" y="58" font-size="10.5" fill="#94a3b8">{b31_tp_2}</text>
         <text x="16" y="74" font-size="10.5" fill="#10b981">{b31_tp_3}</text>
@@ -619,7 +620,7 @@ def build_svg(lang="en", scale=1.0):
 
     <!-- Sub-Box 3.3: Outbounds & Egress Targets -->
     <g transform="translate(1000, 56)">
-      <rect width="1215" height="258" rx="12" fill="#1e293b" stroke="#334155" stroke-width="1.2" />
+      <rect width="800" height="258" rx="12" fill="#1e293b" stroke="#334155" stroke-width="1.2" />
       <text x="24" y="32" font-size="15.5" font-weight="700" fill="#c084fc">{b33_title}</text>
       <text x="24" y="50" font-size="11.5" fill="#94a3b8">{b33_sub}</text>
 
@@ -651,8 +652,13 @@ def build_svg(lang="en", scale=1.0):
         <text x="16" y="148" font-size="10.5" font-weight="bold" fill="#10b981">{b33_c2_5}</text>
       </g>
 
-      <!-- Channel 3: Zapret Fallback -->
-      <g transform="translate(812, 66)">
+    </g>
+
+    <!-- Separate OpenWrt transport; never an Xray outbound. -->
+    <g transform="translate(1812, 56)">
+      <rect width="403" height="258" rx="12" fill="#1e293b" stroke="#f59e0b" stroke-width="1.2" />
+      <text x="18" y="32" font-size="15.5" font-weight="700" fill="#f59e0b">{zapret_heading}</text>
+      <g transform="translate(9, 66)">
         <rect width="385" height="168" rx="10" fill="#0f172a" stroke="#f59e0b" stroke-width="1.4" />
         <rect x="12" y="12" width="28" height="28" rx="6" fill="#d97706" />
         <text x="26" y="31" font-size="14" font-weight="bold" fill="#ffffff" text-anchor="middle">⚡</text>

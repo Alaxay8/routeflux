@@ -102,8 +102,8 @@
     <rect width="2240" height="360" rx="18" fill="url(#glowControl)" />
 
     <!-- Zone Label -->
-    <rect x="24" y="16" width="390" height="28" rx="8" fill="#1e3a8a" />
-    <text x="36" y="35" font-size="12.5" font-weight="800" fill="#93c5fd" letter-spacing="1">1. CONTROL PLANE &amp; BUSINESS LOGIC (GO CORE)</text>
+    <rect x="24" y="16" width="520" height="28" rx="8" fill="#1e3a8a" />
+    <text x="36" y="35" font-size="12.5" font-weight="800" fill="#93c5fd" letter-spacing="1">1. CONTROL PLANE (GO)</text>
 
     <!-- Sub-Box 1.1: Management Interfaces -->
     <g transform="translate(25, 56)">
@@ -188,16 +188,16 @@
         <rect width="544" height="96" rx="8" fill="#0f172a" stroke="#334155" stroke-width="1" />
         <text x="16" y="23" font-size="12.5" font-weight="700" fill="#f8fafc">Parallel Availability &amp; Speed Testing:</text>
         <text x="16" y="42" font-size="11" fill="#94a3b8">• Background TCP handshake and RTT ping across all subscription nodes</text>
-        <text x="16" y="60" font-size="11" fill="#94a3b8">• Dynamic health score calculated from latency, jitter, and packet loss</text>
-        <text x="16" y="78" font-size="11" fill="#94a3b8">• Egress verification via generate_204 before active deployment</text>
+        <text x="16" y="60" font-size="11" fill="#94a3b8">• Score: latency, successful checks, and failures</text>
+        <text x="16" y="78" font-size="11" fill="#94a3b8">• Egress checks via generate_204 during connection</text>
       </g>
 
       <g transform="translate(18, 172)">
         <rect width="544" height="96" rx="8" fill="#0f172a" stroke="#334155" stroke-width="1" />
         <text x="16" y="23" font-size="12.5" font-weight="700" fill="#f8fafc">Intelligent Auto-Failover &amp; Anti-Flap:</text>
-        <text x="16" y="42" font-size="11" fill="#94a3b8">• Anti-flap protection: cooldown window prevents rapid flipping</text>
-        <text x="16" y="60" font-size="11" fill="#94a3b8">• Instant transparent failover to backup node if active node drops</text>
-        <text x="16" y="78" font-size="10.5" fill="#10b981">✓ Guarantees continuous connectivity for all LAN devices and proxies</text>
+        <text x="16" y="42" font-size="11" fill="#94a3b8">• Periodic checks and cooldown limit repeated switching</text>
+        <text x="16" y="60" font-size="11" fill="#94a3b8">• Auto mode selects a backup node after failures</text>
+        <text x="16" y="78" font-size="10.5" fill="#10b981">Connections may be interrupted during node changes</text>
       </g>
     </g>
 
@@ -210,17 +210,17 @@
       <g transform="translate(18, 66)">
         <rect width="559" height="96" rx="8" fill="#0f172a" stroke="#334155" stroke-width="1" />
         <text x="16" y="23" font-size="12.5" font-weight="700" fill="#f8fafc">Transactional Xray JSON Generation:</text>
-        <text x="16" y="42" font-size="11" fill="#94a3b8">1. Renders /var/run/routeflux/xray.json with active node, DNS, inbounds</text>
-        <text x="16" y="60" font-size="11" fill="#f59e0b" font-weight="bold">2. Strict validation test: xray -test -c /tmp/xray.json</text>
-        <text x="16" y="78" font-size="11" fill="#94a3b8">3. Atomic rollback snapshot: previous config restored if validation fails</text>
+        <text x="16" y="42" font-size="11" fill="#94a3b8">1. Generates config for /etc/xray/config.json (default)</text>
+        <text x="16" y="60" font-size="11" fill="#f59e0b" font-weight="bold">2. Validates a temporary file: xray -test -config &lt;path&gt;</text>
+        <text x="16" y="78" font-size="11" fill="#94a3b8">3. Validation failure leaves the live config unchanged</text>
       </g>
 
       <g transform="translate(18, 172)">
         <rect width="559" height="96" rx="8" fill="#0f172a" stroke="#334155" stroke-width="1" />
         <text x="16" y="23" font-size="12.5" font-weight="700" fill="#f8fafc">OpenWrt Dataplane Synchronization:</text>
-        <text x="16" y="42" font-size="11" fill="#94a3b8">• Configures nftables ruleset via fw4 table inet routeflux</text>
+        <text x="16" y="42" font-size="11" fill="#94a3b8">• Dedicated nftables table: inet routeflux</text>
         <text x="16" y="60" font-size="11" fill="#94a3b8">• Generates dnsmasq nftset directives for dynamic domain capturing</text>
-        <text x="16" y="78" font-size="11" fill="#94a3b8">• Gracefully reloads services (/etc/init.d/xray reload)</text>
+        <text x="16" y="78" font-size="11" fill="#94a3b8">• Reload Xray; roll back if applying the config fails</text>
       </g>
     </g>
   </g>
@@ -242,7 +242,7 @@
 
     <!-- Zone Label -->
     <rect x="24" y="16" width="460" height="28" rx="8" fill="#9a3412" />
-    <text x="36" y="35" font-size="12.5" font-weight="800" fill="#fed7aa" letter-spacing="1">2. OPENWRT DATAPLANE • TRAFFIC INTERCEPTION &amp; LAN PROXY</text>
+    <text x="36" y="35" font-size="12.5" font-weight="800" fill="#fed7aa" letter-spacing="1">2. OPENWRT TRAFFIC &amp; LAN PROXY</text>
 
     <!-- Sub-Box 2.1: LAN Clients & Ingress -->
     <g transform="translate(25, 56)">
@@ -252,19 +252,19 @@
 
       <g transform="translate(18, 66)">
         <rect width="409" height="90" rx="8" fill="#0f172a" stroke="#334155" stroke-width="1" />
-        <text x="16" y="24" font-size="12.5" font-weight="700" fill="#f8fafc">Mode A: Transparent Gateway (Default)</text>
+        <text x="16" y="24" font-size="12.5" font-weight="700" fill="#f8fafc">Mode A: Transparent Gateway (Routing enabled)</text>
         <text x="16" y="44" font-size="11" fill="#94a3b8">Devices send standard traffic through default gateway</text>
-        <text x="16" y="62" font-size="11" fill="#38bdf8">nftables transparently intercepts DNS (53) and TCP/UDP</text>
+        <text x="16" y="62" font-size="11" fill="#38bdf8">Selected TCP/UDP traffic follows Routing rules</text>
         <text x="16" y="78" font-size="10.5" fill="#64748b">Zero client configuration needed on phones, PCs, or TVs</text>
       </g>
 
       <g transform="translate(18, 168)">
         <rect width="409" height="112" rx="8" fill="#0f172a" stroke="#10b981" stroke-width="1" />
-        <text x="16" y="23" font-size="12.5" font-weight="700" fill="#10b981">Mode B: Explicit Local &amp; LAN Proxy (NEW)</text>
-        <text x="16" y="43" font-size="11" fill="#cbd5e1">Routing: Off — no router firewall interception</text>
-        <text x="16" y="61" font-size="11" fill="#f8fafc">• SOCKS5 (:10808) &amp; HTTP (:10809) open to LAN</text>
-        <text x="16" y="79" font-size="11" fill="#94a3b8">• Configured in browsers, Telegram, Happ, SwitchyOmega</text>
-        <text x="16" y="97" font-size="10.5" fill="#10b981">✓ Preserves smart home, banking, and full native NAT speeds</text>
+        <text x="16" y="23" font-size="12.5" font-weight="700" fill="#10b981">Mode B: Explicit Local &amp; LAN Proxy</text>
+        <text x="16" y="43" font-size="11" fill="#cbd5e1">Default: Routing Off and localhost-only listeners</text>
+        <text x="16" y="61" font-size="11" fill="#f8fafc">• LAN requires Allow LAN, connected Xray, firewall access</text>
+        <text x="16" y="79" font-size="11" fill="#94a3b8">• Client uses router IP and SOCKS5 / HTTP port</text>
+        <text x="16" y="97" font-size="10.5" fill="#10b981">Default ports: 10808 / 10809; configurable</text>
       </g>
     </g>
 
@@ -280,7 +280,7 @@
         <text x="16" y="43" font-size="11" fill="#cbd5e1">1. RouteFlux injects target domain patterns into dnsmasq:</text>
         <text x="16" y="61" font-size="10.5" font-family="monospace" fill="#38bdf8">nftset=/youtube.com/4#inet#routeflux#proxy_target_v4</text>
         <text x="16" y="79" font-size="11" fill="#cbd5e1">2. Client requests domain (e.g. googlevideo.com)</text>
-        <text x="16" y="97" font-size="11" font-weight="bold" fill="#f59e0b">3. dnsmasq kernel hook adds resolved IP directly to nftables set!</text>
+        <text x="16" y="97" font-size="11" font-weight="bold" fill="#f59e0b">3. dnsmasq adds IPs from DNS replies to an nftables set</text>
         <text x="16" y="113" font-size="10" fill="#64748b">Subsequent packets immediately match proxy redirection rules</text>
       </g>
 
@@ -288,14 +288,14 @@
         <rect width="484" height="77" rx="8" fill="#0f172a" stroke="#334155" stroke-width="1" />
         <text x="16" y="22" font-size="12.5" font-weight="700" fill="#f8fafc">DNS Resolution Modes:</text>
         <text x="16" y="42" font-size="11" fill="#94a3b8">• <tspan font-weight="bold" fill="#f8fafc">Split (Default):</tspan> .lan queries stay local, external via encrypted DoH</text>
-        <text x="16" y="60" font-size="11" fill="#94a3b8">• <tspan font-weight="bold" fill="#f8fafc">Remote:</tspan> 100% of DNS routed through remote upstream resolvers</text>
+        <text x="16" y="60" font-size="11" fill="#94a3b8">• Remote: queries use configured upstream DNS</text>
       </g>
     </g>
 
     <!-- Sub-Box 2.3: nftables Kernel Routing -->
     <g transform="translate(1030, 56)">
       <rect width="1185" height="295" rx="12" fill="#1e293b" stroke="#f97316" stroke-width="1.4" />
-      <text x="24" y="32" font-size="15.5" font-weight="700" fill="#f97316">nftables (table inet routeflux) • Hardware-Accelerated Flow</text>
+      <text x="24" y="32" font-size="15.5" font-weight="700" fill="#f97316">nftables (inet routeflux) • Linux Kernel Rules</text>
       <text x="24" y="50" font-size="11.5" fill="#94a3b8">In-kernel Netfilter packet evaluation and transparent redirection</text>
 
       <!-- Sets sub-box -->
@@ -319,7 +319,7 @@
       <!-- Chains sub-box -->
       <g transform="translate(400, 66)">
         <rect width="767" height="213" rx="8" fill="#0f172a" stroke="#334155" stroke-width="1" />
-        <text x="16" y="23" font-size="12.5" font-weight="700" fill="#f8fafc">Kernel Chains: prerouting (TCP) &amp; prerouting_mangle (UDP TProxy):</text>
+        <text x="16" y="23" font-size="12.5" font-weight="700" fill="#f8fafc">Selective capture example (rules depend on mode):</text>
 
         <!-- Rule 1 -->
         <rect x="16" y="34" width="735" height="34" rx="6" fill="#1e293b" />
@@ -373,27 +373,27 @@
     <rect width="2240" height="340" rx="18" fill="url(#glowXray)" />
 
     <!-- Zone Label -->
-    <rect x="24" y="16" width="450" height="28" rx="8" fill="#581c87" />
-    <text x="36" y="35" font-size="12.5" font-weight="800" fill="#e9d5ff" letter-spacing="1">3. XRAY RUNTIME PROCESS &amp; GLOBAL INTERNET EGRESS</text>
+    <rect x="24" y="16" width="520" height="28" rx="8" fill="#581c87" />
+    <text x="36" y="35" font-size="12.5" font-weight="800" fill="#e9d5ff" letter-spacing="1">3. XRAY &amp; SEPARATE ZAPRET MODE</text>
 
     <!-- Sub-Box 3.1: Inbounds -->
     <g transform="translate(25, 56)">
       <rect width="455" height="258" rx="12" fill="#1e293b" stroke="#a855f7" stroke-width="1.2" />
-      <text x="24" y="32" font-size="15.5" font-weight="700" fill="#c084fc">Dual Inbounds: Transparent &amp; LAN Proxy</text>
+      <text x="24" y="32" font-size="15.5" font-weight="700" fill="#c084fc">Xray Inbounds: Transparent &amp; SOCKS5 / HTTP</text>
       <text x="24" y="50" font-size="11.5" fill="#94a3b8">Receives router-intercepted and direct LAN proxy streams</text>
 
       <g transform="translate(18, 66)">
         <rect width="419" height="80" rx="8" fill="#0f172a" stroke="#334155" stroke-width="1" />
-        <text x="16" y="23" font-size="12.5" font-weight="700" fill="#f8fafc">transparent-in (dokodemo-door :12345):</text>
-        <text x="16" y="42" font-size="10.5" fill="#94a3b8">• TProxy &amp; Redirect entry point for router netfilter</text>
+        <text x="16" y="23" font-size="12.5" font-weight="700" fill="#f8fafc">dokodemo-door TCP / UDP (:12345):</text>
+        <text x="16" y="42" font-size="10.5" fill="#94a3b8">• TCP: transparent-in; UDP: transparent-udp-in</text>
         <text x="16" y="58" font-size="10.5" fill="#94a3b8">• Sniffing: HTTP Host &amp; TLS SNI domain inspection</text>
-        <text x="16" y="74" font-size="10.5" fill="#10b981">✓ Unmatched requests fall through gently to direct out</text>
+        <text x="16" y="74" font-size="10.5" fill="#10b981">Outbound depends on routing mode and default action</text>
       </g>
 
       <g transform="translate(18, 154)">
         <rect width="419" height="80" rx="8" fill="#0f172a" stroke="#10b981" stroke-width="1" />
         <text x="16" y="23" font-size="12.5" font-weight="700" fill="#10b981">socks-in (:10808) &amp; http-in (:10809):</text>
-        <text x="16" y="42" font-size="10.5" fill="#94a3b8">• SOCKS5 protocol with full UDP associate support</text>
+        <text x="16" y="42" font-size="10.5" fill="#94a3b8">• SOCKS5 UDP requires upstream server support</text>
         <text x="16" y="58" font-size="10.5" fill="#94a3b8">• HTTP forward proxy for browser extensions and apps</text>
         <text x="16" y="74" font-size="10" fill="#38bdf8">Configurable: 127.0.0.1 (local only) or 0.0.0.0 (LAN access)</text>
       </g>
@@ -410,30 +410,30 @@
         <text x="16" y="23" font-size="12.5" font-weight="700" fill="#f8fafc">Routing Rule Table:</text>
         <text x="16" y="44" font-size="11" fill="#94a3b8">• <tspan font-weight="bold" fill="#a855f7">tag: selected</tspan> ➔ Active subscription server</text>
         <text x="16" y="64" font-size="11" fill="#94a3b8">• <tspan font-weight="bold" fill="#10b981">tag: direct</tspan> ➔ Direct WAN egress via router ISP</text>
-        <text x="16" y="84" font-size="11" fill="#94a3b8">• <tspan font-weight="bold" fill="#f59e0b">tag: zapret</tspan> ➔ Local nfqws DPI circumvention</text>
-        <text x="16" y="104" font-size="11" fill="#94a3b8">• <tspan font-weight="bold" fill="#ef4444">tag: block</tspan> ➔ Blackhole ad networks &amp; QUIC UDP 443</text>
-        <text x="16" y="128" font-size="11" fill="#38bdf8">Built-in DoH / DoT DNS resolver for remote domain resolution</text>
-        <text x="16" y="146" font-size="10.5" fill="#64748b">Prevents ISP DNS poisoning and eavesdropping</text>
+        <text x="16" y="84" font-size="11" fill="#94a3b8">• SOCKS5 / HTTP → selected (TCP and UDP)</text>
+        <text x="16" y="104" font-size="11" fill="#94a3b8">• tag: block → blackhole, per QUIC/UDP policy</text>
+        <text x="16" y="128" font-size="11" fill="#38bdf8">DNS: plain or DoH; DoT is not supported</text>
+        <text x="16" y="146" font-size="10.5" fill="#64748b">Handles DNS queries routed through RouteFlux</text>
       </g>
     </g>
 
     <!-- Sub-Box 3.3: Outbounds & Egress Targets -->
     <g transform="translate(1000, 56)">
-      <rect width="1215" height="258" rx="12" fill="#1e293b" stroke="#334155" stroke-width="1.2" />
-      <text x="24" y="32" font-size="15.5" font-weight="700" fill="#c084fc">Outbounds • Global Network Egress (WAN / Internet)</text>
-      <text x="24" y="50" font-size="11.5" fill="#94a3b8">Final encrypted delivery to target destination servers</text>
+      <rect width="800" height="258" rx="12" fill="#1e293b" stroke="#334155" stroke-width="1.2" />
+      <text x="24" y="32" font-size="15.5" font-weight="700" fill="#c084fc">Xray Outbounds: selected and direct</text>
+      <text x="24" y="50" font-size="11.5" fill="#94a3b8">Rules and the active node determine the egress path</text>
 
       <!-- Channel 1: Proxy Outbound -->
       <g transform="translate(18, 66)">
         <rect width="375" height="168" rx="10" fill="#0f172a" stroke="#a855f7" stroke-width="1.4" />
         <rect x="12" y="12" width="28" height="28" rx="6" fill="#7c3aed" />
         <text x="26" y="31" font-size="14" font-weight="bold" fill="#ffffff" text-anchor="middle">🔒</text>
-        <text x="48" y="26" font-size="13" font-weight="700" fill="#f8fafc">Encrypted Tunnel (Selected Node)</text>
-        <text x="48" y="41" font-size="10" fill="#a855f7">VLESS-Reality / VMess / Trojan / Hy2</text>
-        <text x="16" y="70" font-size="11" fill="#cbd5e1">Traffic encrypted to remote overseas VPS</text>
-        <text x="16" y="90" font-size="11" fill="#94a3b8">• Bypasses censorship, DPI &amp; throttling</text>
-        <text x="16" y="108" font-size="11" fill="#94a3b8">• YouTube 4K, Discord, AI, Notion, Socials</text>
-        <text x="16" y="128" font-size="10.5" fill="#64748b">• Full privacy from local ISP logging</text>
+        <text x="48" y="26" font-size="13" font-weight="700" fill="#f8fafc">Subscription Server (selected)</text>
+        <text x="48" y="41" font-size="10" fill="#a855f7">VLESS / VMess / Trojan / Hysteria / SOCKS5</text>
+        <text x="16" y="70" font-size="11" fill="#cbd5e1">Traffic uses the selected subscription node</text>
+        <text x="16" y="90" font-size="11" fill="#94a3b8">• Protection depends on protocol and settings</text>
+        <text x="16" y="108" font-size="11" fill="#94a3b8">• SOCKS5 / HTTP use this outbound</text>
+        <text x="16" y="128" font-size="10.5" fill="#64748b">Availability depends on the server and network</text>
         <text x="16" y="148" font-size="10.5" font-weight="bold" fill="#a855f7">➔ Remote VPS ➔ Global Internet</text>
       </g>
 
@@ -444,24 +444,29 @@
         <text x="26" y="31" font-size="14" font-weight="bold" fill="#ffffff" text-anchor="middle">🌐</text>
         <text x="48" y="26" font-size="13" font-weight="700" fill="#f8fafc">Direct Route (Direct WAN)</text>
         <text x="48" y="41" font-size="10" fill="#10b981">Bypasses proxy through local ISP</text>
-        <text x="16" y="70" font-size="11" fill="#cbd5e1">Native wire-speed, lowest possible ping</text>
+        <text x="16" y="70" font-size="11" fill="#cbd5e1">Direct connection without a subscription server</text>
         <text x="16" y="90" font-size="11" fill="#94a3b8">• Banking, government portals, local media</text>
         <text x="16" y="108" font-size="11" fill="#94a3b8">• Excluded LAN devices (smart TVs, consoles)</text>
-        <text x="16" y="128" font-size="10.5" fill="#64748b">• All non-blocked domestic destinations</text>
-        <text x="16" y="148" font-size="10.5" font-weight="bold" fill="#10b981">➔ Local ISP ➔ Domestic Internet</text>
+        <text x="16" y="128" font-size="10.5" fill="#64748b">• Default action depends on Routing mode</text>
+        <text x="16" y="148" font-size="10.5" font-weight="bold" fill="#10b981">➔ Local ISP ➔ Destination server</text>
       </g>
 
-      <!-- Channel 3: Zapret Fallback -->
-      <g transform="translate(812, 66)">
+    </g>
+
+    <!-- Separate OpenWrt transport; never an Xray outbound. -->
+    <g transform="translate(1812, 56)">
+      <rect width="403" height="258" rx="12" fill="#1e293b" stroke="#f59e0b" stroke-width="1.2" />
+      <text x="18" y="32" font-size="15.5" font-weight="700" fill="#f59e0b">Separate OpenWrt Transport</text>
+      <g transform="translate(9, 66)">
         <rect width="385" height="168" rx="10" fill="#0f172a" stroke="#f59e0b" stroke-width="1.4" />
         <rect x="12" y="12" width="28" height="28" rx="6" fill="#d97706" />
         <text x="26" y="31" font-size="14" font-weight="bold" fill="#ffffff" text-anchor="middle">⚡</text>
-        <text x="48" y="26" font-size="13" font-weight="700" fill="#f8fafc">Zapret Fallback (DPI Bypass)</text>
-        <text x="48" y="41" font-size="10" fill="#f59e0b">Local packet modification without remote VPS</text>
-        <text x="16" y="70" font-size="11" fill="#cbd5e1">TCP/TLS packet desynchronization against DPI</text>
-        <text x="16" y="90" font-size="11" fill="#94a3b8">• Zero VPS bandwidth consumption</text>
-        <text x="16" y="108" font-size="11" fill="#94a3b8">• Automatic fallback if proxy connection fails</text>
-        <text x="16" y="128" font-size="10.5" fill="#64748b">• Handled locally on router via nfqws</text>
+        <text x="48" y="26" font-size="13" font-weight="700" fill="#f8fafc">Zapret: Separate Mode</text>
+        <text x="48" y="41" font-size="10" fill="#f59e0b">nfqws outside Xray; not an outbound</text>
+        <text x="16" y="70" font-size="11" fill="#cbd5e1">RouteFlux stops Xray when entering fallback</text>
+        <text x="16" y="90" font-size="11" fill="#94a3b8">• SOCKS5 / HTTP are unavailable in this mode</text>
+        <text x="16" y="108" font-size="11" fill="#94a3b8">• Requires enabled Zapret and domain selectors</text>
+        <text x="16" y="128" font-size="10.5" fill="#64748b">nfqws handles DPI bypass for selected domains</text>
         <text x="16" y="148" font-size="10.5" font-weight="bold" fill="#f59e0b">➔ Local nfqws ➔ Direct WAN</text>
       </g>
     </g>
@@ -482,28 +487,28 @@
       <text x="16" y="21.5" font-size="13" font-weight="bold" fill="#38bdf8" text-anchor="middle">1</text>
       <text x="44" y="16" font-size="13" font-weight="700" fill="#f8fafc">Subscription Import &amp; Benchmarking</text>
       <text x="44" y="34" font-size="11" fill="#94a3b8">User adds subscription URL via Web UI or CLI.</text>
-      <text x="44" y="50" font-size="11" fill="#94a3b8">RouteFlux probes all nodes in parallel and selects</text>
-      <text x="44" y="66" font-size="11" fill="#94a3b8">the lowest-latency, most reliable server.</text>
+      <text x="44" y="50" font-size="11" fill="#94a3b8">Auto mode selects a node using health checks;</text>
+      <text x="44" y="66" font-size="11" fill="#94a3b8">in manual mode, the user selects the server.</text>
     </g>
 
     <!-- Step 2 -->
     <g transform="translate(470, 46)">
       <circle cx="16" cy="16" r="16" fill="#7c2d12" />
       <text x="16" y="21.5" font-size="13" font-weight="bold" fill="#f97316" text-anchor="middle">2</text>
-      <text x="44" y="16" font-size="13" font-weight="700" fill="#f8fafc">Atomic Config Test &amp; Deployment</text>
+      <text x="44" y="16" font-size="13" font-weight="700" fill="#f8fafc">Config Validation &amp; Deployment</text>
       <text x="44" y="34" font-size="11" fill="#94a3b8">Renders Xray JSON and verifies with xray -test.</text>
-      <text x="44" y="50" font-size="11" fill="#94a3b8">On success, atomic nftables and dnsmasq</text>
-      <text x="44" y="66" font-size="11" fill="#94a3b8">nftset directives are applied simultaneously.</text>
+      <text x="44" y="50" font-size="11" fill="#94a3b8">Service settings are then applied;</text>
+      <text x="44" y="66" font-size="11" fill="#94a3b8">failures trigger error handling and rollback.</text>
     </g>
 
     <!-- Step 3 -->
     <g transform="translate(920, 46)">
       <circle cx="16" cy="16" r="16" fill="#0f766e" />
       <text x="16" y="21.5" font-size="13" font-weight="bold" fill="#14b8a6" text-anchor="middle">3</text>
-      <text x="44" y="16" font-size="13" font-weight="700" fill="#f8fafc">Dynamic DNS Interception (nftset)</text>
+      <text x="44" y="16" font-size="13" font-weight="700" fill="#f8fafc">DNS Replies &amp; nftset</text>
       <text x="44" y="34" font-size="11" fill="#94a3b8">Client queries a domain (e.g., YouTube, Discord).</text>
       <text x="44" y="50" font-size="11" fill="#94a3b8">dnsmasq automatically populates kernel @proxy_target_v4.</text>
-      <text x="44" y="66" font-size="11" fill="#94a3b8">No static IP list maintenance required!</text>
+      <text x="44" y="66" font-size="11" fill="#94a3b8">Applies to queries handled by this dnsmasq.</text>
     </g>
 
     <!-- Step 4 -->
@@ -512,8 +517,8 @@
       <text x="16" y="21.5" font-size="13" font-weight="bold" fill="#a855f7" text-anchor="middle">4</text>
       <text x="44" y="16" font-size="13" font-weight="700" fill="#f8fafc">Dual Routing &amp; Direct LAN Proxy</text>
       <text x="44" y="34" font-size="11" fill="#94a3b8">Transparent traffic splits between Direct and Xray;</text>
-      <text x="44" y="50" font-size="11" fill="#94a3b8">Alternatively, with Routing Off, devices connect</text>
-      <text x="44" y="66" font-size="11" fill="#94a3b8">directly to SOCKS5 (:10808) or HTTP (:10809).</text>
+      <text x="44" y="50" font-size="11" fill="#94a3b8">LAN proxy requires Allow LAN and active Xray;</text>
+      <text x="44" y="66" font-size="11" fill="#94a3b8">clients use the router IP and configured port.</text>
     </g>
 
     <!-- Step 5 -->
@@ -522,8 +527,8 @@
       <text x="16" y="21.5" font-size="13" font-weight="bold" fill="#10b981" text-anchor="middle">5</text>
       <text x="44" y="16" font-size="13" font-weight="700" fill="#f8fafc">Continuous Failover &amp; Anti-Flap</text>
       <text x="44" y="34" font-size="11" fill="#94a3b8">Background daemon continuously monitors health.</text>
-      <text x="44" y="50" font-size="11" fill="#94a3b8">If the active node fails, RouteFlux seamlessly</text>
-      <text x="44" y="66" font-size="11" fill="#94a3b8">switches traffic to the next best standby server.</text>
+      <text x="44" y="50" font-size="11" fill="#94a3b8">Auto may switch nodes or enter Zapret fallback.</text>
+      <text x="44" y="66" font-size="11" fill="#94a3b8">Existing connections may be interrupted.</text>
     </g>
   </g>
 

@@ -102,8 +102,8 @@
     <rect width="2240" height="360" rx="18" fill="url(#glowControl)" />
 
     <!-- Zone Label -->
-    <rect x="24" y="16" width="390" height="28" rx="8" fill="#1e3a8a" />
-    <text x="36" y="35" font-size="12.5" font-weight="800" fill="#93c5fd" letter-spacing="1">1. УПРАВЛЕНИЕ И БИЗНЕС-ЛОГИКА (CONTROL PLANE GO)</text>
+    <rect x="24" y="16" width="520" height="28" rx="8" fill="#1e3a8a" />
+    <text x="36" y="35" font-size="12.5" font-weight="800" fill="#93c5fd" letter-spacing="1">1. УПРАВЛЕНИЕ И ЛОГИКА (GO)</text>
 
     <!-- Sub-Box 1.1: Management Interfaces -->
     <g transform="translate(25, 56)">
@@ -188,16 +188,16 @@
         <rect width="544" height="96" rx="8" fill="#0f172a" stroke="#334155" stroke-width="1" />
         <text x="16" y="23" font-size="12.5" font-weight="700" fill="#f8fafc">Параллельный замер доступности:</text>
         <text x="16" y="42" font-size="11" fill="#94a3b8">• Фоновый TCP handshake и RTT пинг всех нод подписки</text>
-        <text x="16" y="60" font-size="11" fill="#94a3b8">• Расчет скоринга нод (Health Score) по задержке, джиттеру и потерям</text>
-        <text x="16" y="78" font-size="11" fill="#94a3b8">• Проверка реального выхода через generate_204 перед активацией</text>
+        <text x="16" y="60" font-size="11" fill="#94a3b8">• Скоринг: задержка, успешные проверки и ошибки</text>
+        <text x="16" y="78" font-size="11" fill="#94a3b8">• Проверка выхода через generate_204 при подключении</text>
       </g>
 
       <g transform="translate(18, 172)">
         <rect width="544" height="96" rx="8" fill="#0f172a" stroke="#334155" stroke-width="1" />
         <text x="16" y="23" font-size="12.5" font-weight="700" fill="#f8fafc">Интеллектуальный Auto-Failover &amp; Anti-Flap:</text>
-        <text x="16" y="42" font-size="11" fill="#94a3b8">• Защита от частых переключений (anti-flap): кулдаун стабильности</text>
-        <text x="16" y="60" font-size="11" fill="#94a3b8">• Мгновенное переключение на резервную ноду при обрыве связи</text>
-        <text x="16" y="78" font-size="10.5" fill="#10b981">✓ Гарантирует непрерывный доступ для клиентов сети и прокси</text>
+        <text x="16" y="42" font-size="11" fill="#94a3b8">• Периодические проверки и защита от частых переключений</text>
+        <text x="16" y="60" font-size="11" fill="#94a3b8">• В Auto: выбор резервной ноды при сбоях</text>
+        <text x="16" y="78" font-size="10.5" fill="#10b981">Соединения могут прерываться при смене ноды</text>
       </g>
     </g>
 
@@ -210,17 +210,17 @@
       <g transform="translate(18, 66)">
         <rect width="559" height="96" rx="8" fill="#0f172a" stroke="#334155" stroke-width="1" />
         <text x="16" y="23" font-size="12.5" font-weight="700" fill="#f8fafc">Транзакционная генерация Xray JSON:</text>
-        <text x="16" y="42" font-size="11" fill="#94a3b8">1. Рендеринг /var/run/routeflux/xray.json с активной нодой, DNS, inbounds</text>
-        <text x="16" y="60" font-size="11" fill="#f59e0b" font-weight="bold">2. Обязательный тест валидности: xray -test -c /tmp/xray.json</text>
-        <text x="16" y="78" font-size="11" fill="#94a3b8">3. Атомарный откат к рабочей версии при ошибках валидации</text>
+        <text x="16" y="42" font-size="11" fill="#94a3b8">1. Генерация конфига для /etc/xray/config.json (по умолчанию)</text>
+        <text x="16" y="60" font-size="11" fill="#f59e0b" font-weight="bold">2. Проверка временного файла: xray -test -config &lt;путь&gt;</text>
+        <text x="16" y="78" font-size="11" fill="#94a3b8">3. При ошибке проверки рабочий конфиг не заменяется</text>
       </g>
 
       <g transform="translate(18, 172)">
         <rect width="559" height="96" rx="8" fill="#0f172a" stroke="#334155" stroke-width="1" />
         <text x="16" y="23" font-size="12.5" font-weight="700" fill="#f8fafc">Синхронизация платформы OpenWrt:</text>
-        <text x="16" y="42" font-size="11" fill="#94a3b8">• Настройка правил фаервола via fw4 table inet routeflux</text>
+        <text x="16" y="42" font-size="11" fill="#94a3b8">• Отдельная таблица nftables: inet routeflux</text>
         <text x="16" y="60" font-size="11" fill="#94a3b8">• Генерация директив nftset для службы dnsmasq</text>
-        <text x="16" y="78" font-size="11" fill="#94a3b8">• Мягкий перезапуск сервисов (/etc/init.d/xray reload)</text>
+        <text x="16" y="78" font-size="11" fill="#94a3b8">• Reload Xray; откат при ошибке применения</text>
       </g>
     </g>
   </g>
@@ -242,7 +242,7 @@
 
     <!-- Zone Label -->
     <rect x="24" y="16" width="460" height="28" rx="8" fill="#9a3412" />
-    <text x="36" y="35" font-size="12.5" font-weight="800" fill="#fed7aa" letter-spacing="1">2. СЕТЕВОЙ ТРАФИК И ПЕРЕХВАТ (DATA PLANE OPENWRT)</text>
+    <text x="36" y="35" font-size="12.5" font-weight="800" fill="#fed7aa" letter-spacing="1">2. ТРАФИК OPENWRT И LAN-ПРОКСИ</text>
 
     <!-- Sub-Box 2.1: LAN Clients & Ingress -->
     <g transform="translate(25, 56)">
@@ -252,19 +252,19 @@
 
       <g transform="translate(18, 66)">
         <rect width="409" height="90" rx="8" fill="#0f172a" stroke="#334155" stroke-width="1" />
-        <text x="16" y="24" font-size="12.5" font-weight="700" fill="#f8fafc">Режим А: Прозрачный шлюз (По умолчанию)</text>
+        <text x="16" y="24" font-size="12.5" font-weight="700" fill="#f8fafc">Режим А: Прозрачный шлюз (Routing включён)</text>
         <text x="16" y="44" font-size="11" fill="#94a3b8">Устройства отправляют обычный трафик через шлюз</text>
-        <text x="16" y="62" font-size="11" fill="#38bdf8">nftables прозрачно перехватывает DNS (53) и TCP/UDP</text>
+        <text x="16" y="62" font-size="11" fill="#38bdf8">Перехват выбранного TCP/UDP по правилам Routing</text>
         <text x="16" y="78" font-size="10.5" fill="#64748b">Не требует настроек на телефонах, ПК или смарт-ТВ</text>
       </g>
 
       <g transform="translate(18, 168)">
         <rect width="409" height="112" rx="8" fill="#0f172a" stroke="#10b981" stroke-width="1" />
-        <text x="16" y="23" font-size="12.5" font-weight="700" fill="#10b981">Режим Б: Прямой локальный и LAN-прокси (NEW)</text>
-        <text x="16" y="43" font-size="11" fill="#cbd5e1">Routing: Off — роутер не вмешивается в чужой трафик</text>
-        <text x="16" y="61" font-size="11" fill="#f8fafc">• SOCKS5 (:10808) и HTTP (:10809) открыты для локальной сети</text>
-        <text x="16" y="79" font-size="11" fill="#94a3b8">• Настраивается в браузере, Telegram, Happ, SwitchyOmega</text>
-        <text x="16" y="97" font-size="10.5" fill="#10b981">✓ Сохраняет умный дом, банкинг и нативную скорость NAT</text>
+        <text x="16" y="23" font-size="12.5" font-weight="700" fill="#10b981">Режим Б: Локальный и LAN-прокси</text>
+        <text x="16" y="43" font-size="11" fill="#cbd5e1">По умолчанию Routing Off и доступ только с localhost</text>
+        <text x="16" y="61" font-size="11" fill="#f8fafc">• Для LAN: Allow LAN, подключённый Xray, доступ в firewall</text>
+        <text x="16" y="79" font-size="11" fill="#94a3b8">• В клиенте: IP роутера и порт SOCKS5 / HTTP</text>
+        <text x="16" y="97" font-size="10.5" fill="#10b981">Порты по умолчанию: 10808 / 10809; можно изменить</text>
       </g>
     </g>
 
@@ -280,7 +280,7 @@
         <text x="16" y="43" font-size="11" fill="#cbd5e1">1. RouteFlux передает списки доменов в dnsmasq:</text>
         <text x="16" y="61" font-size="10.5" font-family="monospace" fill="#38bdf8">nftset=/youtube.com/4#inet#routeflux#proxy_target_v4</text>
         <text x="16" y="79" font-size="11" fill="#cbd5e1">2. Клиент запрашивает домен (например, googlevideo.com)</text>
-        <text x="16" y="97" font-size="11" font-weight="bold" fill="#f59e0b">3. Хук ядра dnsmasq мгновенно добавляет IP в набор nftables!</text>
+        <text x="16" y="97" font-size="11" font-weight="bold" fill="#f59e0b">3. dnsmasq добавляет IP из DNS-ответа в nftables set</text>
         <text x="16" y="113" font-size="10" fill="#64748b">Последующие пакеты сразу попадают под правила прокси</text>
       </g>
 
@@ -288,14 +288,14 @@
         <rect width="484" height="77" rx="8" fill="#0f172a" stroke="#334155" stroke-width="1" />
         <text x="16" y="22" font-size="12.5" font-weight="700" fill="#f8fafc">Режимы DNS (DNS Modes):</text>
         <text x="16" y="42" font-size="11" fill="#94a3b8">• <tspan font-weight="bold" fill="#f8fafc">Split (По умолч.):</tspan> .lan локально, внешний DNS шифруется (DoH)</text>
-        <text x="16" y="60" font-size="11" fill="#94a3b8">• <tspan font-weight="bold" fill="#f8fafc">Remote:</tspan> 100% DNS-запросов идут через удаленный DoH резолвер</text>
+        <text x="16" y="60" font-size="11" fill="#94a3b8">• Remote: запросы через настроенные upstream DNS</text>
       </g>
     </g>
 
     <!-- Sub-Box 2.3: nftables Kernel Routing -->
     <g transform="translate(1030, 56)">
       <rect width="1185" height="295" rx="12" fill="#1e293b" stroke="#f97316" stroke-width="1.4" />
-      <text x="24" y="32" font-size="15.5" font-weight="700" fill="#f97316">nftables (Таблица inet routeflux) • Аппаратный роутинг</text>
+      <text x="24" y="32" font-size="15.5" font-weight="700" fill="#f97316">nftables (inet routeflux) • Правила ядра Linux</text>
       <text x="24" y="50" font-size="11.5" fill="#94a3b8">Фильтрация и прозрачный редирект в ядре Linux (Netfilter)</text>
 
       <!-- Sets sub-box -->
@@ -319,7 +319,7 @@
       <!-- Chains sub-box -->
       <g transform="translate(400, 66)">
         <rect width="767" height="213" rx="8" fill="#0f172a" stroke="#334155" stroke-width="1" />
-        <text x="16" y="23" font-size="12.5" font-weight="700" fill="#f8fafc">Цепочки prerouting (TCP) и prerouting_mangle (UDP TProxy):</text>
+        <text x="16" y="23" font-size="12.5" font-weight="700" fill="#f8fafc">Пример выборочного перехвата (правила зависят от режима):</text>
 
         <!-- Rule 1 -->
         <rect x="16" y="34" width="735" height="34" rx="6" fill="#1e293b" />
@@ -373,27 +373,27 @@
     <rect width="2240" height="340" rx="18" fill="url(#glowXray)" />
 
     <!-- Zone Label -->
-    <rect x="24" y="16" width="450" height="28" rx="8" fill="#581c87" />
-    <text x="36" y="35" font-size="12.5" font-weight="800" fill="#e9d5ff" letter-spacing="1">3. ИСПОЛНЯЕМЫЙ РАНТАЙМ XRAY И ВЫХОД В ИНТЕРНЕТ</text>
+    <rect x="24" y="16" width="520" height="28" rx="8" fill="#581c87" />
+    <text x="36" y="35" font-size="12.5" font-weight="800" fill="#e9d5ff" letter-spacing="1">3. XRAY И ОТДЕЛЬНЫЙ РЕЖИМ ZAPRET</text>
 
     <!-- Sub-Box 3.1: Inbounds -->
     <g transform="translate(25, 56)">
       <rect width="455" height="258" rx="12" fill="#1e293b" stroke="#a855f7" stroke-width="1.2" />
-      <text x="24" y="32" font-size="15.5" font-weight="700" fill="#c084fc">Двойные Inbounds: Прозрачный и LAN-прокси</text>
+      <text x="24" y="32" font-size="15.5" font-weight="700" fill="#c084fc">Входы Xray: прозрачные и SOCKS5 / HTTP</text>
       <text x="24" y="50" font-size="11.5" fill="#94a3b8">Принимает трафик от роутера и прямые подключения из LAN</text>
 
       <g transform="translate(18, 66)">
         <rect width="419" height="80" rx="8" fill="#0f172a" stroke="#334155" stroke-width="1" />
-        <text x="16" y="23" font-size="12.5" font-weight="700" fill="#f8fafc">transparent-in (dokodemo-door :12345):</text>
-        <text x="16" y="42" font-size="10.5" fill="#94a3b8">• Точка входа TProxy &amp; Redirect для сетевого фильтра роутера</text>
+        <text x="16" y="23" font-size="12.5" font-weight="700" fill="#f8fafc">dokodemo-door TCP / UDP (:12345):</text>
+        <text x="16" y="42" font-size="10.5" fill="#94a3b8">• TCP: transparent-in; UDP: transparent-udp-in</text>
         <text x="16" y="58" font-size="10.5" fill="#94a3b8">• Sniffing: определение HTTP Host и TLS SNI доменов</text>
-        <text x="16" y="74" font-size="10.5" fill="#10b981">✓ Не совпавшие запросы мягко уходят в прямой direct out</text>
+        <text x="16" y="74" font-size="10.5" fill="#10b981">Выход зависит от режима и default action</text>
       </g>
 
       <g transform="translate(18, 154)">
         <rect width="419" height="80" rx="8" fill="#0f172a" stroke="#10b981" stroke-width="1" />
         <text x="16" y="23" font-size="12.5" font-weight="700" fill="#10b981">socks-in (:10808) &amp; http-in (:10809):</text>
-        <text x="16" y="42" font-size="10.5" fill="#94a3b8">• Протокол SOCKS5 с полной поддержкой UDP associate</text>
+        <text x="16" y="42" font-size="10.5" fill="#94a3b8">• SOCKS5 UDP требует поддержки со стороны сервера</text>
         <text x="16" y="58" font-size="10.5" fill="#94a3b8">• HTTP forward-прокси для расширений браузера и приложений</text>
         <text x="16" y="74" font-size="10" fill="#38bdf8">Настраиваемый бинд: 127.0.0.1 (только роутер) или 0.0.0.0 (LAN)</text>
       </g>
@@ -410,30 +410,30 @@
         <text x="16" y="23" font-size="12.5" font-weight="700" fill="#f8fafc">Таблица маршрутизации (Routing Rules):</text>
         <text x="16" y="44" font-size="11" fill="#94a3b8">• <tspan font-weight="bold" fill="#a855f7">tag: selected</tspan> ➔ Активная нода подписки</text>
         <text x="16" y="64" font-size="11" fill="#94a3b8">• <tspan font-weight="bold" fill="#10b981">tag: direct</tspan> ➔ Прямой выход через провайдера роутера</text>
-        <text x="16" y="84" font-size="11" fill="#94a3b8">• <tspan font-weight="bold" fill="#f59e0b">tag: zapret</tspan> ➔ Локальный сервис обхода DPI (nfqws)</text>
-        <text x="16" y="104" font-size="11" fill="#94a3b8">• <tspan font-weight="bold" fill="#ef4444">tag: block</tspan> ➔ Блокировка рекламы и QUIC UDP 443</text>
-        <text x="16" y="128" font-size="11" fill="#38bdf8">Встроенный DoH / DoT резолвер для внешних доменов</text>
-        <text x="16" y="146" font-size="10.5" fill="#64748b">Исключает утечки DNS (DNS Leaks) и подмену ответов провайдером</text>
+        <text x="16" y="84" font-size="11" fill="#94a3b8">• SOCKS5 / HTTP → selected (TCP и UDP)</text>
+        <text x="16" y="104" font-size="11" fill="#94a3b8">• tag: block → blackhole; по правилам QUIC/UDP</text>
+        <text x="16" y="128" font-size="11" fill="#38bdf8">DNS: plain или DoH; DoT не поддерживается</text>
+        <text x="16" y="146" font-size="10.5" fill="#64748b">Обрабатывает DNS, направленный через RouteFlux</text>
       </g>
     </g>
 
     <!-- Sub-Box 3.3: Outbounds & Egress Targets -->
     <g transform="translate(1000, 56)">
-      <rect width="1215" height="258" rx="12" fill="#1e293b" stroke="#334155" stroke-width="1.2" />
-      <text x="24" y="32" font-size="15.5" font-weight="700" fill="#c084fc">Outbounds • Выходы в глобальную сеть (WAN / Internet)</text>
-      <text x="24" y="50" font-size="11.5" fill="#94a3b8">Финальная зашифрованная доставка до серверов назначения</text>
+      <rect width="800" height="258" rx="12" fill="#1e293b" stroke="#334155" stroke-width="1.2" />
+      <text x="24" y="32" font-size="15.5" font-weight="700" fill="#c084fc">Выходы Xray: selected и direct</text>
+      <text x="24" y="50" font-size="11.5" fill="#94a3b8">Выбор пути определяется правилами и активной нодой</text>
 
       <!-- Channel 1: Proxy Outbound -->
       <g transform="translate(18, 66)">
         <rect width="375" height="168" rx="10" fill="#0f172a" stroke="#a855f7" stroke-width="1.4" />
         <rect x="12" y="12" width="28" height="28" rx="6" fill="#7c3aed" />
         <text x="26" y="31" font-size="14" font-weight="bold" fill="#ffffff" text-anchor="middle">🔒</text>
-        <text x="48" y="26" font-size="13" font-weight="700" fill="#f8fafc">Шифрованный туннель (Proxy)</text>
-        <text x="48" y="41" font-size="10" fill="#a855f7">VLESS-Reality / VMess / Trojan / Hy2</text>
-        <text x="16" y="70" font-size="11" fill="#cbd5e1">Трафик шифруется и идет на зарубежный сервер</text>
-        <text x="16" y="90" font-size="11" fill="#94a3b8">• Обход блокировок, DPI и замедлений</text>
-        <text x="16" y="108" font-size="11" fill="#94a3b8">• YouTube 4K, Discord, AI, Notion, Соцсети</text>
-        <text x="16" y="128" font-size="10.5" fill="#64748b">• Полная защита от цензуры провайдера</text>
+        <text x="48" y="26" font-size="13" font-weight="700" fill="#f8fafc">Сервер подписки (selected)</text>
+        <text x="48" y="41" font-size="10" fill="#a855f7">VLESS / VMess / Trojan / Hysteria / SOCKS5</text>
+        <text x="16" y="70" font-size="11" fill="#cbd5e1">Трафик направляется через выбранную ноду</text>
+        <text x="16" y="90" font-size="11" fill="#94a3b8">• Защита зависит от протокола и настроек</text>
+        <text x="16" y="108" font-size="11" fill="#94a3b8">• SOCKS5 / HTTP используют этот выход</text>
+        <text x="16" y="128" font-size="10.5" fill="#64748b">Доступность зависит от сервера и сети</text>
         <text x="16" y="148" font-size="10.5" font-weight="bold" fill="#a855f7">➔ Удаленный сервер ➔ Глобальный Интернет</text>
       </g>
 
@@ -444,24 +444,29 @@
         <text x="26" y="31" font-size="14" font-weight="bold" fill="#ffffff" text-anchor="middle">🌐</text>
         <text x="48" y="26" font-size="13" font-weight="700" fill="#f8fafc">Прямой маршрут (Direct WAN)</text>
         <text x="48" y="41" font-size="10" fill="#10b981">Без прокси через местного провайдера</text>
-        <text x="16" y="70" font-size="11" fill="#cbd5e1">Максимальная скорость канала, минимальный пинг</text>
+        <text x="16" y="70" font-size="11" fill="#cbd5e1">Прямое соединение без сервера подписки</text>
         <text x="16" y="90" font-size="11" fill="#94a3b8">• Российские сервисы, Банки, Госуслуги</text>
         <text x="16" y="108" font-size="11" fill="#94a3b8">• Исключенные устройства LAN (ТВ, приставки)</text>
-        <text x="16" y="128" font-size="10.5" fill="#64748b">• Весь трафик вне списков проксирования</text>
-        <text x="16" y="148" font-size="10.5" font-weight="bold" fill="#10b981">➔ Местный провайдер ➔ Рунет</text>
+        <text x="16" y="128" font-size="10.5" fill="#64748b">• Default action зависит от режима Routing</text>
+        <text x="16" y="148" font-size="10.5" font-weight="bold" fill="#10b981">➔ Провайдер ➔ Сервер назначения</text>
       </g>
 
-      <!-- Channel 3: Zapret Fallback -->
-      <g transform="translate(812, 66)">
+    </g>
+
+    <!-- Separate OpenWrt transport; never an Xray outbound. -->
+    <g transform="translate(1812, 56)">
+      <rect width="403" height="258" rx="12" fill="#1e293b" stroke="#f59e0b" stroke-width="1.2" />
+      <text x="18" y="32" font-size="15.5" font-weight="700" fill="#f59e0b">Отдельный транспорт OpenWrt</text>
+      <g transform="translate(9, 66)">
         <rect width="385" height="168" rx="10" fill="#0f172a" stroke="#f59e0b" stroke-width="1.4" />
         <rect x="12" y="12" width="28" height="28" rx="6" fill="#d97706" />
         <text x="26" y="31" font-size="14" font-weight="bold" fill="#ffffff" text-anchor="middle">⚡</text>
-        <text x="48" y="26" font-size="13" font-weight="700" fill="#f8fafc">Zapret Fallback (Обход DPI)</text>
-        <text x="48" y="41" font-size="10" fill="#f59e0b">Модификация пакетов без удаленного сервера</text>
-        <text x="16" y="70" font-size="11" fill="#cbd5e1">Пакетный хак TCP/TLS для обхода ТСПУ</text>
-        <text x="16" y="90" font-size="11" fill="#94a3b8">• Нулевой расход трафика подписки / VPS</text>
-        <text x="16" y="108" font-size="11" fill="#94a3b8">• Автоматический fallback при сбоях ноды</text>
-        <text x="16" y="128" font-size="10.5" fill="#64748b">• Обрабатывается локально через nfqws</text>
+        <text x="48" y="26" font-size="13" font-weight="700" fill="#f8fafc">Zapret: отдельный режим</text>
+        <text x="48" y="41" font-size="10" fill="#f59e0b">nfqws вне Xray; это не outbound</text>
+        <text x="16" y="70" font-size="11" fill="#cbd5e1">При fallback RouteFlux останавливает Xray</text>
+        <text x="16" y="90" font-size="11" fill="#94a3b8">• SOCKS5 / HTTP в этом режиме недоступны</text>
+        <text x="16" y="108" font-size="11" fill="#94a3b8">• Нужны включённый Zapret и выбранные домены</text>
+        <text x="16" y="128" font-size="10.5" fill="#64748b">Обход DPI для выбранных доменов через nfqws</text>
         <text x="16" y="148" font-size="10.5" font-weight="bold" fill="#f59e0b">➔ Локальный nfqws ➔ Direct WAN</text>
       </g>
     </g>
@@ -482,28 +487,28 @@
       <text x="16" y="21.5" font-size="13" font-weight="bold" fill="#38bdf8" text-anchor="middle">1</text>
       <text x="44" y="16" font-size="13" font-weight="700" fill="#f8fafc">Импорт подписки и замер задержек</text>
       <text x="44" y="34" font-size="11" fill="#94a3b8">Пользователь добавляет подписку через LuCI или CLI.</text>
-      <text x="44" y="50" font-size="11" fill="#94a3b8">RouteFlux параллельно пингует все ноды и выбирает</text>
-      <text x="44" y="66" font-size="11" fill="#94a3b8">наиболее стабильный сервер с наименьшим RTT.</text>
+      <text x="44" y="50" font-size="11" fill="#94a3b8">В Auto выбирает ноду по результатам проверок;</text>
+      <text x="44" y="66" font-size="11" fill="#94a3b8">в ручном режиме сервер выбирает пользователь.</text>
     </g>
 
     <!-- Step 2 -->
     <g transform="translate(470, 46)">
       <circle cx="16" cy="16" r="16" fill="#7c2d12" />
       <text x="16" y="21.5" font-size="13" font-weight="bold" fill="#f97316" text-anchor="middle">2</text>
-      <text x="44" y="16" font-size="13" font-weight="700" fill="#f8fafc">Атомарный тест и активация конфига</text>
+      <text x="44" y="16" font-size="13" font-weight="700" fill="#f8fafc">Проверка и применение конфига</text>
       <text x="44" y="34" font-size="11" fill="#94a3b8">Формируется Xray JSON и проверяется: xray -test.</text>
-      <text x="44" y="50" font-size="11" fill="#94a3b8">При успехе одновременно применяются правила</text>
-      <text x="44" y="66" font-size="11" fill="#94a3b8">в таблице nftables и директивы для dnsmasq.</text>
+      <text x="44" y="50" font-size="11" fill="#94a3b8">Затем применяются настройки сервисов;</text>
+      <text x="44" y="66" font-size="11" fill="#94a3b8">при ошибках выполняется обработка и откат.</text>
     </g>
 
     <!-- Step 3 -->
     <g transform="translate(920, 46)">
       <circle cx="16" cy="16" r="16" fill="#0f766e" />
       <text x="16" y="21.5" font-size="13" font-weight="bold" fill="#14b8a6" text-anchor="middle">3</text>
-      <text x="44" y="16" font-size="13" font-weight="700" fill="#f8fafc">Умный DNS-перехват (nftset)</text>
+      <text x="44" y="16" font-size="13" font-weight="700" fill="#f8fafc">DNS-ответы и nftset</text>
       <text x="44" y="34" font-size="11" fill="#94a3b8">Клиент запрашивает домен (YouTube, Discord и др.).</text>
       <text x="44" y="50" font-size="11" fill="#94a3b8">dnsmasq на лету наполняет набор @proxy_target_v4.</text>
-      <text x="44" y="66" font-size="11" fill="#94a3b8">Статические списки IP-адресов больше не нужны!</text>
+      <text x="44" y="66" font-size="11" fill="#94a3b8">Работает для запросов через этот dnsmasq.</text>
     </g>
 
     <!-- Step 4 -->
@@ -512,8 +517,8 @@
       <text x="16" y="21.5" font-size="13" font-weight="bold" fill="#a855f7" text-anchor="middle">4</text>
       <text x="44" y="16" font-size="13" font-weight="700" fill="#f8fafc">Раздельная маршрутизация и LAN-прокси</text>
       <text x="44" y="34" font-size="11" fill="#94a3b8">Прямой трафик идет в обход прокси в WAN;</text>
-      <text x="44" y="50" font-size="11" fill="#94a3b8">Либо при Routing Off устройства подключаются</text>
-      <text x="44" y="66" font-size="11" fill="#94a3b8">напрямую к SOCKS5 (:10808) или HTTP (:10809).</text>
+      <text x="44" y="50" font-size="11" fill="#94a3b8">Для LAN-прокси нужны Allow LAN и Xray;</text>
+      <text x="44" y="66" font-size="11" fill="#94a3b8">клиент использует IP роутера и заданный порт.</text>
     </g>
 
     <!-- Step 5 -->
@@ -522,8 +527,8 @@
       <text x="16" y="21.5" font-size="13" font-weight="bold" fill="#10b981" text-anchor="middle">5</text>
       <text x="44" y="16" font-size="13" font-weight="700" fill="#f8fafc">Непрерывный мониторинг и Anti-Flap</text>
       <text x="44" y="34" font-size="11" fill="#94a3b8">Фоновый демон постоянно следит за состоянием.</text>
-      <text x="44" y="50" font-size="11" fill="#94a3b8">При падении активной ноды RouteFlux бесшовно</text>
-      <text x="44" y="66" font-size="11" fill="#94a3b8">переключает трафик на резервный сервер.</text>
+      <text x="44" y="50" font-size="11" fill="#94a3b8">В Auto возможна смена ноды или Zapret fallback.</text>
+      <text x="44" y="66" font-size="11" fill="#94a3b8">Сохранение текущих соединений не гарантируется.</text>
     </g>
   </g>
 
