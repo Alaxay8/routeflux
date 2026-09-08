@@ -630,7 +630,7 @@ persist_install_manifest
 
 rm -f "$(root_path "tmp/luci-indexcache")"*
 rm -rf "$(root_path "tmp/luci-modulecache")"*
-(sleep 1 && run_service_if_present rpcd reload) >/dev/null 2>&1 &
+run_service_if_present rpcd reload || true
 run_service_if_present routeflux enable || true
 run_service_if_present routeflux restart || run_service_if_present routeflux start || true
 
