@@ -58,19 +58,15 @@ func TestTCPCheckerSuccess(t *testing.T) {
 func TestTCPCheckerFailureUsesTimeoutLatency(t *testing.T) {
 	t.Parallel()
 
-	listener, err := net.Listen("tcp", "127.0.0.1:0")
-	if err != nil {
-		t.Fatalf("listen: %v", err)
-	}
-	port := listener.Addr().(*net.TCPAddr).Port
-	_ = listener.Close()
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
 
 	timeout := 25 * time.Millisecond
 	checker := probe.TCPChecker{Timeout: timeout}
-	result := checker.Check(context.Background(), domain.Node{
+	result := checker.Check(ctx, domain.Node{
 		ID:      "node-1",
 		Address: "127.0.0.1",
-		Port:    port,
+		Port:    1,
 	})
 
 	if result.Healthy {
