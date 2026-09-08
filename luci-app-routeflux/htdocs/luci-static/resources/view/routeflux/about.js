@@ -115,6 +115,16 @@ return view.extend({
 	},
 
 	execHelper: function(command, argv) {
+		if (typeof fs.exec_direct === 'function') {
+			return fs.exec_direct(command, argv || [], 'text').then(function(res) {
+				var stdout = trim(typeof res === 'string' ? res : (res && res.stdout) || '');
+				return {
+					stdout: stdout,
+					stderr: ''
+				};
+			});
+		}
+
 		return fs.exec(command, argv || []).then(function(res) {
 			var stderr = trim(res.stderr);
 			var stdout = trim(res.stdout);
