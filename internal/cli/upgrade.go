@@ -88,7 +88,7 @@ func runUpgrade(cmd *cobra.Command, jsonOutput bool) error {
 	}
 	result.DownloadOutput = strings.TrimSpace(downloadOutput)
 
-	installOutput, err := runUpgradeCommand(ctx, cmd, jsonOutput, "sh", routefluxUpgradeInstallerPath)
+	installOutput, err := runUpgradeCommand(ctx, cmd, jsonOutput, "sh", routefluxUpgradeInstallerPath, "--no-deps")
 	if err != nil {
 		return fmt.Errorf("run latest installer: %w", err)
 	}

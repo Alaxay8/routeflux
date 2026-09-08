@@ -322,6 +322,13 @@ ensure_opkg_package() {
 		return 0
 	fi
 
+	if [ "${pkg}" = "nftables" ]; then
+		if opkg_is_installed nftables || opkg_is_installed nftables-json; then
+			log "Detected nftables"
+			return 0
+		fi
+	fi
+
 	if opkg_is_installed "${pkg}"; then
 		log "Detected ${pkg}"
 		return 0
