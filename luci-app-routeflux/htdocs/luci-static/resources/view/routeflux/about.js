@@ -135,7 +135,10 @@ return view.extend({
 		if (!window.confirm(_('Download the latest RouteFlux release and install it over the current router version? Existing /etc/routeflux state is preserved by the installer.')))
 			return Promise.resolve();
 
+		ui.showIndicator();
+
 		return this.execHelper(routefluxSelfUpdateHelper).then(function(res) {
+			ui.hideIndicator();
 			var status = extractSelfUpdateStatus(res.stdout);
 			var message = stripSelfUpdateStatus(res.stdout);
 
@@ -146,6 +149,7 @@ return view.extend({
 				}, 1500);
 			}
 		}).catch(function(err) {
+			ui.hideIndicator();
 			ui.addNotification(null, notificationParagraph(err.message || String(err)));
 			throw err;
 		});
